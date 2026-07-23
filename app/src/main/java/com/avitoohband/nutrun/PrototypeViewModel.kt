@@ -4,14 +4,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.avitoohband.nutrun.data.AppPreferences
+import com.avitoohband.nutrun.data.NutRunRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.DayOfWeek
 import java.time.LocalDate
+import javax.inject.Inject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
-class PrototypeViewModel : ViewModel() {
+@HiltViewModel
+class PrototypeViewModel @Inject constructor(
+    private val repository: NutRunRepository?,
+    private val preferences: AppPreferences?
+) : ViewModel() {
     private var nextId = 10
     private fun id(prefix: String) = "$prefix-${nextId++}"
+    private var currentUserId: String? = null
+    private var persistJob: Job? = null
+    private var restoredPayload: String? = null
 
     var isAuthenticated by mutableStateOf(false)
         private set
@@ -31,7 +47,7 @@ class PrototypeViewModel : ViewModel() {
         private set
     var suggestionDecision by mutableStateOf(SuggestionDecision.PENDING)
         private set
-    var suggestedWeightKg by mutableStateOf(42.5)
+    var suggestedWeightKg by mutableDoubleStateOf(42.5)
         private set
 
     val supplements = mutableStateListOf(
@@ -62,6 +78,28 @@ class PrototypeViewModel : ViewModel() {
         "Push + Biceps - completed"
     )
 
+    init {
+        if (repository != null && preferences != null) {
+            viewModelScope.launch {
+                preferences.session.collectLatest { session ->
+                    currentUserId = session.authenticatedUserId
+                    restoredPayload = null
+                    resetTrainingState()
+                    session.authenticatedUserId?.let { userId ->
+                        repository.trainingState(userId).collectLatest { state ->
+                            state?.payloadJson
+                                ?.takeIf { it != restoredPayload }
+                                ?.let {
+                                    restoredPayload = it
+                                    restoreTrainingState(it)
+                                }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun completeRegistration() {
         isAuthenticated = true
     }
@@ -77,20 +115,24 @@ class PrototypeViewModel : ViewModel() {
     fun toggleSupplement(id: String, checked: Boolean) {
         val index = supplements.indexOfFirst { it.id == id }
         if (index >= 0) supplements[index] = supplements[index].copy(completedToday = checked)
+        persistTrainingState()
     }
 
     fun addSupplement(name: String, dose: String, schedule: SupplementSchedule) {
         supplements += Supplement(id("supplement"), name.trim(), dose.trim(), schedule)
+        persistTrainingState()
     }
 
     fun addSession(name: String, weekday: DayOfWeek) {
         val session = TrainingSession(id("session"), name.trim(), weekday)
         sessions += session
         selectedSessionId = session.id
+        persistTrainingState()
     }
 
     fun selectSession(id: String) {
         selectedSessionId = id
+        persistTrainingState()
     }
 
     fun addExerciseToSelectedSession(
@@ -106,6 +148,7 @@ class PrototypeViewModel : ViewModel() {
         if (index < 0) return
         val target = ExerciseTarget(id("target"), exercise, sets, reps, weightKg, durationMinutes, distanceKm)
         sessions[index] = sessions[index].copy(exercises = sessions[index].exercises + target)
+        persistTrainingState()
     }
 
     fun updateSelectedExercise(targetId: String, sets: Int, reps: Int, weightKg: Double?, durationMinutes: Int?, distanceKm: Double?) {
@@ -115,20 +158,24 @@ class PrototypeViewModel : ViewModel() {
         sessions[index] = sessions[index].copy(exercises = sessions[index].exercises.map { target ->
             if (target.id == targetId) target.copy(sets = sets, reps = reps, weightKg = weightKg, durationMinutes = durationMinutes, distanceKm = distanceKm) else target
         })
+        persistTrainingState()
     }
 
     fun startWorkout(sessionId: String) {
         activeWorkoutSessionId = sessionId
         isWorkoutPaused = false
         completedExerciseIds.clear()
+        persistTrainingState()
     }
 
     fun toggleExerciseComplete(targetId: String, completed: Boolean) {
         completedExerciseIds[targetId] = completed
+        persistTrainingState()
     }
 
     fun pauseOrResumeWorkout() {
         isWorkoutPaused = !isWorkoutPaused
+        persistTrainingState()
     }
 
     fun finishWorkout() {
@@ -139,12 +186,14 @@ class PrototypeViewModel : ViewModel() {
         activeWorkoutSessionId = null
         completedExerciseIds.clear()
         isWorkoutPaused = false
+        persistTrainingState()
     }
 
     fun activeSession(): TrainingSession? = sessions.firstOrNull { it.id == activeWorkoutSessionId }
 
     fun dismissWorkoutSummary() {
         lastWorkoutSummary = null
+        persistTrainingState()
     }
 
     fun selectedSession(): TrainingSession? = sessions.firstOrNull { it.id == selectedSessionId }
@@ -162,9 +211,65 @@ class PrototypeViewModel : ViewModel() {
             }
             history.add(0, "Lat pulldown progression accepted: ${displayWeight(editedWeightKg, usesMetricUnits)}")
         }
+        persistTrainingState()
     }
 
     fun simulateTrialExpiry() {
         trialState = trialState.copy(isForcedFreePlan = true)
+    }
+
+    private fun persistTrainingState() {
+        val userId = currentUserId ?: return
+        val targetRepository = repository ?: return
+        val payload = encodeTrainingState(
+            supplements = supplements,
+            sessions = sessions,
+            history = history,
+            selectedSessionId = selectedSessionId,
+            activeWorkoutSessionId = activeWorkoutSessionId,
+            isWorkoutPaused = isWorkoutPaused,
+            completedExerciseIds = completedExerciseIds,
+            suggestionDecision = suggestionDecision,
+            suggestedWeightKg = suggestedWeightKg
+        )
+        restoredPayload = payload
+        persistJob?.cancel()
+        persistJob = viewModelScope.launch {
+            targetRepository.saveTrainingState(userId, payload)
+        }
+    }
+
+    private fun restoreTrainingState(payload: String) {
+        decodeTrainingState(payload, exerciseLibrary)?.let { restored ->
+            supplements.clear()
+            supplements.addAll(restored.supplements)
+            sessions.clear()
+            sessions.addAll(restored.sessions)
+            history.clear()
+            history.addAll(restored.history)
+            selectedSessionId = restored.selectedSessionId
+            activeWorkoutSessionId = restored.activeWorkoutSessionId
+            isWorkoutPaused = restored.isWorkoutPaused
+            completedExerciseIds.clear()
+            completedExerciseIds.putAll(restored.completedExerciseIds)
+            suggestionDecision = restored.suggestionDecision
+            suggestedWeightKg = restored.suggestedWeightKg
+        }
+    }
+
+    private fun resetTrainingState() {
+        supplements.clear()
+        supplements.addAll(defaultSupplements())
+        sessions.clear()
+        sessions.addAll(defaultSessions(exerciseLibrary))
+        history.clear()
+        history.addAll(defaultTrainingHistory())
+        selectedSessionId = null
+        activeWorkoutSessionId = null
+        isWorkoutPaused = false
+        completedExerciseIds.clear()
+        lastWorkoutSummary = null
+        suggestionDecision = SuggestionDecision.PENDING
+        suggestedWeightKg = 42.5
     }
 }

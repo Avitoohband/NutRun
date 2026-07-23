@@ -1,0 +1,130 @@
+package com.avitoohband.nutrun
+
+import com.avitoohband.nutrun.data.SessionPreferences
+import com.avitoohband.nutrun.domain.ActivityLevel
+import com.avitoohband.nutrun.domain.BiologicalSex
+import com.avitoohband.nutrun.domain.EntitlementKind
+import com.avitoohband.nutrun.domain.FoodCatalogItem
+import com.avitoohband.nutrun.domain.HealthGoal
+import com.avitoohband.nutrun.domain.RouteSample
+import com.avitoohband.nutrun.domain.acceptedRouteDistanceMeters
+import com.avitoohband.nutrun.domain.calculateHealthEstimate
+import com.avitoohband.nutrun.domain.isHydrationReminderEligible
+import com.avitoohband.nutrun.domain.nutritionSummary
+import com.avitoohband.nutrun.domain.sessionSteps
+import com.avitoohband.nutrun.domain.accumulatedSessionSteps
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ProductionDomainTest {
+    @Test
+    fun healthEstimateUsesMifflinStJeorAndGoalAdjustment() {
+        val estimate = calculateHealthEstimate(
+            birthDate = LocalDate.of(1996, 1, 1),
+            biologicalSex = BiologicalSex.MALE,
+            heightCm = 180.0,
+            weightKg = 80.0,
+            activityLevel = ActivityLevel.MODERATE,
+            goal = HealthGoal.LOSE,
+            today = LocalDate.of(2026, 1, 1)
+        )
+
+        assertEquals(24.7, estimate.bmi, 0.1)
+        assertEquals(1_780, estimate.bmrKcal)
+        assertEquals(2_759, estimate.tdeeKcal)
+        assertEquals(2_459, estimate.calorieTarget)
+    }
+
+    @Test
+    fun nutritionTotalsRemainExactOffline() {
+        val total = nutritionSummary(
+            listOf(
+                FoodCatalogItem("1", "One", null, 100.0, 200, 10.0, 20.0, 5.0),
+                FoodCatalogItem("2", "Two", null, 50.0, 120, 4.0, 12.0, 6.0)
+            )
+        )
+
+        assertEquals(320, total.calories)
+        assertEquals(14.0, total.proteinGrams, 0.001)
+        assertEquals(32.0, total.carbohydrateGrams, 0.001)
+        assertEquals(11.0, total.fatGrams, 0.001)
+    }
+
+    @Test
+    fun hydrationStopsAtGoalAndOutsideWakingWindow() {
+        assertTrue(isHydrationReminderEligible(1_000, 2_000, 12 * 60, 8 * 60, 22 * 60))
+        assertFalse(isHydrationReminderEligible(2_000, 2_000, 12 * 60, 8 * 60, 22 * 60))
+        assertFalse(isHydrationReminderEligible(1_000, 2_000, 23 * 60, 8 * 60, 22 * 60))
+    }
+
+    @Test
+    fun routeFilterRejectsInaccurateAndImpossiblePoints() {
+        val start = RouteSample(32.0853, 34.7818, 5f, 1_000)
+        val nearby = RouteSample(32.0854, 34.7819, 5f, 11_000)
+        val inaccurate = nearby.copy(accuracyMeters = 80f)
+        val jump = RouteSample(32.1853, 34.8818, 5f, 12_000)
+
+        assertTrue((acceptedRouteDistanceMeters(start, nearby) ?: 0f) in 5f..30f)
+        assertNull(acceptedRouteDistanceMeters(start, inaccurate))
+        assertNull(acceptedRouteDistanceMeters(start, jump))
+    }
+
+    @Test
+    fun stepCounterUsesSessionBaselineAndReportsMissingSensor() {
+        assertEquals(245L, sessionSteps(10_000, 10_245))
+        assertEquals(0L, sessionSteps(10_000, 9_999))
+        assertNull(sessionSteps(null, 10_245))
+    }
+
+    @Test
+    fun resumedStepSegmentDoesNotIncludeStepsTakenWhilePaused() {
+        val beforePause = accumulatedSessionSteps(0, 1_000, 1_120)
+        val afterResume = accumulatedSessionSteps(beforePause!!, 1_300, 1_350)
+
+        assertEquals(170L, afterResume)
+    }
+
+    @Test
+    fun trainingStateRoundTripsThroughRoomPayload() {
+        val model = PrototypeViewModel(null, null)
+        val payload = encodeTrainingState(
+            supplements = model.supplements,
+            sessions = model.sessions,
+            history = model.history,
+            selectedSessionId = "session-1",
+            activeWorkoutSessionId = null,
+            isWorkoutPaused = false,
+            completedExerciseIds = mapOf("target-1" to true),
+            suggestionDecision = SuggestionDecision.ACCEPTED,
+            suggestedWeightKg = 45.0
+        )
+
+        val restored = decodeTrainingState(payload, model.exerciseLibrary)!!
+
+        assertEquals(model.supplements.size, restored.supplements.size)
+        assertEquals(model.sessions.size, restored.sessions.size)
+        assertEquals("session-1", restored.selectedSessionId)
+        assertTrue(restored.completedExerciseIds.getValue("target-1"))
+        assertEquals(45.0, restored.suggestedWeightKg, 0.001)
+    }
+
+    @Test
+    fun entitlementTransitionsWithoutBlockingCoreFeatures() {
+        val now = Instant.parse("2026-07-23T00:00:00Z")
+        val active = SessionPreferences(
+            authenticatedEmail = "test@example.com",
+            trialStartedAtMillis = now.minus(Duration.ofDays(10)).toEpochMilli()
+        )
+        val expired = active.copy(trialStartedAtMillis = now.minus(Duration.ofDays(31)).toEpochMilli())
+
+        assertEquals(EntitlementKind.TRIAL, active.entitlement(now.toEpochMilli()))
+        assertEquals(EntitlementKind.FREE_AD_SUPPORTED, expired.entitlement(now.toEpochMilli()))
+        assertEquals(EntitlementKind.SUBSCRIBER, expired.copy(subscriber = true).entitlement(now.toEpochMilli()))
+    }
+}

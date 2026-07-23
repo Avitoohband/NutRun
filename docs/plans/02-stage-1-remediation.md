@@ -3,7 +3,7 @@
 ## Objective
 
 Bring the current Android prototype into compliance with the Stage 1 missions and
-prototype acceptance criteria in `PLAN.md`.
+prototype acceptance criteria in [`01-product-roadmap.md`](01-product-roadmap.md).
 
 This work remains a design-validation prototype. Firebase, Room, billing, real
 advertising, production notifications, and backend synchronization remain Stage 2
@@ -50,7 +50,7 @@ work.
 
 ## Phase 3: Complete Core Journeys
 
-Implement every flow listed under Mission 3 in `PLAN.md`:
+Implement every flow listed under Mission 3 in [`01-product-roadmap.md`](01-product-roadmap.md):
 
 1. Add clickable Google and email registration simulations.
 2. Add trial onboarding and notification-permission simulations.
@@ -130,7 +130,7 @@ Implement every flow listed under Mission 3 in `PLAN.md`:
 ### Acceptance
 
 - Build, unit tests, UI tests, and lint pass.
-- Every prototype acceptance criterion in `PLAN.md` has recorded validation.
+- Every prototype acceptance criterion in [`01-product-roadmap.md`](01-product-roadmap.md) has recorded validation.
 - No enabled placeholder controls remain.
 
 ## Recommended Implementation Order

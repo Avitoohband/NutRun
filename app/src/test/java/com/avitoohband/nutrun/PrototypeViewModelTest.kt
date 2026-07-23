@@ -10,7 +10,7 @@ import org.junit.Test
 class PrototypeViewModelTest {
     @Test
     fun duplicateExercisesReceiveIndependentTargetIds() {
-        val model = PrototypeViewModel()
+        val model = PrototypeViewModel(null, null)
         model.selectSession("session-1")
         val exercise = model.exerciseLibrary.first()
 
@@ -23,7 +23,7 @@ class PrototypeViewModelTest {
 
     @Test
     fun finishingWorkoutRetainsSummaryUntilDismissed() {
-        val model = PrototypeViewModel()
+        val model = PrototypeViewModel(null, null)
         val session = model.sessions.first()
         model.startWorkout(session.id)
         model.toggleExerciseComplete(session.exercises.first().id, true)
@@ -39,7 +39,7 @@ class PrototypeViewModelTest {
 
     @Test
     fun acceptingProgressionUpdatesFutureTarget() {
-        val model = PrototypeViewModel()
+        val model = PrototypeViewModel(null, null)
 
         model.decideSuggestion(SuggestionDecision.ACCEPTED, 45.0)
 

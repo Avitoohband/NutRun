@@ -1,25 +1,52 @@
-# NutRun Android prototype
+# NutRun
 
-This is the Stage 1 interactive prototype for the fitness app plan. It uses Kotlin and Jetpack Compose and intentionally keeps prototype data in memory.
+NutRun is an Android training and health tracker built with Kotlin and Jetpack
+Compose. It combines workouts, food and calorie logging, hydration reminders,
+supplements, BMI and energy estimates, weight history, and recorded GPS walks.
 
-## Implemented prototype flows
+## Android App
 
-- Google and email registration simulations, trial onboarding, and notification choice.
-- Today dashboard with supplement creation, daily/every-N-days/weekday schedules, and completion tracking.
-- Weekly program creation, exercise search, target configuration, and session editing.
-- Active workouts with pause, resume, completion, summary, and updated history.
-- Exercise instructions, safety notes, affected muscles, and editable progression suggestions.
-- Light/dark theme switch and a trial-to-free-plan ad preview simulation.
+The app uses a local-first production architecture:
 
-## Run it
+- Account-scoped Room storage for profiles, weight history, nutrition,
+  hydration, training, supplements, walk sessions, and route points.
+- DataStore for the current account, theme, and per-account entitlement cache.
+- A WorkManager outbox for authenticated, idempotent Firestore/Storage sync.
+- Hilt, KSP, Navigation Compose, Flow, and WorkManager.
+- Firebase email/password authentication when `google-services.json` is supplied.
+- Fused Location Provider, foreground recording, and the step-counter sensor.
+- Google Maps Compose with an offline route preview when no Maps key is configured.
+- Google Play Billing and entitlement-gated AdMob test ads.
 
-Open this folder in Android Studio, let it use the included Gradle wrapper, then run the `app` configuration on an emulator or Android device.
+Debug builds provide a local authentication fallback so the app can be evaluated
+before Firebase credentials are added. Release authentication fails closed when
+the production services are not configured.
 
-From PowerShell, run:
+Open the repository in Android Studio and run the `app` configuration on an API
+26+ emulator or device. From PowerShell:
 
 ```powershell
-.\gradlew.bat assembleDebug
-.\gradlew.bat test lint
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 ```
 
-All authentication, notification, subscription, and advertising behavior is simulated for prototype validation. Production authentication, purchases, ads, notifications, local storage, and backend synchronization belong to later plan missions.
+The debug APK is generated at:
+
+`app/build/outputs/apk/debug/app-debug.apk`
+
+## Backend and MCP
+
+`backend/` contains the Cloud Run REST and MCP service. It uses Firebase Admin,
+account-scoped Firestore and Cloud Storage access, Play subscription
+verification, deterministic conflict handling, OAuth JWT verification, scoped
+route privacy, shared rate limits, confirmations, revocation, and audit logging.
+
+```powershell
+cd backend
+npm.cmd install
+npm.cmd test
+npm.cmd start
+```
+
+Production keys, Firebase, OAuth, Maps, AdMob, Play Billing, and Cloud Run setup
+are documented in [Production Services Setup](docs/setup/production-services.md).
+The ordered product plans are indexed in [Planning Documents](docs/plans/README.md).

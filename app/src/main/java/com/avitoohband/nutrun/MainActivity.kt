@@ -1,13 +1,22 @@
 package com.avitoohband.nutrun
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,49 +27,47 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.DirectionsRun
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.LocalDining
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,119 +75,267 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.avitoohband.nutrun.data.FoodLogEntity
+import com.avitoohband.nutrun.billing.BillingManager
+import com.avitoohband.nutrun.data.HydrationPlanEntity
+import com.avitoohband.nutrun.data.WalkPointEntity
+import com.avitoohband.nutrun.domain.ActivityLevel
+import com.avitoohband.nutrun.domain.BiologicalSex
+import com.avitoohband.nutrun.domain.EntitlementKind
+import com.avitoohband.nutrun.domain.FoodCatalogItem
+import com.avitoohband.nutrun.domain.HealthGoal
+import com.avitoohband.nutrun.domain.MealType
+import com.avitoohband.nutrun.domain.UnitSystem
+import com.avitoohband.nutrun.domain.UserProfile
+import com.avitoohband.nutrun.domain.WalkState
+import com.avitoohband.nutrun.domain.calculateHealthEstimate
+import com.avitoohband.nutrun.walk.WalkRecordingService
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.Polyline
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import dagger.hilt.android.AndroidEntryPoint
+import java.time.LocalDate
 import java.time.DayOfWeek
+import java.time.format.DateTimeParseException
+import kotlin.math.roundToInt
 
-private val lavender = Color(0xFF7758E8)
-private val mint = Color(0xFF3ABF9A)
-private val coral = Color(0xFFF47F73)
-private val sky = Color(0xFF4D9DE0)
-
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NutRunApp() }
+        setContent { NutRunRoot() }
     }
 }
 
+private data class Destination(val route: String, val label: String, val icon: ImageVector)
+
+private val destinations = listOf(
+    Destination("today", "Today", Icons.Default.Home),
+    Destination("training", "Training", Icons.Default.FitnessCenter),
+    Destination("nutrition", "Nutrition", Icons.Default.LocalDining),
+    Destination("walk", "Walk", Icons.AutoMirrored.Filled.DirectionsRun),
+    Destination("progress", "Progress", Icons.AutoMirrored.Filled.ShowChart)
+)
+
 @Composable
-fun NutRunApp(prototype: PrototypeViewModel = viewModel()) {
-    var darkMode by rememberSaveable { mutableStateOf(false) }
-    var showNotificationPrompt by rememberSaveable { mutableStateOf(false) }
-    val colors = if (darkMode) {
-        androidx.compose.material3.darkColorScheme(
-            primary = Color(0xFFB9A9FF), secondary = Color(0xFF8AE7CD), tertiary = Color(0xFFFFB3AA)
-        )
-    } else {
-        androidx.compose.material3.lightColorScheme(
-            primary = lavender, secondary = mint, tertiary = coral, surface = Color(0xFFFAF9FF)
-        )
-    }
+fun NutRunRoot(
+    app: NutRunViewModel = hiltViewModel(),
+    training: PrototypeViewModel = hiltViewModel()
+) {
+    val state by app.state.collectAsStateWithLifecycle()
+    val message by app.message.collectAsState()
+    val dark = state.session.darkMode
+    val colors = if (dark) androidx.compose.material3.darkColorScheme() else androidx.compose.material3.lightColorScheme()
+
     MaterialTheme(colorScheme = colors) {
-        Surface(Modifier.fillMaxSize()) {
-            if (prototype.isAuthenticated) {
-                MainPrototype(prototype, darkMode, { darkMode = !darkMode })
-            } else {
-                RegistrationScreen(onRegister = {
-                    prototype.completeRegistration()
-                    showNotificationPrompt = true
-                })
-            }
-            if (showNotificationPrompt && prototype.isAuthenticated) {
-                NotificationPermissionDialog(
-                    onDecision = { granted ->
-                        prototype.setNotificationPermission(granted)
-                        showNotificationPrompt = false
-                    }
-                )
-            }
+        when {
+            state.session.authenticatedEmail == null -> AuthenticationScreen(app::authenticate)
+            state.profile == null -> OnboardingScreen(
+                email = state.session.authenticatedEmail.orEmpty(),
+                onSave = app::saveProfile
+            )
+            else -> MainApp(app, training, state)
+        }
+        message?.let {
+            AlertDialog(
+                onDismissRequest = app::clearMessage,
+                title = { Text("NutRun") },
+                text = { Text(it) },
+                confirmButton = { TextButton(onClick = app::clearMessage) { Text("OK") } }
+            )
         }
     }
 }
 
 @Composable
-private fun RegistrationScreen(onRegister: () -> Unit) {
+private fun AuthenticationScreen(onAuthenticate: (String, String, Boolean) -> Unit) {
+    var email by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center
     ) {
-        Box(Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Bolt, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(38.dp))
-        }
-        Spacer(Modifier.height(20.dp))
-        Text("Welcome to NutRun", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text("Build a plan, track your training, and keep your momentum.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(28.dp))
-        Button(onClick = onRegister, modifier = Modifier.fillMaxWidth()) { Text("Continue with Google") }
+        Text("NutRun", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+        Text("Sign in to keep your training and health log together.")
+        Spacer(Modifier.height(24.dp))
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Email") },
+            singleLine = true
+        )
         Spacer(Modifier.height(10.dp))
-        OutlinedButton(onClick = onRegister, modifier = Modifier.fillMaxWidth()) { Text("Continue with email") }
-        Spacer(Modifier.height(20.dp))
-        Text("Start a 30-day ad-free trial. No payment details needed.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation()
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = { onAuthenticate(email, password, false) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Sign in") }
+        OutlinedButton(
+            onClick = { onAuthenticate(email, password, true) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Create account") }
+        Text(
+            "A 30-day ad-free trial starts when the account is first created. No payment details required.",
+            modifier = Modifier.padding(top = 12.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 13.sp
+        )
     }
 }
 
 @Composable
-private fun NotificationPermissionDialog(onDecision: (Boolean) -> Unit) {
-    AlertDialog(
-        onDismissRequest = { onDecision(false) },
-        title = { Text("Workout reminders") },
-        text = { Text("Allow optional workout and supplement reminders? You can change this later in Profile.") },
-        confirmButton = { Button(onClick = { onDecision(true) }) { Text("Allow") } },
-        dismissButton = { TextButton(onClick = { onDecision(false) }) { Text("Not now") } }
-    )
+private fun OnboardingScreen(email: String, onSave: (UserProfile) -> Unit) {
+    var birthDate by rememberSaveable { mutableStateOf("1995-01-01") }
+    var sex by rememberSaveable { mutableStateOf(BiologicalSex.MALE) }
+    var height by rememberSaveable { mutableStateOf("175") }
+    var weight by rememberSaveable { mutableStateOf("75") }
+    var activity by rememberSaveable { mutableStateOf(ActivityLevel.MODERATE) }
+    var goal by rememberSaveable { mutableStateOf(HealthGoal.MAINTAIN) }
+    var units by rememberSaveable { mutableStateOf(UnitSystem.METRIC) }
+    var target by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 20.dp),
+        contentPadding = PaddingValues(vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text("Set up your profile", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text("These details calculate your starting BMI and energy estimates.")
+        }
+        item {
+            OutlinedTextField(
+                birthDate,
+                { birthDate = it },
+                Modifier.fillMaxWidth(),
+                label = { Text("Birth date (YYYY-MM-DD)") },
+                singleLine = true
+            )
+        }
+        item { ChoiceRow("Biological sex", BiologicalSex.entries, sex, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { sex = it } }
+        item { ChoiceRow("Units", UnitSystem.entries, units, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { units = it } }
+        item {
+            OutlinedTextField(
+                height,
+                { height = it },
+                Modifier.fillMaxWidth(),
+                label = { Text(if (units == UnitSystem.METRIC) "Height (cm)" else "Height (inches)") },
+                singleLine = true
+            )
+        }
+        item {
+            OutlinedTextField(
+                weight,
+                { weight = it },
+                Modifier.fillMaxWidth(),
+                label = { Text(if (units == UnitSystem.METRIC) "Weight (kg)" else "Weight (lb)") },
+                singleLine = true
+            )
+        }
+        item { ChoiceRow("Activity", ActivityLevel.entries, activity, { it.name.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase) }) { activity = it } }
+        item { ChoiceRow("Goal", HealthGoal.entries, goal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { goal = it } }
+        item {
+            OutlinedTextField(
+                target,
+                { target = it },
+                Modifier.fillMaxWidth(),
+                label = { Text("Daily calorie target (optional)") },
+                singleLine = true
+            )
+        }
+        error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+        item {
+            Button(
+                onClick = {
+                    try {
+                        val date = LocalDate.parse(birthDate)
+                        val enteredHeight = height.toDouble()
+                        val enteredWeight = weight.toDouble()
+                        val heightCm = if (units == UnitSystem.METRIC) enteredHeight else enteredHeight * 2.54
+                        val weightKg = if (units == UnitSystem.METRIC) enteredWeight else enteredWeight / KG_TO_POUNDS
+                        val estimate = calculateHealthEstimate(date, sex, heightCm, weightKg, activity, goal)
+                        onSave(
+                            UserProfile(
+                                email,
+                                date,
+                                sex,
+                                heightCm,
+                                weightKg,
+                                activity,
+                                goal,
+                                units,
+                                target.toIntOrNull() ?: estimate.calorieTarget
+                            )
+                        )
+                    } catch (_: DateTimeParseException) {
+                        error = "Use a valid date in YYYY-MM-DD format."
+                    } catch (_: Exception) {
+                        error = "Check that your date, height, weight, and target are valid."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Finish setup") }
+        }
+        item {
+            Text(
+                "Estimates are general guidance and are not medical advice.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp
+            )
+        }
+    }
 }
 
 @Composable
-private fun MainPrototype(prototype: PrototypeViewModel, darkMode: Boolean, toggleTheme: () -> Unit) {
-    var tab by rememberSaveable { mutableStateOf(0) }
-    var showAddSession by rememberSaveable { mutableStateOf(false) }
-    Scaffold(
-        topBar = { AppBar(darkMode, toggleTheme) },
-        bottomBar = { BottomNavigation(tab) { tab = it } },
-        floatingActionButton = {
-            if (tab == 1) {
-                FloatingActionButton(onClick = { showAddSession = true }, containerColor = MaterialTheme.colorScheme.primary) {
-                    Icon(Icons.Default.Add, "Create program", tint = MaterialTheme.colorScheme.onPrimary)
+private fun <T> ChoiceRow(
+    title: String,
+    values: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelected: (T) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        values.chunked(2).forEach { rowValues ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rowValues.forEach {
+                    FilterChip(
+                        selected = it == selected,
+                        onClick = { onSelected(it) },
+                        label = { Text(label(it), fontSize = 12.sp) }
+                    )
                 }
-            }
-        }
-    ) { padding ->
-        Box(Modifier.padding(padding)) {
-            when (tab) {
-                0 -> TodayScreen(prototype, onStartWorkout = { id -> prototype.startWorkout(id); tab = 1 })
-                1 -> ProgramScreen(prototype, showAddSession, { showAddSession = true }, { showAddSession = false }, onEditExercises = { id -> prototype.selectSession(id); tab = 2 })
-                2 -> ExercisesScreen(prototype)
-                3 -> ProgressScreen(prototype)
-                4 -> ProfileScreen(prototype, darkMode, toggleTheme)
             }
         }
     }
@@ -188,336 +343,938 @@ private fun MainPrototype(prototype: PrototypeViewModel, darkMode: Boolean, togg
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppBar(darkMode: Boolean, onTheme: () -> Unit) {
-    CenterAlignedTopAppBar(
-        title = { Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(30.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Bolt, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+private fun MainApp(app: NutRunViewModel, training: PrototypeViewModel, state: NutRunUiState) {
+    val navController = rememberNavController()
+    val entry by navController.currentBackStackEntryAsState()
+    val route = entry?.destination?.route ?: "today"
+    var accountMenu by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (route == "profile") "Profile" else "NutRun", fontWeight = FontWeight.Bold) },
+                actions = {
+                    Box {
+                        IconButton(onClick = { accountMenu = true }) {
+                            Icon(Icons.Default.Person, "Profile")
+                        }
+                        DropdownMenu(accountMenu, { accountMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Profile and settings") },
+                                onClick = {
+                                    accountMenu = false
+                                    navController.navigate("profile")
+                                }
+                            )
+                            DropdownMenuItem(text = { Text("Sign out") }, onClick = {
+                                accountMenu = false
+                                app.signOut()
+                            })
+                        }
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            if (route != "profile") {
+                NavigationBar {
+                    destinations.forEach { destination ->
+                        NavigationBarItem(
+                            selected = route == destination.route,
+                            onClick = {
+                                navController.navigate(destination.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(destination.icon, destination.label) },
+                            label = { Text(destination.label, fontSize = 10.sp) }
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.width(8.dp)); Text("NutRun", fontWeight = FontWeight.Bold)
-        } },
-        actions = { IconButton(onClick = onTheme) { Icon(if (darkMode) Icons.Default.LightMode else Icons.Default.DarkMode, "Toggle theme") } }
-    )
-}
-
-@Composable
-private fun BottomNavigation(selected: Int, onSelect: (Int) -> Unit) {
-    val destinations = listOf(
-        "Today" to Icons.Default.Home, "Program" to Icons.Default.CalendarMonth,
-        "Exercises" to Icons.Default.MenuBook, "Progress" to Icons.Default.ShowChart,
-        "Profile" to Icons.Default.Person
-    )
-    NavigationBar { destinations.forEachIndexed { index, item ->
-        NavigationBarItem(selected == index, { onSelect(index) }, { Icon(item.second, item.first) }, label = { Text(item.first) })
-    } }
-}
-
-@Composable
-private fun TodayScreen(prototype: PrototypeViewModel, onStartWorkout: (String) -> Unit) {
-    var showAddSupplement by remember { mutableStateOf(false) }
-    var showReminder by remember { mutableStateOf(false) }
-    val todaySession = prototype.sessions.firstOrNull { it.weekday == DayOfWeek.WEDNESDAY } ?: prototype.sessions.firstOrNull()
-    if (showAddSupplement) AddSupplementDialog(onDismiss = { showAddSupplement = false }, onAdd = { name, dose, schedule ->
-        prototype.addSupplement(name, dose, schedule); showAddSupplement = false
-    })
-    if (showReminder) ReminderDialog(onDismiss = { showReminder = false }, session = prototype.sessions.firstOrNull { it.weekday == DayOfWeek.MONDAY })
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Spacer(Modifier.height(8.dp)); Text("Good evening, Avi", fontSize = 28.sp, fontWeight = FontWeight.Bold); Text("You are building momentum.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { todaySession?.let { TodayWorkoutCard(it, { onStartWorkout(it.id) }) } }
-        item { SectionTitle("Today's supplements", "${prototype.supplements.count { it.completedToday }}/${prototype.supplements.size} complete", onAction = { showAddSupplement = true }, actionLabel = "Add") }
-        items(prototype.supplements, key = { it.id }) { supplement -> SupplementRow(supplement) { prototype.toggleSupplement(supplement.id, it) } }
-        item { Text("Supplement tracking is for organization only, not medical or dosage advice.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { SectionTitle("Tomorrow", "Preparation") }
-        item { ReminderCard { showReminder = true } }
-        if (!prototype.trialState.isTrialActive()) item { AdPreview() }
-        item { Spacer(Modifier.height(12.dp)) }
-    }
-}
-
-@Composable
-private fun TodayWorkoutCard(session: TrainingSession, onStart: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.padding(22.dp)) {
-            Text(session.weekday.name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(10.dp)); Text(session.name, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text("${session.exercises.size} exercises", color = MaterialTheme.colorScheme.onPrimaryContainer)
-            Spacer(Modifier.height(18.dp)); Button(onClick = onStart) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Start workout") }
+        }
+    ) { padding ->
+        NavHost(navController, startDestination = "today", modifier = Modifier.padding(padding)) {
+            composable("today") { TodayScreen(state, training) }
+            composable("training") { TrainingScreen(training) }
+            composable("nutrition") { NutritionScreen(app, state) }
+            composable("walk") { WalkScreen(app, state) }
+            composable("progress") { ProgressScreen(app, state) }
+            composable("profile") { ProfileScreen(app, state) { navController.popBackStack() } }
         }
     }
 }
 
 @Composable
-private fun SectionTitle(title: String, caption: String, onAction: (() -> Unit)? = null, actionLabel: String? = null) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-        if (onAction != null && actionLabel != null) TextButton(onClick = onAction) { Text(actionLabel) } else Text(caption, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
+    val profile = state.profile ?: return
+    var addSupplement by remember { mutableStateOf(false) }
+    if (addSupplement) {
+        AddSupplementDialog(
+            onDismiss = { addSupplement = false },
+            onAdd = { name, dose ->
+                training.addSupplement(name, dose, SupplementSchedule(RecurrenceType.DAILY))
+                addSupplement = false
+            }
+        )
     }
-}
-
-@Composable
-private fun SupplementRow(item: Supplement, onChecked: (Boolean) -> Unit) {
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) { Icon(Icons.Default.WaterDrop, null, tint = MaterialTheme.colorScheme.secondary) }
-            Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(item.name, fontWeight = FontWeight.SemiBold); Text("${item.dose} - ${item.schedule.label()}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) }
-            Checkbox(item.completedToday, onCheckedChange = onChecked)
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Today", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text("${state.nutrition.calories} of ${profile.calorieTarget} kcal")
+            LinearProgressIndicator(
+                progress = { (state.nutrition.calories / profile.calorieTarget.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            )
         }
-    }
-}
-
-@Composable
-private fun ReminderCard(onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Notifications, null, tint = MaterialTheme.colorScheme.tertiary); Spacer(Modifier.width(12.dp))
-            Column { Text("Push + Biceps tomorrow", fontWeight = FontWeight.Bold); Text("Set out your gear and get a good sleep tonight.", fontSize = 13.sp) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryCard("${state.waterMl}", "mL water", Modifier.weight(1f), Color(0xFFDDEFFC))
+                SummaryCard("${state.nutrition.proteinGrams.roundToInt()} g", "protein", Modifier.weight(1f), Color(0xFFE3F3E8))
+                SummaryCard("${state.walks.firstOrNull()?.distanceMeters?.div(1_000)?.let { "%.1f".format(it) } ?: "0"} km", "last walk", Modifier.weight(1f), Color(0xFFFFE7DE))
+            }
         }
-    }
-}
-
-@Composable
-private fun ReminderDialog(onDismiss: () -> Unit, session: TrainingSession?) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Tomorrow's reminder") }, text = {
-        Text(session?.let { "${it.name} is scheduled for tomorrow. Open the Program tab to review ${it.exercises.size} exercises." } ?: "No workout is scheduled for tomorrow.")
-    }, confirmButton = { Button(onClick = onDismiss) { Text("Got it") } })
-}
-
-@Composable
-private fun AdPreview() {
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.MoreHoriz, null); Spacer(Modifier.width(8.dp)); Text("Free plan ad placement preview", fontSize = 12.sp) }
-    }
-}
-
-@Composable
-private fun ProgramScreen(prototype: PrototypeViewModel, showAddSession: Boolean, requestAddSession: () -> Unit, dismissAddSession: () -> Unit, onEditExercises: (String) -> Unit) {
-    prototype.lastWorkoutSummary?.let { summary ->
-        WorkoutSummaryDialog(summary) { prototype.dismissWorkoutSummary() }
-    }
-    prototype.activeSession()?.let { ActiveWorkoutScreen(prototype, it); return }
-    if (showAddSession) AddSessionDialog(onDismiss = dismissAddSession, onCreate = { name, day -> prototype.addSession(name, day); dismissAddSession() })
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Spacer(Modifier.height(8.dp)); Text("My program", fontSize = 28.sp, fontWeight = FontWeight.Bold); Text("Strength and endurance", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(prototype.sessions, key = { it.id }) { session -> SessionCard(session, onStart = { prototype.startWorkout(session.id) }, onEdit = { onEditExercises(session.id) }) }
-        item { OutlinedButton(onClick = requestAddSession, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Add training session") } }
-        item { Spacer(Modifier.height(12.dp)) }
-    }
-}
-
-@Composable
-private fun SessionCard(session: TrainingSession, onStart: () -> Unit, onEdit: () -> Unit) {
-    val color = when (session.weekday) { DayOfWeek.MONDAY -> lavender; DayOfWeek.WEDNESDAY -> mint; DayOfWeek.FRIDAY -> coral; else -> sky }
-    Card(shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.padding(16.dp)) {
+        item { SectionHeading("Next training") }
+        item {
+            val next = training.sessions.firstOrNull()
+            ActionCard(
+                title = next?.name ?: "Create your first session",
+                subtitle = next?.let { "${it.exercises.size} exercises" } ?: "Training is ready when you are.",
+                icon = Icons.Default.FitnessCenter
+            )
+        }
+        item { SectionHeading("Hydration") }
+        item {
+            ActionCard(
+                "${state.waterMl} / ${state.hydrationPlan.goalMl} mL",
+                if (state.waterMl >= state.hydrationPlan.goalMl) "Daily goal reached" else "Keep a steady pace through your waking window.",
+                Icons.Default.WaterDrop
+            )
+        }
+        item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.width(52.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(session.weekday.name.take(3), color = color, fontWeight = FontWeight.Bold); Text("WEEKLY", fontSize = 9.sp) }
-                Column(Modifier.weight(1f)) { Text(session.name, fontWeight = FontWeight.Bold, fontSize = 17.sp); Text("${session.exercises.size} exercises", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                IconButton(onClick = onStart) { Icon(Icons.Default.PlayArrow, "Start ${session.name}", tint = color) }
+                SectionHeading("Supplements", Modifier.weight(1f))
+                IconButton(onClick = { addSupplement = true }) { Icon(Icons.Default.Add, "Add supplement") }
             }
-            if (session.exercises.isNotEmpty()) Text(session.exercises.joinToString(" | ") { it.exercise.name }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = onEdit) { Text("Edit exercises") }
+        }
+        items(training.supplements.filter { it.schedule.isDueOn(LocalDate.now()) }, key = { it.id }) { supplement ->
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = supplement.completedToday,
+                        onCheckedChange = { training.toggleSupplement(supplement.id, it) }
+                    )
+                    Column {
+                        Text(supplement.name, fontWeight = FontWeight.SemiBold)
+                        Text("${supplement.dose} | ${supplement.schedule.label()}", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+        if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
+    }
+}
+
+@Composable
+private fun TrainingScreen(model: PrototypeViewModel) {
+    var addSession by remember { mutableStateOf(false) }
+    var editSessionId by remember { mutableStateOf<String?>(null) }
+    if (addSession) {
+        AddTrainingSessionDialog(
+            onDismiss = { addSession = false },
+            onSave = { name, day ->
+                model.addSession(name, day)
+                addSession = false
+            }
+        )
+    }
+    editSessionId?.let { sessionId ->
+        ExercisePickerDialog(
+            model = model,
+            sessionId = sessionId,
+            onDismiss = { editSessionId = null }
+        )
+    }
+    model.lastWorkoutSummary?.let { summary ->
+        AlertDialog(
+            onDismissRequest = model::dismissWorkoutSummary,
+            title = { Text("Workout saved") },
+            text = { Text("${summary.completedExercises} of ${summary.totalExercises} exercises completed.") },
+            confirmButton = { TextButton(onClick = model::dismissWorkoutSummary) { Text("Done") } }
+        )
+    }
+    model.activeSession()?.let { session ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item { Text(session.name, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+            items(session.exercises, key = { it.id }) { target ->
+                Card(shape = RoundedCornerShape(8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            model.completedExerciseIds[target.id] == true,
+                            { model.toggleExerciseComplete(target.id, it) }
+                        )
+                        Column {
+                            Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
+                            Text(target.summary(model.usesMetricUnits))
+                        }
+                    }
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = model::pauseOrResumeWorkout, modifier = Modifier.weight(1f)) {
+                        Icon(if (model.isWorkoutPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null)
+                        Text(if (model.isWorkoutPaused) "Resume" else "Pause")
+                    }
+                    Button(onClick = model::finishWorkout, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Stop, null)
+                        Text("Finish")
+                    }
+                }
+            }
+        }
+        return
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item { Text("Training", fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+        items(model.sessions, key = { it.id }) { session ->
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(session.name, fontWeight = FontWeight.Bold)
+                            Text("${session.weekday.name.lowercase().replaceFirstChar(Char::uppercase)} | ${session.exercises.size} exercises")
+                        }
+                        IconButton(onClick = { model.startWorkout(session.id) }) {
+                            Icon(Icons.Default.PlayArrow, "Start ${session.name}")
+                        }
+                    }
+                    TextButton(onClick = {
+                        model.selectSession(session.id)
+                        editSessionId = session.id
+                    }) {
+                        Icon(Icons.Default.Edit, null)
+                        Text("Exercises")
+                    }
+                }
+            }
+        }
+        item {
+            OutlinedButton(onClick = { addSession = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Add, null)
+                Text("Add training session")
+            }
         }
     }
 }
 
 @Composable
-private fun ActiveWorkoutScreen(prototype: PrototypeViewModel, session: TrainingSession) {
-    LazyColumn(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text(if (prototype.isWorkoutPaused) "Workout paused" else "Active workout", fontSize = 28.sp, fontWeight = FontWeight.Bold); Text(session.name, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(session.exercises, key = { it.id }) { target ->
-            Card(shape = RoundedCornerShape(16.dp)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(prototype.completedExerciseIds[target.id] == true, { prototype.toggleExerciseComplete(target.id, it) })
-                Column(Modifier.weight(1f)) { Text(target.exercise.name, fontWeight = FontWeight.SemiBold, textDecoration = if (prototype.completedExerciseIds[target.id] == true) TextDecoration.LineThrough else null); Text(target.summary(prototype.usesMetricUnits), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            } }
-        }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { prototype.pauseOrResumeWorkout() }, modifier = Modifier.weight(1f)) { Icon(if (prototype.isWorkoutPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null); Spacer(Modifier.width(5.dp)); Text(if (prototype.isWorkoutPaused) "Resume" else "Pause") }
-            Button(onClick = { prototype.finishWorkout() }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Check, null); Spacer(Modifier.width(5.dp)); Text("Finish") }
-        } }
-    }
-}
-
-@Composable
-private fun WorkoutSummaryDialog(summary: WorkoutSummary, onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Workout saved") }, text = { Text("${summary.sessionName}: ${summary.completedExercises}/${summary.totalExercises} exercises completed. Your history has been updated.") }, confirmButton = { Button(onClick = onDismiss) { Text("Done") } })
-}
-
-@Composable
-private fun ExercisesScreen(prototype: PrototypeViewModel) {
+private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
+    var showFood by remember { mutableStateOf<FoodLogEntity?>(null) }
+    var draftFood by remember { mutableStateOf<FoodCatalogItem?>(null) }
+    var createFood by remember { mutableStateOf(false) }
+    var hydrationSettings by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
+    val searchResults by app.foodSearchResults.collectAsState()
+    val searchBusy by app.foodSearchBusy.collectAsState()
     var query by rememberSaveable { mutableStateOf("") }
-    var selected by remember { mutableStateOf<Exercise?>(null) }
-    val results = prototype.exerciseLibrary.filter { it.name.contains(query, true) || it.category.contains(query, true) || it.primaryMuscles.contains(query, true) }
-    selected?.let { ExerciseDialog(it, prototype.selectedSession(), prototype.usesMetricUnits, { sets, reps, weight, duration, distance ->
-        prototype.addExerciseToSelectedSession(it, sets, reps, weight, duration, distance)
-        selected = null
-    }, { selected = null }) }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Spacer(Modifier.height(8.dp)); Text("Exercise library", fontSize = 28.sp, fontWeight = FontWeight.Bold); Text(prototype.selectedSession()?.let { "Adding to: ${it.name}" } ?: "Select Edit exercises on a program session first.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) }
-        item { OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search exercises") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true) }
-        items(results, key = { it.id }) { exercise -> ExerciseCard(exercise) { selected = exercise } }
-        item { Spacer(Modifier.height(12.dp)) }
+
+    if (createFood || showFood != null || draftFood != null) {
+        FoodEntryDialog(
+            existing = showFood,
+            draft = draftFood,
+            onDismiss = { createFood = false; showFood = null; draftFood = null },
+            onSave = { item, meal, id ->
+                app.saveFood(item, meal, id)
+                createFood = false
+                showFood = null
+                draftFood = null
+            }
+        )
+    }
+    if (hydrationSettings) {
+        HydrationSettingsDialog(
+            state.hydrationPlan,
+            {
+                app.saveHydrationPlan(it)
+                if (
+                    it.remindersEnabled &&
+                    android.os.Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                hydrationSettings = false
+            },
+            { hydrationSettings = false }
+        )
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Nutrition", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("${state.nutrition.calories} kcal | P ${state.nutrition.proteinGrams.roundToInt()} | C ${state.nutrition.carbohydrateGrams.roundToInt()} | F ${state.nutrition.fatGrams.roundToInt()}")
+                }
+                IconButton(onClick = { createFood = true }) { Icon(Icons.Default.Add, "Add food") }
+            }
+        }
+        item {
+            OutlinedTextField(
+                query,
+                {
+                    query = it
+                    app.searchFood(it)
+                },
+                Modifier.fillMaxWidth(),
+                label = { Text("Search food") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                singleLine = true
+            )
+        }
+        if (searchBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        items(searchResults, key = { it.id }) { result ->
+            Card(
+                Modifier.fillMaxWidth().clickable {
+                    draftFood = result
+                    query = ""
+                    app.searchFood("")
+                },
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Row(Modifier.padding(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(result.name, fontWeight = FontWeight.SemiBold)
+                        Text("${result.servingGrams.roundToInt()} g serving")
+                    }
+                    Text("${result.calories} kcal")
+                }
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionHeading("Water", Modifier.weight(1f))
+                TextButton(onClick = { hydrationSettings = true }) { Text("Settings") }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${state.waterMl} / ${state.hydrationPlan.goalMl} mL", fontWeight = FontWeight.Bold)
+                        LinearProgressIndicator(
+                            progress = { (state.waterMl / state.hydrationPlan.goalMl.toFloat()).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { app.addWater(state.hydrationPlan.servingMl) }) {
+                        Text("+${state.hydrationPlan.servingMl}")
+                    }
+                }
+            }
+        }
+        MealType.entries.forEach { meal ->
+            item { SectionHeading(meal.name.lowercase().replaceFirstChar(Char::uppercase)) }
+            val entries = state.food.filter { it.mealType == meal.name }
+            if (entries.isEmpty()) item { Text("Nothing logged", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            items(entries, key = { it.id }) { entry ->
+                FoodLogRow(entry, { showFood = entry }, { app.duplicateFood(entry.id) }, { app.deleteFood(entry) })
+            }
+        }
+        if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
     }
 }
 
 @Composable
-private fun ExerciseCard(exercise: Exercise, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) { Icon(if (exercise.category == "Endurance") Icons.Default.DirectionsRun else Icons.Default.FitnessCenter, null, tint = MaterialTheme.colorScheme.primary) }
-            Spacer(Modifier.width(14.dp)); Column { Text(exercise.name, fontWeight = FontWeight.Bold); Text(exercise.category, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp); Text(exercise.primaryMuscles, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) }
+private fun FoodLogRow(entry: FoodLogEntity, edit: () -> Unit, duplicate: () -> Unit, delete: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Card(shape = RoundedCornerShape(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(entry.name, fontWeight = FontWeight.SemiBold)
+                Text("${entry.servingGrams.roundToInt()} g | ${entry.calories} kcal")
+            }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Food actions") }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem({ Text("Edit") }, { menu = false; edit() }, leadingIcon = { Icon(Icons.Default.Edit, null) })
+                    DropdownMenuItem({ Text("Duplicate") }, { menu = false; duplicate() }, leadingIcon = { Icon(Icons.Default.Add, null) })
+                    DropdownMenuItem({ Text("Delete") }, { menu = false; delete() }, leadingIcon = { Icon(Icons.Default.Delete, null) })
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ExerciseDialog(exercise: Exercise, session: TrainingSession?, metric: Boolean, onAdd: (Int, Int, Double?, Int?, Double?) -> Unit, onDismiss: () -> Unit) {
-    var sets by remember { mutableStateOf(exercise.defaultSets.toString()) }
-    var reps by remember { mutableStateOf(exercise.defaultReps.toString()) }
-    var weight by remember { mutableStateOf(exercise.defaultWeightKg?.let { if (metric) it.toString() else (it * KG_TO_POUNDS).toString() } ?: "") }
-    var duration by remember { mutableStateOf(exercise.defaultDurationMinutes?.toString() ?: "") }
-    var distance by remember { mutableStateOf(exercise.defaultDistanceKm?.let { if (metric) it.toString() else (it * KM_TO_MILES).toString() } ?: "") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(exercise.name) }, text = {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { Text("Primary: ${exercise.primaryMuscles}", fontWeight = FontWeight.SemiBold); Text("Secondary: ${exercise.secondaryMuscles}", fontSize = 13.sp) }
-            item { Text(exercise.instructions, fontSize = 13.sp); Text(exercise.safetyNote, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            item { OutlinedTextField(sets, { sets = it }, label = { Text("Sets") }, singleLine = true) }
-            item { OutlinedTextField(reps, { reps = it }, label = { Text("Reps") }, singleLine = true) }
-            item { OutlinedTextField(weight, { weight = it }, label = { Text("Weight (${if (metric) "kg" else "lb"}), optional") }, singleLine = true) }
-            item { OutlinedTextField(duration, { duration = it }, label = { Text("Duration (minutes), optional") }, singleLine = true) }
-            item { OutlinedTextField(distance, { distance = it }, label = { Text("Distance (${if (metric) "km" else "mi"}), optional") }, singleLine = true) }
-        }
-    }, confirmButton = { Button(onClick = {
-        val storedWeightKg = weight.toDoubleOrNull()?.let { if (metric) it else it / KG_TO_POUNDS }
-        val storedDistanceKm = distance.toDoubleOrNull()?.let { if (metric) it else it / KM_TO_MILES }
-        onAdd(sets.toIntOrNull() ?: 3, reps.toIntOrNull() ?: 10, storedWeightKg, duration.toIntOrNull(), storedDistanceKm)
-    }, enabled = session != null) { Text("Add to session") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } })
+private fun FoodEntryDialog(
+    existing: FoodLogEntity?,
+    draft: FoodCatalogItem?,
+    onDismiss: () -> Unit,
+    onSave: (FoodCatalogItem, MealType, String?) -> Unit
+) {
+    var name by remember { mutableStateOf(existing?.name ?: draft?.name.orEmpty()) }
+    var serving by remember { mutableStateOf((existing?.servingGrams ?: draft?.servingGrams)?.toString() ?: "100") }
+    var calories by remember { mutableStateOf((existing?.calories ?: draft?.calories)?.toString().orEmpty()) }
+    var protein by remember { mutableStateOf((existing?.proteinGrams ?: draft?.proteinGrams)?.toString() ?: "0") }
+    var carbs by remember { mutableStateOf((existing?.carbohydrateGrams ?: draft?.carbohydrateGrams)?.toString() ?: "0") }
+    var fat by remember { mutableStateOf((existing?.fatGrams ?: draft?.fatGrams)?.toString() ?: "0") }
+    var meal by remember { mutableStateOf(existing?.mealType?.let(MealType::valueOf) ?: MealType.SNACK) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "Log food" else "Edit food") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { OutlinedTextField(name, { name = it }, label = { Text("Food name") }, singleLine = true) }
+                item { ChoiceRow("Meal", MealType.entries, meal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { meal = it } }
+                item { OutlinedTextField(serving, { serving = it }, label = { Text("Serving (g)") }, singleLine = true) }
+                item { OutlinedTextField(calories, { calories = it }, label = { Text("Calories") }, singleLine = true) }
+                item { OutlinedTextField(protein, { protein = it }, label = { Text("Protein (g)") }, singleLine = true) }
+                item { OutlinedTextField(carbs, { carbs = it }, label = { Text("Carbohydrates (g)") }, singleLine = true) }
+                item { OutlinedTextField(fat, { fat = it }, label = { Text("Fat (g)") }, singleLine = true) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = name.isNotBlank() && calories.toIntOrNull() != null,
+                onClick = {
+                    onSave(
+                        FoodCatalogItem(
+                            existing?.catalogId ?: draft?.id ?: "manual-${System.currentTimeMillis()}",
+                            name,
+                            existing?.brand ?: draft?.brand,
+                            serving.toDoubleOrNull() ?: 100.0,
+                            calories.toIntOrNull() ?: 0,
+                            protein.toDoubleOrNull() ?: 0.0,
+                            carbs.toDoubleOrNull() ?: 0.0,
+                            fat.toDoubleOrNull() ?: 0.0
+                        ),
+                        meal,
+                        existing?.id
+                    )
+                }
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
-private fun ProgressScreen(prototype: PrototypeViewModel) {
-    var showEdit by remember { mutableStateOf(false) }
-    if (showEdit) SuggestionEditDialog(prototype.suggestedWeightKg, prototype.usesMetricUnits, { prototype.decideSuggestion(SuggestionDecision.ACCEPTED, it); showEdit = false }, { showEdit = false })
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Spacer(Modifier.height(8.dp)); Text("Your progress", fontSize = 28.sp, fontWeight = FontWeight.Bold); Text("Small wins add up.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { MetricCard("8", "workouts", Modifier.weight(1f)); MetricCard("86%", "adherence", Modifier.weight(1f)); MetricCard("3", "week streak", Modifier.weight(1f)) } }
-        item { Text("Two-week check-in", fontWeight = FontWeight.Bold, fontSize = 20.sp) }
-        item { SuggestionCard(prototype, onEdit = { showEdit = true }) }
-        item { Text("Recent activity", fontWeight = FontWeight.Bold, fontSize = 20.sp) }
-        items(prototype.history) { Text(it, Modifier.fillMaxWidth().padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+private fun HydrationSettingsDialog(
+    initial: HydrationPlanEntity,
+    onSave: (HydrationPlanEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var goal by remember { mutableStateOf(initial.goalMl.toString()) }
+    var serving by remember { mutableStateOf(initial.servingMl.toString()) }
+    var start by remember { mutableStateOf((initial.wakingStartMinute / 60).toString()) }
+    var end by remember { mutableStateOf((initial.wakingEndMinute / 60).toString()) }
+    var interval by remember { mutableStateOf(initial.intervalMinutes.toString()) }
+    var enabled by remember { mutableStateOf(initial.remindersEnabled) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Hydration settings") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { OutlinedTextField(goal, { goal = it }, label = { Text("Daily goal (mL)") }) }
+                item { OutlinedTextField(serving, { serving = it }, label = { Text("Quick serving (mL)") }) }
+                item { OutlinedTextField(start, { start = it }, label = { Text("Wake hour (0-23)") }) }
+                item { OutlinedTextField(end, { end = it }, label = { Text("Sleep hour (1-24)") }) }
+                item { OutlinedTextField(interval, { interval = it }, label = { Text("Reminder interval (minutes)") }) }
+                item { Row(verticalAlignment = Alignment.CenterVertically) { Text("Reminders", Modifier.weight(1f)); Switch(enabled, { enabled = it }) } }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onSave(
+                    initial.copy(
+                        goalMl = goal.toIntOrNull() ?: initial.goalMl,
+                        servingMl = serving.toIntOrNull() ?: initial.servingMl,
+                        wakingStartMinute = (start.toIntOrNull() ?: 8) * 60,
+                        wakingEndMinute = (end.toIntOrNull() ?: 22) * 60,
+                        intervalMinutes = interval.toIntOrNull() ?: 120,
+                        remindersEnabled = enabled
+                    )
+                )
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
+    val context = LocalContext.current
+    val active = state.activeWalk
+    val points by appViewModel.routePoints.collectAsStateWithLifecycle()
+    var permissionDenied by remember { mutableStateOf(false) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val locationGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        if (locationGranted) {
+            sendWalkAction(
+                context,
+                WalkRecordingService.ACTION_START,
+                state.session.authenticatedUserId
+            )
+        }
+        else permissionDenied = true
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Recorded walks", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text("Route tracking runs only after you press Start.")
+        }
+        item { RouteMap(points) }
+        active?.let { walk ->
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SummaryCard("%.2f".format(walk.distanceMeters / 1_000), "km", Modifier.weight(1f), Color(0xFFDDEFFC))
+                    SummaryCard(walk.steps?.toString() ?: "--", "steps", Modifier.weight(1f), Color(0xFFE3F3E8))
+                    SummaryCard((walk.accumulatedDurationMillis / 60_000).toString(), "minutes", Modifier.weight(1f), Color(0xFFFFE7DE))
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            sendWalkAction(
+                                context,
+                                if (walk.state == WalkState.PAUSED.name) WalkRecordingService.ACTION_RESUME
+                                else WalkRecordingService.ACTION_PAUSE,
+                                state.session.authenticatedUserId
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(if (walk.state == WalkState.PAUSED.name) Icons.Default.PlayArrow else Icons.Default.Pause, null)
+                        Text(if (walk.state == WalkState.PAUSED.name) "Resume" else "Pause")
+                    }
+                    Button(
+                        onClick = {
+                            sendWalkAction(
+                                context,
+                                WalkRecordingService.ACTION_FINISH,
+                                state.session.authenticatedUserId
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Stop, null)
+                        Text("Finish")
+                    }
+                }
+            }
+        } ?: item {
+            Button(
+                onClick = {
+                    val permissions = buildList {
+                        add(Manifest.permission.ACCESS_FINE_LOCATION)
+                        if (android.os.Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACTIVITY_RECOGNITION)
+                        if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    if (
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        sendWalkAction(
+                            context,
+                            WalkRecordingService.ACTION_START,
+                            state.session.authenticatedUserId
+                        )
+                    }
+                    else permissionLauncher.launch(permissions.toTypedArray())
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.PlayArrow, null)
+                Text("Start walk")
+            }
+        }
+        if (permissionDenied) item {
+            Text("Location permission is required to record a route. Step count may be unavailable if activity permission or the sensor is missing.", color = MaterialTheme.colorScheme.error)
+        }
+        item { SectionHeading("History") }
+        items(state.walks.filter { it.state == WalkState.FINISHED.name }, key = { it.id }) { walk ->
+            ActionCard(
+                title = "%.2f km".format(walk.distanceMeters / 1_000),
+                subtitle = "${walk.steps?.let { "$it steps" } ?: "Steps unavailable"} | ${walk.accumulatedDurationMillis / 60_000} min",
+                icon = Icons.AutoMirrored.Filled.DirectionsRun
+            )
+        }
+    }
+}
+
+private fun sendWalkAction(context: Context, action: String, userId: String?) {
+    val intent = Intent(context, WalkRecordingService::class.java)
+        .setAction(action)
+        .putExtra(WalkRecordingService.EXTRA_USER_ID, userId)
+    ContextCompat.startForegroundService(context, intent)
+}
+
+@Composable
+private fun RouteMap(points: List<WalkPointEntity>) {
+    Card(
+        Modifier.fillMaxWidth().height(240.dp),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        if (BuildConfig.MAPS_CONFIGURED) {
+            GoogleMap(Modifier.fillMaxSize()) {
+                if (points.size > 1) {
+                    Polyline(points = points.map { LatLng(it.latitude, it.longitude) })
+                }
+            }
+        } else {
+            RouteFallback(points)
+        }
     }
 }
 
 @Composable
-private fun SuggestionCard(prototype: PrototypeViewModel, onEdit: () -> Unit) {
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.padding(20.dp)) {
-            Icon(Icons.Default.ShowChart, null, tint = MaterialTheme.colorScheme.secondary)
-            Spacer(Modifier.height(8.dp)); Text("Lat pulldown suggestion", fontWeight = FontWeight.Bold, fontSize = 19.sp)
-            Text("You completed your target twice. Consider ${displayWeight(prototype.suggestedWeightKg, prototype.usesMetricUnits)} next time.", fontSize = 14.sp)
-            if (prototype.suggestionDecision == SuggestionDecision.PENDING) {
-                Spacer(Modifier.height(12.dp)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { prototype.decideSuggestion(SuggestionDecision.ACCEPTED) }) { Text("Accept") }; OutlinedButton(onClick = onEdit) { Text("Edit") } }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TextButton(onClick = { prototype.decideSuggestion(SuggestionDecision.POSTPONED) }) { Text("Postpone") }; TextButton(onClick = { prototype.decideSuggestion(SuggestionDecision.REJECTED) }) { Text("Reject") } }
-            } else Text("Decision: ${prototype.suggestionDecision.name.lowercase().replaceFirstChar(Char::uppercase)}", color = MaterialTheme.colorScheme.onSecondaryContainer)
-        }
-    }
-}
-
-@Composable
-private fun SuggestionEditDialog(initialWeightKg: Double, metric: Boolean, onSave: (Double) -> Unit, onDismiss: () -> Unit) {
-    var weight by remember { mutableStateOf((if (metric) initialWeightKg else initialWeightKg * KG_TO_POUNDS).toString()) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Adjust suggestion") }, text = { OutlinedTextField(weight, { weight = it }, label = { Text("Weight in ${if (metric) "kg" else "lb"}") }, singleLine = true) }, confirmButton = { Button(onClick = {
-        val entered = weight.toDoubleOrNull() ?: if (metric) initialWeightKg else initialWeightKg * KG_TO_POUNDS
-        onSave(if (metric) entered else entered / KG_TO_POUNDS)
-    }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-@Composable
-private fun MetricCard(value: String, label: String, modifier: Modifier) {
-    Card(modifier, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(12.dp)) { Text(value, fontSize = 21.sp, fontWeight = FontWeight.Bold); Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-}
-
-@Composable
-private fun ProfileScreen(prototype: PrototypeViewModel, darkMode: Boolean, toggleTheme: () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Spacer(Modifier.height(8.dp)); Text("Profile", fontSize = 28.sp, fontWeight = FontWeight.Bold) }
-        item { Card(shape = RoundedCornerShape(16.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) { Text("A", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) }; Spacer(Modifier.width(14.dp)); Column { Text("Avi", fontWeight = FontWeight.Bold, fontSize = 18.sp); Text(if (prototype.trialState.isTrialActive()) "Ad-free trial: ${prototype.trialState.daysRemaining()} days left" else "Free plan with ads", color = MaterialTheme.colorScheme.onSurfaceVariant) } } } }
-        item { PlanCard(prototype) }
-        item { SettingsRow(if (darkMode) "Dark theme" else "Light theme", if (darkMode) Icons.Default.DarkMode else Icons.Default.LightMode, toggleTheme) }
-        item { NotificationRow(prototype.notificationPermissionGranted) { prototype.setNotificationPermission(it) } }
-        item { SettingsRow(if (prototype.usesMetricUnits) "Units: kilograms" else "Units: pounds", Icons.Default.FitnessCenter, onClick = { prototype.toggleUnits() }) }
-    }
-}
-
-@Composable
-private fun PlanCard(prototype: PrototypeViewModel) {
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-        Column(Modifier.padding(18.dp)) {
-            Text("Your plan", fontWeight = FontWeight.Bold)
-            Text(if (prototype.trialState.isTrialActive()) "30-day ad-free trial" else "Free plan", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(if (prototype.trialState.isTrialActive()) "${prototype.trialState.daysRemaining()} days remaining. No payment details were collected." else "Core features remain available with ad previews.", fontSize = 13.sp)
-            if (prototype.trialState.isTrialActive()) TextButton(onClick = { prototype.simulateTrialExpiry() }) { Text("Simulate trial expiry") }
-        }
-    }
-}
-
-@Composable
-private fun SettingsRow(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(16.dp)) { Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text(label, Modifier.weight(1f)); Icon(Icons.Default.MoreHoriz, null) } }
-}
-
-@Composable
-private fun NotificationRow(enabled: Boolean, onChange: (Boolean) -> Unit) {
-    Card(shape = RoundedCornerShape(16.dp)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Notifications, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text("Workout reminders", Modifier.weight(1f)); Switch(enabled, onChange) } }
-}
-
-@Composable
-private fun AddSupplementDialog(onDismiss: () -> Unit, onAdd: (String, String, SupplementSchedule) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var dose by remember { mutableStateOf("") }
-    var recurrence by remember { mutableStateOf(RecurrenceType.DAILY) }
-    var interval by remember { mutableStateOf("2") }
-    var weekdays by remember { mutableStateOf(setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY)) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Add supplement") }, text = {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true) }
-            item { OutlinedTextField(dose, { dose = it }, label = { Text("Dose and unit") }, singleLine = true) }
-            item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { RecurrenceType.entries.forEach { type -> FilterChip(recurrence == type, { recurrence = type }, label = { Text(if (type == RecurrenceType.EVERY_N_DAYS) "Every N days" else type.name.lowercase().replaceFirstChar(Char::uppercase)) }) } } }
-            if (recurrence == RecurrenceType.EVERY_N_DAYS) item { OutlinedTextField(interval, { interval = it }, label = { Text("Interval in days") }, singleLine = true) }
-            if (recurrence == RecurrenceType.WEEKDAYS) item { WeekdayPicker(weekdays, multiple = true) { weekdays = it } }
-        }
-    }, confirmButton = { Button(onClick = {
-        val schedule = SupplementSchedule(recurrence, intervalDays = interval.toIntOrNull() ?: 1, weekdays = weekdays)
-        onAdd(name, dose, schedule)
-    }, enabled = name.isNotBlank() && dose.isNotBlank() && (recurrence != RecurrenceType.WEEKDAYS || weekdays.isNotEmpty())) { Text("Add") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-@Composable
-private fun AddSessionDialog(onDismiss: () -> Unit, onCreate: (String, DayOfWeek) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var day by remember { mutableStateOf(DayOfWeek.MONDAY) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Create a session") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(name, { name = it }, label = { Text("Session name") }, singleLine = true)
-            WeekdayPicker(setOf(day), multiple = false) { selected -> day = selected.first() }
-        }
-    }, confirmButton = { Button(onClick = { onCreate(name, day) }, enabled = name.isNotBlank()) { Text("Create") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
-@Composable
-private fun WeekdayPicker(selected: Set<DayOfWeek>, multiple: Boolean, onChange: (Set<DayOfWeek>) -> Unit) {
-    val days = DayOfWeek.entries
-    Column {
-        Text("Days", fontWeight = FontWeight.Medium)
-        days.chunked(4).forEach { rowDays ->
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                rowDays.forEach { day ->
-                    FilterChip(
-                        selected = day in selected,
-                        onClick = { onChange(if (multiple) if (day in selected) selected - day else selected + day else setOf(day)) },
-                        label = { Text(day.name.take(3)) }
+private fun RouteFallback(points: List<WalkPointEntity>) {
+    Box(Modifier.fillMaxSize().background(Color(0xFFE9EEF1)), contentAlignment = Alignment.Center) {
+        if (points.size < 2) {
+            Text("Your route will appear here", color = Color(0xFF4F5B62))
+        } else {
+            Canvas(Modifier.fillMaxSize().padding(20.dp)) {
+                val minLat = points.minOf { it.latitude }
+                val maxLat = points.maxOf { it.latitude }
+                val minLon = points.minOf { it.longitude }
+                val maxLon = points.maxOf { it.longitude }
+                val latRange = (maxLat - minLat).takeIf { it > 0 } ?: 1.0
+                val lonRange = (maxLon - minLon).takeIf { it > 0 } ?: 1.0
+                points.zipWithNext().forEach { (a, b) ->
+                    drawLine(
+                        color = Color(0xFF0B6E69),
+                        start = Offset(
+                            ((a.longitude - minLon) / lonRange * size.width).toFloat(),
+                            (size.height - (a.latitude - minLat) / latRange * size.height).toFloat()
+                        ),
+                        end = Offset(
+                            ((b.longitude - minLon) / lonRange * size.width).toFloat(),
+                            (size.height - (b.latitude - minLat) / latRange * size.height).toFloat()
+                        ),
+                        strokeWidth = 7f
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ProgressScreen(app: NutRunViewModel, state: NutRunUiState) {
+    var editWeight by remember { mutableStateOf(false) }
+    val profile = state.profile ?: return
+    val estimate = state.healthEstimate ?: return
+    if (editWeight) {
+        WeightDialog(profile, { app.saveProfile(it); editWeight = false }, { editWeight = false })
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { Text("Progress", fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryCard("%.1f".format(estimate.bmi), "BMI", Modifier.weight(1f), Color(0xFFE3F3E8))
+                SummaryCard("${estimate.bmrKcal}", "BMR kcal", Modifier.weight(1f), Color(0xFFDDEFFC))
+                SummaryCard("${estimate.tdeeKcal}", "TDEE kcal", Modifier.weight(1f), Color(0xFFFFE7DE))
+            }
+        }
+        item {
+            Text("General guidance only, not medical advice.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionHeading("Weight history", Modifier.weight(1f))
+                TextButton(onClick = { editWeight = true }) { Text("Add weight") }
+            }
+        }
+        items(state.weights.take(12), key = { it.id }) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Text(java.time.Instant.ofEpochMilli(it.recordedAtMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString(), Modifier.weight(1f))
+                Text(displayWeight(it.weightKg, profile.unitSystem == UnitSystem.METRIC), fontWeight = FontWeight.SemiBold)
+            }
+        }
+        item { SectionHeading("Walking") }
+        item {
+            ActionCard(
+                "${state.walks.count { it.state == WalkState.FINISHED.name }} completed walks",
+                "%.1f km total".format(state.walks.sumOf { it.distanceMeters } / 1_000),
+                Icons.AutoMirrored.Filled.DirectionsRun
+            )
+        }
+        if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
+    }
+}
+
+@Composable
+private fun WeightDialog(profile: UserProfile, onSave: (UserProfile) -> Unit, onDismiss: () -> Unit) {
+    val metric = profile.unitSystem == UnitSystem.METRIC
+    var value by remember {
+        mutableStateOf((if (metric) profile.weightKg else profile.weightKg * KG_TO_POUNDS).let { "%.1f".format(it) })
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add weight") },
+        text = { OutlinedTextField(value, { value = it }, label = { Text(if (metric) "Weight (kg)" else "Weight (lb)") }) },
+        confirmButton = {
+            Button(onClick = {
+                val entered = value.toDoubleOrNull() ?: return@Button
+                onSave(profile.copy(weightKg = if (metric) entered else entered / KG_TO_POUNDS))
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun ProfileScreen(app: NutRunViewModel, state: NutRunUiState, onBack: () -> Unit) {
+    var confirmDelete by remember { mutableStateOf(false) }
+    val profile = state.profile ?: return
+    val billing by app.billingState.collectAsStateWithLifecycle()
+    val activity = LocalActivity.current
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete account and data?") },
+            text = { Text("This permanently removes local logs. The configured backend is also responsible for deleting cloud records, routes, and MCP tokens.") },
+            confirmButton = { Button(onClick = app::deleteAccount) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+        )
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { TextButton(onClick = onBack) { Text("Back") } }
+        item {
+            ActionCard(
+                profile.email,
+                when (state.session.entitlement()) {
+                    EntitlementKind.TRIAL -> "${state.session.trialDaysRemaining()} trial days remaining"
+                    EntitlementKind.SUBSCRIBER -> "Ad-free subscriber"
+                    EntitlementKind.FREE_AD_SUPPORTED -> "Free plan with ads"
+                },
+                Icons.Default.Person
+            )
+        }
+        item {
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Dark theme", Modifier.weight(1f))
+                    Switch(state.session.darkMode, app::setDarkMode)
+                }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Ad-free subscription", fontWeight = FontWeight.Bold)
+                    billing.message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { activity?.let { app.purchase(it, BillingManager.MONTHLY) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = activity != null && billing.connected
+                    ) { Text("Monthly ad-free") }
+                    OutlinedButton(
+                        onClick = { activity?.let { app.purchase(it, BillingManager.ANNUAL) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = activity != null && billing.connected
+                    ) { Text("Annual ad-free") }
+                    TextButton(onClick = app::restorePurchases, modifier = Modifier.fillMaxWidth()) {
+                        Text("Restore purchases")
+                    }
+                }
+            }
+        }
+        if (BuildConfig.DEBUG) item {
+            OutlinedButton(
+                onClick = { app.setSubscriberForDevelopment(state.session.entitlement() != EntitlementKind.SUBSCRIBER) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Toggle test subscription") }
+        }
+        item {
+            OutlinedButton(onClick = app::signOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+        }
+        item {
+            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Delete, null)
+                Text("Delete account")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddSupplementDialog(
+    onDismiss: () -> Unit,
+    onAdd: (String, String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var dose by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add daily supplement") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
+                OutlinedTextField(dose, { dose = it }, label = { Text("Dose and unit") }, singleLine = true)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onAdd(name.trim(), dose.trim()) },
+                enabled = name.isNotBlank() && dose.isNotBlank()
+            ) { Text("Add") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun AddTrainingSessionDialog(
+    onDismiss: () -> Unit,
+    onSave: (String, DayOfWeek) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var day by remember { mutableStateOf(DayOfWeek.MONDAY) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add training session") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Session name") }, singleLine = true)
+                ChoiceRow(
+                    title = "Training day",
+                    values = DayOfWeek.entries,
+                    selected = day,
+                    label = { it.name.take(3).lowercase().replaceFirstChar(Char::uppercase) },
+                    onSelected = { day = it }
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(name.trim(), day) }, enabled = name.isNotBlank()) {
+                Text("Add")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun ExercisePickerDialog(
+    model: PrototypeViewModel,
+    sessionId: String,
+    onDismiss: () -> Unit
+) {
+    val session = model.sessions.firstOrNull { it.id == sessionId }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Exercises for ${session?.name.orEmpty()}") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(model.exerciseLibrary, key = { it.id }) { exercise ->
+                    Card(
+                        Modifier.fillMaxWidth().clickable {
+                            model.selectSession(sessionId)
+                            model.addExerciseToSelectedSession(exercise)
+                        },
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text(exercise.name, fontWeight = FontWeight.SemiBold)
+                            Text("${exercise.category} | ${exercise.primaryMuscles}", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
+}
+
+@Composable
+private fun SummaryCard(value: String, label: String, modifier: Modifier, color: Color) {
+    Card(modifier, shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(containerColor = color)) {
+        Column(Modifier.padding(10.dp)) {
+            Text(value, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF202426))
+            Text(label, fontSize = 11.sp, color = Color(0xFF4F5B62))
+        }
+    }
+}
+
+@Composable
+private fun ActionCard(title: String, subtitle: String, icon: ImageVector) {
+    Card(shape = RoundedCornerShape(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String, modifier: Modifier = Modifier) {
+    Text(title, modifier, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+}
+
+@Composable
+private fun AdPlacement() {
+    AndroidView(
+        modifier = Modifier.fillMaxWidth().height(50.dp),
+        factory = { context ->
+            AdView(context).apply {
+                setAdSize(AdSize.BANNER)
+                adUnitId = BuildConfig.ADMOB_BANNER_ID
+                loadAd(AdRequest.Builder().build())
+            }
+        }
+    )
 }
