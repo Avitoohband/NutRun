@@ -1,4 +1,4 @@
-# PulseFit Android prototype
+# NutRun Android prototype
 
 This is the Stage 1 interactive prototype for the fitness app plan. It uses Kotlin and Jetpack Compose and intentionally keeps prototype data in memory.
 
