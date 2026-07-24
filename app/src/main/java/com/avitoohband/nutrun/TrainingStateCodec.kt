@@ -14,7 +14,11 @@ data class PersistedTrainingState(
     val isWorkoutPaused: Boolean,
     val completedExerciseIds: Map<String, Boolean>,
     val suggestionDecision: SuggestionDecision,
-    val suggestedWeightKg: Double
+    val suggestedWeightKg: Double,
+    val workoutHistory: List<WorkoutRecord>,
+    val scheduleOverrides: List<TrainingScheduleOverride>,
+    val activeSetLogs: Map<String, List<WorkoutSetLog>>,
+    val activeWorkoutStartedAtMillis: Long?
 )
 
 fun defaultSupplements() = listOf(
@@ -34,38 +38,111 @@ fun defaultSupplements() = listOf(
     )
 )
 
-fun defaultSessions(exercises: List<Exercise>) = listOf(
-    TrainingSession(
-        "session-1",
-        "Push + Biceps",
-        DayOfWeek.MONDAY,
-        listOf(ExerciseTarget("target-1", exercises[1]), ExerciseTarget("target-2", exercises[2]))
-    ),
-    TrainingSession(
-        "session-2",
-        "Pull + Triceps",
-        DayOfWeek.WEDNESDAY,
-        listOf(ExerciseTarget("target-3", exercises[0]), ExerciseTarget("target-4", exercises[1]))
-    ),
-    TrainingSession(
-        "session-3",
-        "HIIT",
-        DayOfWeek.FRIDAY,
-        listOf(ExerciseTarget("target-5", exercises[3]))
-    ),
-    TrainingSession(
-        "session-4",
-        "Easy run",
-        DayOfWeek.SATURDAY,
-        listOf(ExerciseTarget("target-6", exercises[3]))
+fun defaultSessions(exercises: List<Exercise>): List<TrainingSession> {
+    val byId = exercises.associateBy(Exercise::id)
+    fun exercise(id: String) = requireNotNull(byId[id]) { "Missing built-in exercise $id" }
+    fun strengthTarget(id: String, exerciseId: String, sets: Int, minimumReps: Int, maximumReps: Int) =
+        ExerciseTarget(
+            id = id,
+            exercise = exercise(exerciseId),
+            sets = sets,
+            reps = minimumReps,
+            maximumReps = maximumReps,
+            weightKg = null
+        )
+    fun cardioSession(id: String, weekday: DayOfWeek) = TrainingSession(
+        id = id,
+        name = "Walk or Swim",
+        weekday = weekday,
+        exercises = listOf(
+            ExerciseTarget(
+                id = "$id-walk",
+                exercise = exercise("brisk-walk"),
+                sets = 1,
+                reps = 1,
+                durationMinutes = 45,
+                maximumDurationMinutes = 60,
+                intensityGuidance = "Light-to-moderate intensity",
+                alternativeGroupId = "$id-cardio-choice"
+            ),
+            ExerciseTarget(
+                id = "$id-swim",
+                exercise = exercise("freestyle-swim"),
+                sets = 1,
+                reps = 1,
+                durationMinutes = 30,
+                maximumDurationMinutes = 45,
+                intensityGuidance = "Light-to-moderate intensity",
+                alternativeGroupId = "$id-cardio-choice"
+            )
+        )
     )
-)
+    return listOf(
+        cardioSession("session-sunday-cardio", DayOfWeek.SUNDAY),
+        TrainingSession(
+            id = "session-monday-push-biceps",
+            name = "Push + Biceps",
+            weekday = DayOfWeek.MONDAY,
+            exercises = listOf(
+                strengthTarget("monday-bench-press", "bench-press", 4, 6, 8),
+                strengthTarget("monday-incline-press", "incline-dumbbell-press", 3, 8, 10),
+                strengthTarget("monday-dips", "bench-dip", 3, 8, 12),
+                strengthTarget("monday-machine-press", "machine-chest-press", 3, 10, 12),
+                strengthTarget("monday-barbell-curl", "barbell-curl", 3, 8, 10),
+                strengthTarget("monday-dumbbell-curl", "dumbbell-curl", 3, 10, 12)
+            ),
+            guidance = listOf(
+                "Weight: stop with 1-2 repetitions in reserve (RPE 8-9).",
+                "Rest between sets: 90-120 seconds for compound exercises; 60-75 seconds for biceps.",
+                "Rest between exercises: 2 minutes."
+            )
+        ),
+        cardioSession("session-tuesday-cardio", DayOfWeek.TUESDAY),
+        TrainingSession(
+            id = "session-wednesday-pull-triceps",
+            name = "Pull + Triceps",
+            weekday = DayOfWeek.WEDNESDAY,
+            exercises = listOf(
+                strengthTarget("wednesday-lat-pulldown", "lat-pulldown", 4, 6, 10),
+                strengthTarget("wednesday-barbell-row", "barbell-row", 4, 8, 10),
+                strengthTarget("wednesday-cable-row", "seated-cable-row", 3, 10, 12),
+                strengthTarget("wednesday-face-pull", "face-pull", 3, 12, 15),
+                strengthTarget("wednesday-triceps-pushdown", "triceps-pushdown", 3, 10, 12),
+                strengthTarget("wednesday-overhead-extension", "overhead-triceps-extension", 3, 10, 12)
+            ),
+            guidance = listOf(
+                "Weight: stop with 1-2 repetitions in reserve.",
+                "Rest between sets: 90-120 seconds for back; 60-75 seconds for triceps.",
+                "Rest between exercises: 2 minutes."
+            )
+        ),
+        cardioSession("session-thursday-cardio", DayOfWeek.THURSDAY),
+        TrainingSession(
+            id = "session-friday-shoulders-legs",
+            name = "Shoulders + Legs + HIIT",
+            weekday = DayOfWeek.FRIDAY,
+            exercises = listOf(
+                strengthTarget("friday-pistol-squat", "pistol-squat", 4, 6, 8),
+                strengthTarget("friday-walking-lunge", "walking-lunge", 3, 8, 10),
+                strengthTarget("friday-shoulder-press", "dumbbell-shoulder-press", 4, 8, 10),
+                strengthTarget("friday-lateral-raise", "cable-lateral-raise", 3, 12, 15),
+                strengthTarget("friday-face-pull", "face-pull", 3, 12, 15),
+                strengthTarget("friday-calf-raise", "standing-calf-raise", 3, 15, 20)
+            )
+        )
+    )
+}
 
-fun defaultTrainingHistory() = listOf(
+private val legacySampleHistory = setOf(
     "Pull + Triceps - completed",
     "Easy run - 4.2 km",
     "Push + Biceps - completed"
 )
+
+fun defaultTrainingHistory(): List<String> = emptyList()
+
+fun sanitizeTrainingHistory(history: List<String>): List<String> =
+    history.filterNot(legacySampleHistory::contains)
 
 fun encodeTrainingState(
     supplements: List<Supplement>,
@@ -73,10 +150,14 @@ fun encodeTrainingState(
     history: List<String>,
     selectedSessionId: String?,
     activeWorkoutSessionId: String?,
-    isWorkoutPaused: Boolean,
+    @Suppress("UNUSED_PARAMETER") isWorkoutPaused: Boolean,
     completedExerciseIds: Map<String, Boolean>,
     suggestionDecision: SuggestionDecision,
-    suggestedWeightKg: Double
+    suggestedWeightKg: Double,
+    workoutHistory: List<WorkoutRecord> = emptyList(),
+    scheduleOverrides: List<TrainingScheduleOverride> = emptyList(),
+    activeSetLogs: Map<String, List<WorkoutSetLog>> = emptyMap(),
+    activeWorkoutStartedAtMillis: Long? = null
 ): String = JSONObject()
     .put("supplements", JSONArray().apply {
         supplements.forEach { supplement ->
@@ -85,7 +166,7 @@ fun encodeTrainingState(
                     .put("id", supplement.id)
                     .put("name", supplement.name)
                     .put("dose", supplement.dose)
-                    .put("completedToday", supplement.completedToday)
+                    .putNullable("completedOn", supplement.completedOn?.toString())
                     .put("scheduleType", supplement.schedule.type.name)
                     .put("startDate", supplement.schedule.startDate.toString())
                     .put("intervalDays", supplement.schedule.intervalDays)
@@ -103,6 +184,7 @@ fun encodeTrainingState(
                     .put("id", session.id)
                     .put("name", session.name)
                     .put("weekday", session.weekday.name)
+                    .put("guidance", JSONArray(session.guidance))
                     .put("exercises", JSONArray().apply {
                         session.exercises.forEach { target ->
                             put(
@@ -111,8 +193,12 @@ fun encodeTrainingState(
                                     .put("exerciseId", target.exercise.id)
                                     .put("sets", target.sets)
                                     .put("reps", target.reps)
+                                    .putNullable("maximumReps", target.maximumReps)
                                     .putNullable("weightKg", target.weightKg)
                                     .putNullable("durationMinutes", target.durationMinutes)
+                                    .putNullable("maximumDurationMinutes", target.maximumDurationMinutes)
+                                    .putNullable("intensityGuidance", target.intensityGuidance)
+                                    .putNullable("alternativeGroupId", target.alternativeGroupId)
                                     .putNullable("distanceKm", target.distanceKm)
                             )
                         }
@@ -123,10 +209,44 @@ fun encodeTrainingState(
     .put("history", JSONArray(history))
     .putNullable("selectedSessionId", selectedSessionId)
     .putNullable("activeWorkoutSessionId", activeWorkoutSessionId)
-    .put("isWorkoutPaused", isWorkoutPaused)
+    .put("isWorkoutPaused", false)
     .put("completedExerciseIds", JSONObject(completedExerciseIds))
     .put("suggestionDecision", suggestionDecision.name)
     .put("suggestedWeightKg", suggestedWeightKg)
+    .put("workoutHistory", JSONArray().apply {
+        workoutHistory.forEach { workout ->
+            put(
+                JSONObject()
+                    .put("id", workout.id)
+                    .put("sessionId", workout.sessionId)
+                    .put("sessionName", workout.sessionName)
+                    .put("performedOn", workout.performedOn.toString())
+                    .put("startedAtMillis", workout.startedAtMillis)
+                    .put("finishedAtMillis", workout.finishedAtMillis)
+                    .put("completedTargetIds", JSONArray(workout.completedTargetIds.toList()))
+                    .put("completedLogicalTargets", workout.completedLogicalTargets)
+                    .put("totalLogicalTargets", workout.totalLogicalTargets)
+                    .put("sets", JSONArray(workout.sets.map(WorkoutSetLog::toJson)))
+            )
+        }
+    })
+    .put("scheduleOverrides", JSONArray().apply {
+        scheduleOverrides.forEach { override ->
+            put(
+                JSONObject()
+                    .put("sessionId", override.sessionId)
+                    .put("originalDate", override.originalDate.toString())
+                    .putNullable("scheduledDate", override.scheduledDate?.toString())
+                    .put("skipped", override.skipped)
+            )
+        }
+    })
+    .put("activeSetLogs", JSONObject().apply {
+        activeSetLogs.forEach { (targetId, sets) ->
+            put(targetId, JSONArray(sets.map(WorkoutSetLog::toJson)))
+        }
+    })
+    .putNullable("activeWorkoutStartedAtMillis", activeWorkoutStartedAtMillis)
     .toString()
 
 fun decodeTrainingState(
@@ -150,7 +270,7 @@ fun decodeTrainingState(
                     ?.toSet()
                     .orEmpty()
             ),
-            completedToday = item.optBoolean("completedToday")
+            completedOn = item.nullableString("completedOn")?.let(LocalDate::parse)
         )
     }
     val sessions = root.getJSONArray("sessions").objects().map { item ->
@@ -165,11 +285,16 @@ fun decodeTrainingState(
                     exercise = exercise,
                     sets = target.optInt("sets", exercise.defaultSets),
                     reps = target.optInt("reps", exercise.defaultReps),
+                    maximumReps = target.nullableInt("maximumReps"),
                     weightKg = target.nullableDouble("weightKg"),
                     durationMinutes = target.nullableInt("durationMinutes"),
+                    maximumDurationMinutes = target.nullableInt("maximumDurationMinutes"),
+                    intensityGuidance = target.nullableString("intensityGuidance"),
+                    alternativeGroupId = target.nullableString("alternativeGroupId"),
                     distanceKm = target.nullableDouble("distanceKm")
                 )
-            }
+            },
+            guidance = item.optJSONArray("guidance")?.strings().orEmpty()
         )
     }
     val completed = root.optJSONObject("completedExerciseIds")
@@ -177,20 +302,79 @@ fun decodeTrainingState(
             objectValue.keys().asSequence().associateWith(objectValue::getBoolean)
         }
         .orEmpty()
+    val workoutHistory = root.optJSONArray("workoutHistory")?.objects()?.map { workout ->
+        WorkoutRecord(
+            id = workout.getString("id"),
+            sessionId = workout.getString("sessionId"),
+            sessionName = workout.getString("sessionName"),
+            performedOn = LocalDate.parse(workout.getString("performedOn")),
+            startedAtMillis = workout.getLong("startedAtMillis"),
+            finishedAtMillis = workout.getLong("finishedAtMillis"),
+            completedTargetIds = workout.optJSONArray("completedTargetIds")
+                ?.strings()
+                ?.toSet()
+                .orEmpty(),
+            completedLogicalTargets = workout.optInt("completedLogicalTargets"),
+            totalLogicalTargets = workout.optInt("totalLogicalTargets"),
+            sets = workout.optJSONArray("sets")?.objects()?.map(JSONObject::toWorkoutSet).orEmpty()
+        )
+    }.orEmpty()
+    val scheduleOverrides = root.optJSONArray("scheduleOverrides")?.objects()?.map { override ->
+        TrainingScheduleOverride(
+            sessionId = override.getString("sessionId"),
+            originalDate = LocalDate.parse(override.getString("originalDate")),
+            scheduledDate = override.nullableString("scheduledDate")?.let(LocalDate::parse),
+            skipped = override.optBoolean("skipped", false)
+        )
+    }.orEmpty()
+    val activeSetLogs = root.optJSONObject("activeSetLogs")
+        ?.let { logs ->
+            logs.keys().asSequence().associateWith { targetId ->
+                logs.getJSONArray(targetId).objects().map(JSONObject::toWorkoutSet)
+            }
+        }
+        .orEmpty()
     PersistedTrainingState(
         supplements = supplements,
         sessions = sessions,
-        history = root.getJSONArray("history").strings(),
+        history = sanitizeTrainingHistory(root.optJSONArray("history")?.strings().orEmpty()),
         selectedSessionId = root.nullableString("selectedSessionId"),
         activeWorkoutSessionId = root.nullableString("activeWorkoutSessionId"),
-        isWorkoutPaused = root.optBoolean("isWorkoutPaused"),
+        isWorkoutPaused = false,
         completedExerciseIds = completed,
         suggestionDecision = SuggestionDecision.valueOf(
             root.optString("suggestionDecision", SuggestionDecision.PENDING.name)
         ),
-        suggestedWeightKg = root.optDouble("suggestedWeightKg", 42.5)
+        suggestedWeightKg = root.optDouble("suggestedWeightKg", 42.5),
+        workoutHistory = workoutHistory,
+        scheduleOverrides = scheduleOverrides,
+        activeSetLogs = activeSetLogs,
+        activeWorkoutStartedAtMillis = root.nullableLong("activeWorkoutStartedAtMillis")
     )
 }.getOrNull()
+
+private fun WorkoutSetLog.toJson() = JSONObject()
+    .put("id", id)
+    .put("targetId", targetId)
+    .put("exerciseId", exerciseId)
+    .put("setNumber", setNumber)
+    .putNullable("reps", reps)
+    .putNullable("weightKg", weightKg)
+    .putNullable("durationSeconds", durationSeconds)
+    .putNullable("rpe", rpe)
+    .put("completed", completed)
+
+private fun JSONObject.toWorkoutSet() = WorkoutSetLog(
+    id = getString("id"),
+    targetId = getString("targetId"),
+    exerciseId = getString("exerciseId"),
+    setNumber = getInt("setNumber"),
+    reps = nullableInt("reps"),
+    weightKg = nullableDouble("weightKg"),
+    durationSeconds = nullableInt("durationSeconds"),
+    rpe = nullableDouble("rpe"),
+    completed = optBoolean("completed", false)
+)
 
 private fun JSONObject.putNullable(key: String, value: Any?): JSONObject =
     put(key, value ?: JSONObject.NULL)
@@ -203,6 +387,9 @@ private fun JSONObject.nullableDouble(key: String): Double? =
 
 private fun JSONObject.nullableInt(key: String): Int? =
     if (!has(key) || isNull(key)) null else getInt(key)
+
+private fun JSONObject.nullableLong(key: String): Long? =
+    if (!has(key) || isNull(key)) null else getLong(key)
 
 private fun JSONArray.objects(): List<JSONObject> =
     (0 until length()).map(::getJSONObject)

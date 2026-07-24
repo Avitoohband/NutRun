@@ -41,6 +41,12 @@ interface NutRunDao {
     @Query("SELECT * FROM food_logs WHERE userId = :userId")
     suspend fun foods(userId: String): List<FoodLogEntity>
 
+    @Query(
+        "SELECT * FROM food_logs WHERE userId = :userId " +
+            "ORDER BY updatedAtMillis DESC LIMIT 30"
+    )
+    fun observeRecentFoods(userId: String): Flow<List<FoodLogEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveFood(entry: FoodLogEntity)
 
@@ -52,6 +58,18 @@ interface NutRunDao {
 
     @Query("SELECT * FROM food_logs WHERE userId = :userId AND id = :id")
     suspend fun foodById(userId: String, id: String): FoodLogEntity?
+
+    @Query(
+        "SELECT * FROM food_templates WHERE userId = :userId " +
+            "ORDER BY kind, useCount DESC, lastUsedAtMillis DESC"
+    )
+    fun observeFoodTemplates(userId: String): Flow<List<FoodTemplateEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveFoodTemplate(template: FoodTemplateEntity)
+
+    @Delete
+    suspend fun deleteFoodTemplate(template: FoodTemplateEntity)
 
     @Query(
         "SELECT * FROM water_logs WHERE userId = :userId AND localDate = :date " +
@@ -82,6 +100,30 @@ interface NutRunDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveHydrationPlan(plan: HydrationPlanEntity)
+
+    @Transaction
+    suspend fun saveQuickServingAndWater(plan: HydrationPlanEntity, entry: WaterLogEntity) {
+        saveHydrationPlan(plan)
+        saveWater(entry)
+    }
+
+    @Query("SELECT * FROM training_reminder_settings WHERE userId = :userId LIMIT 1")
+    fun observeTrainingReminderSettings(userId: String): Flow<TrainingReminderSettingsEntity?>
+
+    @Query("SELECT * FROM training_reminder_settings WHERE userId = :userId LIMIT 1")
+    suspend fun trainingReminderSettings(userId: String): TrainingReminderSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity)
+
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM reminder_delivery WHERE userId = :userId " +
+            "AND reminderType = :type AND trainingDate = :trainingDate)"
+    )
+    suspend fun reminderDelivered(userId: String, type: String, trainingDate: String): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun recordReminderDelivery(delivery: ReminderDeliveryEntity): Long
 
     @Query("SELECT * FROM walk_sessions WHERE userId = :userId ORDER BY startedAtMillis DESC")
     fun observeWalks(userId: String): Flow<List<WalkSessionEntity>>
@@ -163,6 +205,7 @@ interface NutRunDao {
         clearWeights(userId)
         saveWeights(weights)
         clearFood(userId)
+        clearFoodTemplates(userId)
         saveFoods(foods)
         clearWater(userId)
         saveWater(water)
@@ -276,6 +319,8 @@ interface NutRunDao {
         clearProfile(userId)
         clearHydration(userId)
         clearTraining(userId)
+        clearTrainingReminderSettings(userId)
+        clearReminderDeliveries(userId)
         clearSync(userId)
     }
 
@@ -291,6 +336,9 @@ interface NutRunDao {
     @Query("DELETE FROM food_logs WHERE userId = :userId")
     suspend fun clearFood(userId: String)
 
+    @Query("DELETE FROM food_templates WHERE userId = :userId")
+    suspend fun clearFoodTemplates(userId: String)
+
     @Query("DELETE FROM weight_entries WHERE userId = :userId")
     suspend fun clearWeights(userId: String)
 
@@ -302,6 +350,12 @@ interface NutRunDao {
 
     @Query("DELETE FROM training_state WHERE userId = :userId")
     suspend fun clearTraining(userId: String)
+
+    @Query("DELETE FROM training_reminder_settings WHERE userId = :userId")
+    suspend fun clearTrainingReminderSettings(userId: String)
+
+    @Query("DELETE FROM reminder_delivery WHERE userId = :userId")
+    suspend fun clearReminderDeliveries(userId: String)
 
     @Query("DELETE FROM sync_operations WHERE userId = :userId")
     suspend fun clearSync(userId: String)

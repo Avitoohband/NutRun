@@ -16,6 +16,7 @@ import com.avitoohband.nutrun.domain.accumulatedSessionSteps
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.DayOfWeek
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -92,7 +93,24 @@ class ProductionDomainTest {
 
     @Test
     fun trainingStateRoundTripsThroughRoomPayload() {
-        val model = PrototypeViewModel(null, null)
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first()
+        model.startWorkout(session.id)
+        model.updateWorkoutSet(
+            targetId = session.exercises.first().id,
+            setNumber = 1,
+            reps = null,
+            weightKg = null,
+            durationSeconds = 2_700,
+            rpe = 6.0,
+            completed = true
+        )
+        model.finishWorkout()
+        val override = TrainingScheduleOverride(
+            sessionId = session.id,
+            originalDate = LocalDate.of(2026, 7, 26),
+            scheduledDate = LocalDate.of(2026, 7, 27)
+        )
         val payload = encodeTrainingState(
             supplements = model.supplements,
             sessions = model.sessions,
@@ -102,7 +120,9 @@ class ProductionDomainTest {
             isWorkoutPaused = false,
             completedExerciseIds = mapOf("target-1" to true),
             suggestionDecision = SuggestionDecision.ACCEPTED,
-            suggestedWeightKg = 45.0
+            suggestedWeightKg = 45.0,
+            workoutHistory = model.workoutHistory,
+            scheduleOverrides = listOf(override)
         )
 
         val restored = decodeTrainingState(payload, model.exerciseLibrary)!!
@@ -112,6 +132,48 @@ class ProductionDomainTest {
         assertEquals("session-1", restored.selectedSessionId)
         assertTrue(restored.completedExerciseIds.getValue("target-1"))
         assertEquals(45.0, restored.suggestedWeightKg, 0.001)
+        assertEquals(model.workoutHistory.toList(), restored.workoutHistory)
+        assertEquals(listOf(override), restored.scheduleOverrides)
+    }
+
+    @Test
+    fun exerciseCatalogHasEightyOneStableUniqueEntriesAndSearchesAllMetadata() {
+        val catalog = builtInExerciseCatalog()
+
+        assertEquals(81, catalog.size)
+        assertEquals(81, catalog.map { it.id }.distinct().size)
+        assertTrue(setOf("lat-pulldown", "push-up", "goblet-squat", "easy-run", "freestyle-swim", "pistol-squat").all {
+            id -> catalog.any { it.id == id }
+        })
+        assertTrue(filterExercises(catalog, "hamstrings", "All").isNotEmpty())
+        assertTrue(filterExercises(catalog, "CARDIO", "Cardio").isNotEmpty())
+    }
+
+    @Test
+    fun supplementCompletionRollsOverAndCompletedItemsSortLastStably() {
+        val today = LocalDate.of(2026, 7, 23)
+        val daily = SupplementSchedule(RecurrenceType.DAILY, startDate = today.minusDays(1))
+        val first = Supplement("1", "First", "1", daily)
+        val completedA = Supplement("2", "Completed A", "1", daily, today)
+        val second = Supplement("3", "Second", "1", daily)
+        val completedB = Supplement("4", "Completed B", "1", daily, today)
+
+        assertEquals(
+            listOf("1", "3", "2", "4"),
+            dueSupplementsForDate(listOf(first, completedA, second, completedB), today).map { it.id }
+        )
+        assertFalse(completedA.isCompletedOn(today.plusDays(1)))
+    }
+
+    @Test
+    fun todayDetectionAndCustomWaterValidationUseBoundaries() {
+        val monday = LocalDate.of(2026, 7, 20)
+        assertTrue(TrainingSession("id", "Monday", DayOfWeek.MONDAY).isToday(monday))
+        assertFalse(TrainingSession("id", "Tuesday", DayOfWeek.TUESDAY).isToday(monday))
+        assertTrue(isValidWaterAmount(50))
+        assertTrue(isValidWaterAmount(2_000))
+        assertFalse(isValidWaterAmount(49))
+        assertFalse(isValidWaterAmount(2_001))
     }
 
     @Test

@@ -62,7 +62,94 @@ class DatabaseMigrationTest {
         migrated.close()
     }
 
+    @Test
+    @Throws(IOException::class)
+    fun migrationTwoToThreePreservesDataAndAddsReminderTables() {
+        helper.createDatabase(DATABASE_NAME_V3, 2).apply {
+            insert(
+                "hydration_plan",
+                SQLiteDatabase.CONFLICT_REPLACE,
+                ContentValues().apply {
+                    put("id", "hydration:user")
+                    put("userId", "user")
+                    put("goalMl", 2_500)
+                    put("servingMl", 300)
+                    put("wakingStartMinute", 480)
+                    put("wakingEndMinute", 1320)
+                    put("intervalMinutes", 120)
+                    put("remindersEnabled", 1)
+                }
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME_V3,
+            3,
+            true,
+            NutRunDatabase.MIGRATION_2_3
+        )
+        migrated.query("SELECT goalMl, servingMl, intervalMinutes FROM hydration_plan").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(2_500, cursor.getInt(0))
+            assertEquals(300, cursor.getInt(1))
+            assertEquals(60, cursor.getInt(2))
+        }
+        migrated.query("SELECT COUNT(*) FROM training_reminder_settings").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(0, cursor.getInt(0))
+        }
+        migrated.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrationThreeToFourAddsFoodTemplatesWithoutChangingExistingFood() {
+        helper.createDatabase(DATABASE_NAME_V4, 3).apply {
+            insert(
+                "food_logs",
+                SQLiteDatabase.CONFLICT_REPLACE,
+                ContentValues().apply {
+                    put("id", "food-1")
+                    put("userId", "user")
+                    put("localDate", "2026-07-24")
+                    put("mealType", "BREAKFAST")
+                    putNull("catalogId")
+                    put("name", "Oats")
+                    putNull("brand")
+                    put("servingGrams", 80.0)
+                    put("calories", 300)
+                    put("proteinGrams", 10.0)
+                    put("carbohydrateGrams", 50.0)
+                    put("fatGrams", 6.0)
+                    put("updatedAtMillis", 1L)
+                    put("pendingSync", 1)
+                }
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME_V4,
+            4,
+            true,
+            NutRunDatabase.MIGRATION_3_4
+        )
+        migrated.query("SELECT name, calories FROM food_logs WHERE id = 'food-1'").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("Oats", cursor.getString(0))
+            assertEquals(300, cursor.getInt(1))
+        }
+        migrated.query("SELECT COUNT(*) FROM food_templates").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(0, cursor.getInt(0))
+        }
+        migrated.close()
+    }
+
     companion object {
         private const val DATABASE_NAME = "migration-test"
+        private const val DATABASE_NAME_V3 = "migration-test-v3"
+        private const val DATABASE_NAME_V4 = "migration-test-v4"
     }
 }

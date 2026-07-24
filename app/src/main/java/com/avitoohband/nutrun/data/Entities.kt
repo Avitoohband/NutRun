@@ -47,6 +47,21 @@ data class FoodLogEntity(
     val pendingSync: Boolean = true
 )
 
+@Entity(
+    tableName = "food_templates",
+    indices = [Index("userId"), Index("kind"), Index("lastUsedAtMillis")]
+)
+data class FoodTemplateEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val name: String,
+    val kind: String,
+    val payloadJson: String,
+    val createdAtMillis: Long,
+    val lastUsedAtMillis: Long,
+    val useCount: Int = 0
+)
+
 @Entity(tableName = "water_logs", indices = [Index("userId"), Index("localDate")])
 data class WaterLogEntity(
     @PrimaryKey val id: String,
@@ -65,8 +80,33 @@ data class HydrationPlanEntity(
     val servingMl: Int = 250,
     val wakingStartMinute: Int = 8 * 60,
     val wakingEndMinute: Int = 22 * 60,
-    val intervalMinutes: Int = 120,
+    val intervalMinutes: Int = 60,
     val remindersEnabled: Boolean = true
+)
+
+@Entity(tableName = "training_reminder_settings", indices = [Index("userId", unique = true)])
+data class TrainingReminderSettingsEntity(
+    @PrimaryKey val id: String = "",
+    val userId: String = "",
+    val enabled: Boolean = true,
+    val previousDayMinute: Int = 20 * 60,
+    val sameDayMinute: Int = 8 * 60,
+    val timezoneId: String = java.time.ZoneId.systemDefault().id
+)
+
+@Entity(
+    tableName = "reminder_delivery",
+    indices = [
+        Index("userId"),
+        Index(value = ["userId", "reminderType", "trainingDate"], unique = true)
+    ]
+)
+data class ReminderDeliveryEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val reminderType: String,
+    val trainingDate: String,
+    val deliveredAtMillis: Long
 )
 
 @Entity(tableName = "walk_sessions", indices = [Index("userId"), Index("startedAtMillis"), Index("state")])

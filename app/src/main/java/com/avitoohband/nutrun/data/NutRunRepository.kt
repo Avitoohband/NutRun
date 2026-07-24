@@ -1,5 +1,6 @@
 package com.avitoohband.nutrun.data
 
+import com.avitoohband.nutrun.isDemoAccount
 import com.avitoohband.nutrun.domain.ActivityLevel
 import com.avitoohband.nutrun.domain.BiologicalSex
 import com.avitoohband.nutrun.domain.FoodCatalogItem
@@ -41,9 +42,21 @@ class NutRunRepository @Inject constructor(
         id?.let(dao::observeWeights) ?: flowOf(emptyList())
     }
 
+    val recentFoods = userId.flatMapLatest { id ->
+        id?.let(dao::observeRecentFoods) ?: flowOf(emptyList())
+    }
+
+    val foodTemplates = userId.flatMapLatest { id ->
+        id?.let(dao::observeFoodTemplates) ?: flowOf(emptyList())
+    }
+
     val hydrationPlan = userId.flatMapLatest { id ->
         id?.let(dao::observeHydrationPlan) ?: flowOf(null)
     }.map { it ?: HydrationPlanEntity() }
+
+    val trainingReminderSettings = userId.flatMapLatest { id ->
+        id?.let(dao::observeTrainingReminderSettings) ?: flowOf(null)
+    }.map { it ?: TrainingReminderSettingsEntity() }
 
     val walks = userId.flatMapLatest { id ->
         id?.let(dao::observeWalks) ?: flowOf(emptyList())
@@ -121,6 +134,11 @@ class NutRunRepository @Inject constructor(
 
     fun synchronize() = syncScheduler.schedule()
 
+    suspend fun saveProfileIfMissing(profile: UserProfile) {
+        val accountId = requireUserId()
+        if (dao.profile(accountId) == null) saveProfile(profile)
+    }
+
     suspend fun saveProfile(profile: UserProfile) {
         val accountId = requireUserId()
         val now = System.currentTimeMillis()
@@ -194,6 +212,97 @@ class NutRunRepository @Inject constructor(
         queue(accountId, "foodLogs", duplicate.id, "UPSERT", duplicate.toJson())
     }
 
+    suspend fun logRecentFood(source: FoodLogEntity, date: LocalDate = LocalDate.now()) {
+        val accountId = requireUserId()
+        require(source.userId == accountId)
+        val duplicate = source.copy(
+            id = UUID.randomUUID().toString(),
+            localDate = date.toString(),
+            updatedAtMillis = System.currentTimeMillis(),
+            pendingSync = true
+        )
+        dao.saveFood(duplicate)
+        queue(accountId, "foodLogs", duplicate.id, "UPSERT", duplicate.toJson())
+    }
+
+    suspend fun saveFavoriteFood(source: FoodLogEntity) {
+        val accountId = requireUserId()
+        require(source.userId == accountId)
+        val now = System.currentTimeMillis()
+        val stableKey = source.catalogId ?: source.name.trim().lowercase().hashCode().toString()
+        dao.saveFoodTemplate(
+            FoodTemplateEntity(
+                id = "$accountId:favorite:$stableKey",
+                userId = accountId,
+                name = source.name,
+                kind = "FAVORITE",
+                payloadJson = JSONArray().put(source.toTemplateJson()).toString(),
+                createdAtMillis = now,
+                lastUsedAtMillis = now
+            )
+        )
+    }
+
+    suspend fun saveMealTemplate(name: String, entries: List<FoodLogEntity>) {
+        require(name.isNotBlank())
+        require(entries.isNotEmpty())
+        val accountId = requireUserId()
+        require(entries.all { it.userId == accountId })
+        val now = System.currentTimeMillis()
+        dao.saveFoodTemplate(
+            FoodTemplateEntity(
+                id = UUID.randomUUID().toString(),
+                userId = accountId,
+                name = name.trim(),
+                kind = "MEAL",
+                payloadJson = JSONArray(entries.map(FoodLogEntity::toTemplateJson)).toString(),
+                createdAtMillis = now,
+                lastUsedAtMillis = now
+            )
+        )
+    }
+
+    suspend fun logFoodTemplate(
+        template: FoodTemplateEntity,
+        date: LocalDate = LocalDate.now()
+    ) {
+        val accountId = requireUserId()
+        require(template.userId == accountId)
+        val items = JSONArray(template.payloadJson)
+        repeat(items.length()) { index ->
+            val item = items.getJSONObject(index)
+            val entry = FoodLogEntity(
+                id = UUID.randomUUID().toString(),
+                userId = accountId,
+                localDate = date.toString(),
+                mealType = item.getString("mealType"),
+                catalogId = item.optString("catalogId").takeIf(String::isNotBlank),
+                name = item.getString("name"),
+                brand = item.optString("brand").takeIf(String::isNotBlank),
+                servingGrams = item.getDouble("servingGrams"),
+                calories = item.getInt("calories"),
+                proteinGrams = item.getDouble("proteinGrams"),
+                carbohydrateGrams = item.getDouble("carbohydrateGrams"),
+                fatGrams = item.getDouble("fatGrams"),
+                updatedAtMillis = System.currentTimeMillis() + index
+            )
+            dao.saveFood(entry)
+            queue(accountId, "foodLogs", entry.id, "UPSERT", entry.toJson())
+        }
+        dao.saveFoodTemplate(
+            template.copy(
+                lastUsedAtMillis = System.currentTimeMillis(),
+                useCount = template.useCount + 1
+            )
+        )
+    }
+
+    suspend fun deleteFoodTemplate(template: FoodTemplateEntity) {
+        val accountId = requireUserId()
+        require(template.userId == accountId)
+        dao.deleteFoodTemplate(template)
+    }
+
     suspend fun deleteFood(entry: FoodLogEntity) {
         val accountId = requireUserId()
         require(entry.userId == accountId)
@@ -215,6 +324,23 @@ class NutRunRepository @Inject constructor(
         queue(accountId, "waterLogs", entry.id, "UPSERT", entry.toJson())
     }
 
+    suspend fun setQuickServingAndAddWater(amountMl: Int, date: LocalDate = LocalDate.now()) {
+        require(amountMl in 50..2_000)
+        val accountId = requireUserId()
+        val currentPlan = dao.hydrationPlan(accountId) ?: defaultHydrationPlan(accountId)
+        val plan = currentPlan.copy(servingMl = amountMl)
+        val entry = WaterLogEntity(
+            id = UUID.randomUUID().toString(),
+            userId = accountId,
+            localDate = date.toString(),
+            amountMl = amountMl,
+            loggedAtMillis = System.currentTimeMillis()
+        )
+        dao.saveQuickServingAndWater(plan, entry)
+        queue(accountId, "hydrationPlan", plan.id, "UPSERT", plan.toJson())
+        queue(accountId, "waterLogs", entry.id, "UPSERT", entry.toJson())
+    }
+
     suspend fun saveHydrationPlan(plan: HydrationPlanEntity) {
         require(plan.goalMl in 250..10_000)
         require(plan.servingMl in 50..2_000)
@@ -225,6 +351,18 @@ class NutRunRepository @Inject constructor(
         dao.saveHydrationPlan(scoped)
         queue(accountId, "hydrationPlan", scoped.id, "UPSERT", scoped.toJson())
     }
+
+    suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity) {
+        require(settings.previousDayMinute in 0 until 24 * 60)
+        require(settings.sameDayMinute in 0 until 24 * 60)
+        val accountId = requireUserId()
+        dao.saveTrainingReminderSettings(
+            settings.copy(id = "training-reminders:$accountId", userId = accountId)
+        )
+    }
+
+    suspend fun currentTrainingReminderSettings(): TrainingReminderSettingsEntity? =
+        dao.trainingReminderSettings(requireUserId())
 
     suspend fun waterTotal(date: LocalDate = LocalDate.now()): Int =
         dao.waterTotal(requireUserId(), date.toString())
@@ -282,6 +420,7 @@ class NutRunRepository @Inject constructor(
         operation: String,
         payload: JSONObject?
     ) {
+        if (isDemoAccount(userId)) return
         dao.enqueueSync(
             SyncOperationEntity(
                 id = "$userId:$entityType:$entityId",
@@ -342,6 +481,17 @@ private fun FoodLogEntity.toJson() = JSONObject()
     .put("carbohydrateGrams", carbohydrateGrams)
     .put("fatGrams", fatGrams)
     .put("updatedAtMillis", updatedAtMillis)
+
+private fun FoodLogEntity.toTemplateJson() = JSONObject()
+    .put("mealType", mealType)
+    .put("catalogId", catalogId.orEmpty())
+    .put("name", name)
+    .put("brand", brand.orEmpty())
+    .put("servingGrams", servingGrams)
+    .put("calories", calories)
+    .put("proteinGrams", proteinGrams)
+    .put("carbohydrateGrams", carbohydrateGrams)
+    .put("fatGrams", fatGrams)
 
 private fun WaterLogEntity.toJson() = JSONObject()
     .put("date", localDate)

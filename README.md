@@ -10,6 +10,13 @@ The app uses a local-first production architecture:
 
 - Account-scoped Room storage for profiles, weight history, nutrition,
   hydration, training, supplements, walk sessions, and route points.
+- Set-by-set workout logging with reps, weight, duration, RPE, previous
+  performance, rest timers, personal records, and weekly volume.
+- A weekly training calendar with one-week rescheduling and skipped-session
+  handling that also updates training reminders.
+- Recent foods, favorites, and reusable multi-item meals for faster logging.
+- Permission-controlled Health Connect sync for weight, steps, hydration,
+  nutrition, completed workouts, and finished walks.
 - DataStore for the current account, theme, and per-account entitlement cache.
 - A WorkManager outbox for authenticated, idempotent Firestore/Storage sync.
 - Hilt, KSP, Navigation Compose, Flow, and WorkManager.

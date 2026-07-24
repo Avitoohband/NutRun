@@ -12,14 +12,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         UserProfileEntity::class,
         WeightEntryEntity::class,
         FoodLogEntity::class,
+        FoodTemplateEntity::class,
         WaterLogEntity::class,
         HydrationPlanEntity::class,
         WalkSessionEntity::class,
         WalkPointEntity::class,
         TrainingStateEntity::class,
+        TrainingReminderSettingsEntity::class,
+        ReminderDeliveryEntity::class,
         SyncOperationEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = true
 )
 abstract class NutRunDatabase : RoomDatabase() {
@@ -85,6 +88,75 @@ abstract class NutRunDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("UPDATE hydration_plan SET intervalMinutes = 60")
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS training_reminder_settings (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        userId TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        previousDayMinute INTEGER NOT NULL,
+                        sameDayMinute INTEGER NOT NULL,
+                        timezoneId TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_training_reminder_settings_userId " +
+                        "ON training_reminder_settings(userId)"
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS reminder_delivery (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        userId TEXT NOT NULL,
+                        reminderType TEXT NOT NULL,
+                        trainingDate TEXT NOT NULL,
+                        deliveredAtMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_reminder_delivery_userId ON reminder_delivery(userId)"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_reminder_delivery_userId_reminderType_trainingDate " +
+                        "ON reminder_delivery(userId, reminderType, trainingDate)"
+                )
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS food_templates (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        userId TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        payloadJson TEXT NOT NULL,
+                        createdAtMillis INTEGER NOT NULL,
+                        lastUsedAtMillis INTEGER NOT NULL,
+                        useCount INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_food_templates_userId ON food_templates(userId)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_food_templates_kind ON food_templates(kind)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_food_templates_lastUsedAtMillis " +
+                        "ON food_templates(lastUsedAtMillis)"
+                )
+            }
+        }
+
         @Volatile private var instance: NutRunDatabase? = null
 
         fun getInstance(context: Context): NutRunDatabase =
@@ -93,7 +165,9 @@ abstract class NutRunDatabase : RoomDatabase() {
                     context.applicationContext,
                     NutRunDatabase::class.java,
                     "nutrun.db"
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .build()
+                    .also { instance = it }
             }
     }
 }

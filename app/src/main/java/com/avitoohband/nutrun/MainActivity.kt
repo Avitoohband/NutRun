@@ -3,6 +3,7 @@ package com.avitoohband.nutrun
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -12,7 +13,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,12 +32,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
@@ -43,6 +51,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -62,14 +71,17 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -79,6 +91,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -86,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -118,15 +132,52 @@ import dagger.hilt.android.AndroidEntryPoint
 import java.time.LocalDate
 import java.time.DayOfWeek
 import java.time.format.DateTimeParseException
+import java.time.LocalTime
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private var navigationRequest by mutableStateOf<NavigationRequest?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NutRunRoot() }
+        navigationRequest = intent.toNavigationRequest()
+        setContent {
+            NutRunRoot(
+                navigationRequest = navigationRequest,
+                onNavigationConsumed = { consumedId ->
+                    if (navigationRequest?.id == consumedId) navigationRequest = null
+                }
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        navigationRequest = intent.toNavigationRequest()
+    }
+
+    companion object {
+        const val EXTRA_DESTINATION = "destination"
+        const val EXTRA_WATER_SECTION = "water_section"
     }
 }
+
+data class NavigationRequest(
+    val id: Long = System.nanoTime(),
+    val destination: String,
+    val focusWater: Boolean = false
+)
+
+private fun Intent.toNavigationRequest(): NavigationRequest? =
+    getStringExtra(MainActivity.EXTRA_DESTINATION)?.let {
+        NavigationRequest(
+            destination = it,
+            focusWater = getBooleanExtra(MainActivity.EXTRA_WATER_SECTION, false)
+        )
+    }
 
 private data class Destination(val route: String, val label: String, val icon: ImageVector)
 
@@ -140,8 +191,10 @@ private val destinations = listOf(
 
 @Composable
 fun NutRunRoot(
+    navigationRequest: NavigationRequest? = null,
+    onNavigationConsumed: (Long) -> Unit = {},
     app: NutRunViewModel = hiltViewModel(),
-    training: PrototypeViewModel = hiltViewModel()
+    training: TrainingViewModel = hiltViewModel()
 ) {
     val state by app.state.collectAsStateWithLifecycle()
     val message by app.message.collectAsState()
@@ -150,12 +203,15 @@ fun NutRunRoot(
 
     MaterialTheme(colorScheme = colors) {
         when {
-            state.session.authenticatedEmail == null -> AuthenticationScreen(app::authenticate)
+            state.session.authenticatedEmail == null -> AuthenticationScreen(
+                onAuthenticate = app::authenticate,
+                onDemo = app::enterDemo
+            )
             state.profile == null -> OnboardingScreen(
                 email = state.session.authenticatedEmail.orEmpty(),
                 onSave = app::saveProfile
             )
-            else -> MainApp(app, training, state)
+            else -> MainApp(app, training, state, navigationRequest, onNavigationConsumed)
         }
         message?.let {
             AlertDialog(
@@ -169,7 +225,10 @@ fun NutRunRoot(
 }
 
 @Composable
-private fun AuthenticationScreen(onAuthenticate: (String, String, Boolean) -> Unit) {
+private fun AuthenticationScreen(
+    onAuthenticate: (String, String, Boolean) -> Unit,
+    onDemo: () -> Unit
+) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     Column(
@@ -183,7 +242,7 @@ private fun AuthenticationScreen(onAuthenticate: (String, String, Boolean) -> Un
             value = email,
             onValueChange = { email = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Email") },
+            label = { Text(if (BuildConfig.DEBUG) "Email or demo username" else "Email") },
             singleLine = true
         )
         Spacer(Modifier.height(10.dp))
@@ -204,6 +263,12 @@ private fun AuthenticationScreen(onAuthenticate: (String, String, Boolean) -> Un
             onClick = { onAuthenticate(email, password, true) },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Create account") }
+        if (BuildConfig.DEBUG) {
+            OutlinedButton(
+                onClick = onDemo,
+                modifier = Modifier.fillMaxWidth().testTag("demo-login")
+            ) { Text("Enter demo") }
+        }
         Text(
             "A 30-day ad-free trial starts when the account is first created. No payment details required.",
             modifier = Modifier.padding(top = 12.dp),
@@ -343,8 +408,38 @@ private fun <T> ChoiceRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainApp(app: NutRunViewModel, training: PrototypeViewModel, state: NutRunUiState) {
+private fun MainApp(
+    app: NutRunViewModel,
+    training: TrainingViewModel,
+    state: NutRunUiState,
+    navigationRequest: NavigationRequest?,
+    onNavigationConsumed: (Long) -> Unit
+) {
     val navController = rememberNavController()
+    val activity = LocalActivity.current
+    val startRoute = remember {
+        activity?.intent?.getStringExtra(MainActivity.EXTRA_DESTINATION)
+            ?.takeIf { candidate -> destinations.any { it.route == candidate } }
+            ?: "today"
+    }
+    var waterFocusRequest by rememberSaveable { mutableStateOf(0) }
+    fun navigateTo(destination: String, focusWater: Boolean = false) {
+        if (focusWater) waterFocusRequest += 1
+        navController.navigate(destination) {
+            launchSingleTop = true
+        }
+    }
+    LaunchedEffect(navigationRequest?.id) {
+        navigationRequest
+            ?.takeIf { request -> destinations.any { it.route == request.destination } }
+            ?.let { request ->
+                if (request.focusWater) waterFocusRequest += 1
+                navController.navigate(request.destination) {
+                    launchSingleTop = true
+                }
+                onNavigationConsumed(request.id)
+            }
+    }
     val entry by navController.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: "today"
     var accountMenu by remember { mutableStateOf(false) }
@@ -352,7 +447,17 @@ private fun MainApp(app: NutRunViewModel, training: PrototypeViewModel, state: N
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (route == "profile") "Profile" else "NutRun", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        when (route) {
+                            "profile" -> "Profile"
+                            "edit-health" -> "Health details"
+                            "notifications" -> "Notifications"
+                            else -> "NutRun"
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
+                },
                 actions = {
                     Box {
                         IconButton(onClick = { accountMenu = true }) {
@@ -376,7 +481,7 @@ private fun MainApp(app: NutRunViewModel, training: PrototypeViewModel, state: N
             )
         },
         bottomBar = {
-            if (route != "profile") {
+            if (route !in setOf("profile", "edit-health", "notifications")) {
                 NavigationBar {
                     destinations.forEach { destination ->
                         NavigationBarItem(
@@ -396,19 +501,56 @@ private fun MainApp(app: NutRunViewModel, training: PrototypeViewModel, state: N
             }
         }
     ) { padding ->
-        NavHost(navController, startDestination = "today", modifier = Modifier.padding(padding)) {
-            composable("today") { TodayScreen(state, training) }
+        NavHost(navController, startDestination = startRoute, modifier = Modifier.padding(padding)) {
+            composable("today") {
+                TodayScreen(
+                    state,
+                    training,
+                    onTrainingClick = { navigateTo("training") },
+                    onWaterClick = { navigateTo("nutrition", focusWater = true) }
+                )
+            }
             composable("training") { TrainingScreen(training) }
-            composable("nutrition") { NutritionScreen(app, state) }
+            composable("nutrition") { NutritionScreen(app, state, waterFocusRequest) }
             composable("walk") { WalkScreen(app, state) }
-            composable("progress") { ProgressScreen(app, state) }
-            composable("profile") { ProfileScreen(app, state) { navController.popBackStack() } }
+            composable("progress") { ProgressScreen(app, state, training) }
+            composable("profile") {
+                ProfileScreen(
+                    app,
+                    state,
+                    onBack = { navController.popBackStack() },
+                    onEditHealth = { navController.navigate("edit-health") },
+                    onNotifications = { navController.navigate("notifications") }
+                )
+            }
+            composable("edit-health") {
+                EditHealthDetailsScreen(
+                    state.profile ?: return@composable,
+                    onSave = {
+                        app.saveProfile(it)
+                        navController.popBackStack()
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable("notifications") {
+                NotificationSettingsScreen(
+                    app,
+                    state,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
+private fun TodayScreen(
+    state: NutRunUiState,
+    training: TrainingViewModel,
+    onTrainingClick: () -> Unit,
+    onWaterClick: () -> Unit
+) {
     val profile = state.profile ?: return
     var addSupplement by remember { mutableStateOf(false) }
     if (addSupplement) {
@@ -427,6 +569,7 @@ private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
     ) {
         item {
             Text("Today", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text(formatToday(), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("${state.nutrition.calories} of ${profile.calorieTarget} kcal")
             LinearProgressIndicator(
                 progress = { (state.nutrition.calories / profile.calorieTarget.toFloat()).coerceIn(0f, 1f) },
@@ -435,18 +578,38 @@ private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryCard("${state.waterMl}", "mL water", Modifier.weight(1f), Color(0xFFDDEFFC))
+                SummaryCard(
+                    "${state.waterMl}",
+                    "mL water",
+                    Modifier.weight(1f),
+                    Color(0xFFDDEFFC),
+                    onClick = onWaterClick
+                )
                 SummaryCard("${state.nutrition.proteinGrams.roundToInt()} g", "protein", Modifier.weight(1f), Color(0xFFE3F3E8))
                 SummaryCard("${state.walks.firstOrNull()?.distanceMeters?.div(1_000)?.let { "%.1f".format(it) } ?: "0"} km", "last walk", Modifier.weight(1f), Color(0xFFFFE7DE))
             }
         }
-        item { SectionHeading("Next training") }
+        item { SectionHeading("Today's training") }
         item {
-            val next = training.sessions.firstOrNull()
+            val today = LocalDate.now()
+            val todaySessions = training.sessionsForDate(today)
+            val upcoming = training.nextScheduledSession(today.plusDays(1))
             ActionCard(
-                title = next?.name ?: "Create your first session",
-                subtitle = next?.let { "${it.exercises.size} exercises" } ?: "Training is ready when you are.",
-                icon = Icons.Default.FitnessCenter
+                title = when {
+                    todaySessions.isNotEmpty() -> todaySessions.joinToString(" + ") { it.name }
+                    upcoming != null -> "Rest day"
+                    else -> "Create your first session"
+                },
+                subtitle = when {
+                    todaySessions.isNotEmpty() ->
+                        "${todaySessions.sumOf { it.logicalTargetCount() }} planned targets"
+                    upcoming != null ->
+                        "Next: ${upcoming.second.name} on ${formatToday(upcoming.first)}"
+                    else -> "Training is ready when you are."
+                },
+                icon = Icons.Default.FitnessCenter,
+                onClick = onTrainingClick,
+                testTag = "today-training-card"
             )
         }
         item { SectionHeading("Hydration") }
@@ -454,7 +617,9 @@ private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
             ActionCard(
                 "${state.waterMl} / ${state.hydrationPlan.goalMl} mL",
                 if (state.waterMl >= state.hydrationPlan.goalMl) "Daily goal reached" else "Keep a steady pace through your waking window.",
-                Icons.Default.WaterDrop
+                Icons.Default.WaterDrop,
+                onClick = onWaterClick,
+                testTag = "today-hydration-card"
             )
         }
         item {
@@ -463,19 +628,36 @@ private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
                 IconButton(onClick = { addSupplement = true }) { Icon(Icons.Default.Add, "Add supplement") }
             }
         }
-        items(training.supplements.filter { it.schedule.isDueOn(LocalDate.now()) }, key = { it.id }) { supplement ->
-            Card(shape = RoundedCornerShape(8.dp)) {
+        val today = LocalDate.now()
+        val dueSupplements = dueSupplementsForDate(training.supplements, today)
+        items(dueSupplements, key = { it.id }) { supplement ->
+            val completed = supplement.isCompletedOn(today)
+            Card(
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (completed) {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                )
+            ) {
                 Row(
                     Modifier.fillMaxWidth().padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(
-                        checked = supplement.completedToday,
+                        checked = completed,
                         onCheckedChange = { training.toggleSupplement(supplement.id, it) }
                     )
                     Column {
-                        Text(supplement.name, fontWeight = FontWeight.SemiBold)
-                        Text("${supplement.dose} | ${supplement.schedule.label()}", fontSize = 12.sp)
+                        val color = if (completed) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
+                        Text(supplement.name, fontWeight = FontWeight.SemiBold, color = color)
+                        Text("${supplement.dose} | ${supplement.schedule.label()}", fontSize = 12.sp, color = color)
                     }
                 }
             }
@@ -485,9 +667,12 @@ private fun TodayScreen(state: NutRunUiState, training: PrototypeViewModel) {
 }
 
 @Composable
-private fun TrainingScreen(model: PrototypeViewModel) {
+private fun TrainingScreen(model: TrainingViewModel) {
     var addSession by remember { mutableStateOf(false) }
     var editSessionId by remember { mutableStateOf<String?>(null) }
+    var rescheduleRequest by remember {
+        mutableStateOf<Pair<TrainingSession, LocalDate>?>(null)
+    }
     if (addSession) {
         AddTrainingSessionDialog(
             onDismiss = { addSession = false },
@@ -504,6 +689,17 @@ private fun TrainingScreen(model: PrototypeViewModel) {
             onDismiss = { editSessionId = null }
         )
     }
+    rescheduleRequest?.let { (session, originalDate) ->
+        RescheduleTrainingDialog(
+            session = session,
+            originalDate = originalDate,
+            onDismiss = { rescheduleRequest = null },
+            onMove = { date ->
+                model.rescheduleSession(session.id, originalDate, date)
+                rescheduleRequest = null
+            }
+        )
+    }
     model.lastWorkoutSummary?.let { summary ->
         AlertDialog(
             onDismissRequest = model::dismissWorkoutSummary,
@@ -513,57 +709,157 @@ private fun TrainingScreen(model: PrototypeViewModel) {
         )
     }
     model.activeSession()?.let { session ->
+        val timerEnd = model.restTimerEndAtMillis
+        var currentTime by remember(timerEnd) { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(timerEnd) {
+            while (timerEnd != null && currentTime < timerEnd) {
+                delay(1_000)
+                currentTime = System.currentTimeMillis()
+            }
+            if (timerEnd != null && currentTime >= timerEnd) model.skipRestTimer()
+        }
         LazyColumn(
             Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item { Text(session.name, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+            if (session.exercises.any { it.alternativeGroupId != null }) {
+                item {
+                    Text(
+                        "Choose one cardio option.",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            items(session.guidance) { guidance ->
+                Text(guidance, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            if (timerEnd != null && timerEnd > currentTime) {
+                item {
+                    RestTimerBar(
+                        remainingSeconds = ((timerEnd - currentTime + 999) / 1_000).toInt(),
+                        onAddTime = model::addRestTime,
+                        onSkip = model::skipRestTimer
+                    )
+                }
+            }
             items(session.exercises, key = { it.id }) { target ->
                 Card(shape = RoundedCornerShape(8.dp)) {
-                    Row(
+                    Column(
                         Modifier.fillMaxWidth().padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Checkbox(
-                            model.completedExerciseIds[target.id] == true,
-                            { model.toggleExerciseComplete(target.id, it) }
-                        )
-                        Column {
-                            Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
-                            Text(target.summary(model.usesMetricUnits))
+                        Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
+                        Text(target.summary(model.usesMetricUnits))
+                        target.intensityGuidance?.let {
+                            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        val previousSets = model.previousSets(target.exercise.id)
+                        if (previousSets.isNotEmpty()) {
+                            Text(
+                                "Previous: " + previousSets.joinToString(" | ") {
+                                    buildString {
+                                        append("Set ${it.setNumber}")
+                                        it.weightKg?.let { weight -> append(" ${displayWeight(weight, model.usesMetricUnits)}") }
+                                        it.reps?.let { reps -> append(" x $reps") }
+                                        it.rpe?.let { rpe -> append(" RPE ${formatMeasurementForInput(rpe)}") }
+                                    }
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp
+                            )
+                        }
+                        model.activeSetLogs[target.id].orEmpty().forEach { set ->
+                            WorkoutSetRow(
+                                set = set,
+                                metric = model.usesMetricUnits,
+                                onChange = { reps, weightKg, durationSeconds, rpe, completed ->
+                                    model.updateWorkoutSet(
+                                        target.id,
+                                        set.setNumber,
+                                        reps,
+                                        weightKg,
+                                        durationSeconds,
+                                        rpe,
+                                        completed
+                                    )
+                                }
+                            )
                         }
                     }
                 }
             }
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = model::pauseOrResumeWorkout, modifier = Modifier.weight(1f)) {
-                        Icon(if (model.isWorkoutPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null)
-                        Text(if (model.isWorkoutPaused) "Resume" else "Pause")
-                    }
-                    Button(onClick = model::finishWorkout, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.Stop, null)
-                        Text("Finish")
-                    }
+                Button(onClick = model::finishWorkout, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Stop, null)
+                    Text("Finish")
                 }
             }
         }
         return
     }
     LazyColumn(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier.fillMaxSize().padding(16.dp).testTag("training-list"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item { Text("Training", fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+        item {
+            Text(
+                "Training",
+                modifier = Modifier.testTag("training-heading"),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        item { SectionHeading("This week") }
+        items(trainingWeek(), key = { it.toString() }) { date ->
+            val scheduled = model.sessionsForDate(date)
+            val completedNames = model.workoutHistory
+                .filter { it.performedOn == date }
+                .map(WorkoutRecord::sessionName)
+            ActionCard(
+                title = formatToday(date),
+                subtitle = when {
+                    scheduled.isEmpty() && completedNames.isEmpty() -> "Rest day"
+                    else -> (scheduled.map(TrainingSession::name) + completedNames.map { "$it completed" })
+                        .distinct()
+                        .joinToString(" | ")
+                },
+                icon = if (completedNames.isEmpty()) Icons.Default.FitnessCenter else Icons.Default.Check
+            )
+        }
+        item { SectionHeading("Program") }
         items(model.sessions, key = { it.id }) { session ->
-            Card(shape = RoundedCornerShape(8.dp)) {
+            val originalDate = trainingWeek().first { it.dayOfWeek == session.weekday }
+            val isToday = model.sessionsForDate(LocalDate.now()).any { it.id == session.id }
+            Card(
+                shape = RoundedCornerShape(8.dp),
+                border = if (isToday) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+            ) {
                 Column(Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(session.name, fontWeight = FontWeight.Bold)
-                            Text("${session.weekday.name.lowercase().replaceFirstChar(Char::uppercase)} | ${session.exercises.size} exercises")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(session.name, fontWeight = FontWeight.Bold)
+                                if (isToday) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text("Today", Modifier.padding(horizontal = 7.dp, vertical = 2.dp), fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                            Text(
+                                "${session.weekday.name.lowercase().replaceFirstChar(Char::uppercase)} | " +
+                                    "${session.logicalTargetCount()} planned targets"
+                            )
                         }
-                        IconButton(onClick = { model.startWorkout(session.id) }) {
+                        IconButton(
+                            onClick = { model.startWorkout(session.id) },
+                            modifier = Modifier.testTag("start-session-${session.id}")
+                        ) {
                             Icon(Icons.Default.PlayArrow, "Start ${session.name}")
                         }
                     }
@@ -573,6 +869,14 @@ private fun TrainingScreen(model: PrototypeViewModel) {
                     }) {
                         Icon(Icons.Default.Edit, null)
                         Text("Exercises")
+                    }
+                    Row {
+                        TextButton(onClick = { rescheduleRequest = session to originalDate }) {
+                            Text("Move")
+                        }
+                        TextButton(onClick = { model.skipSession(session.id, originalDate) }) {
+                            Text("Skip this week")
+                        }
                     }
                 }
             }
@@ -586,12 +890,19 @@ private fun TrainingScreen(model: PrototypeViewModel) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
+private fun NutritionScreen(
+    app: NutRunViewModel,
+    state: NutRunUiState,
+    waterFocusRequest: Int = 0
+) {
     var showFood by remember { mutableStateOf<FoodLogEntity?>(null) }
     var draftFood by remember { mutableStateOf<FoodCatalogItem?>(null) }
     var createFood by remember { mutableStateOf(false) }
     var hydrationSettings by remember { mutableStateOf(false) }
+    var waterAmounts by remember { mutableStateOf(false) }
+    var saveMealType by remember { mutableStateOf<MealType?>(null) }
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -599,6 +910,11 @@ private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
     val searchResults by app.foodSearchResults.collectAsState()
     val searchBusy by app.foodSearchBusy.collectAsState()
     var query by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val waterHeadingIndex = 2 + searchResults.size + if (searchBusy) 1 else 0
+    LaunchedEffect(waterFocusRequest, waterHeadingIndex) {
+        if (waterFocusRequest > 0) listState.animateScrollToItem(waterHeadingIndex)
+    }
 
     if (createFood || showFood != null || draftFood != null) {
         FoodEntryDialog(
@@ -631,9 +947,29 @@ private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
             { hydrationSettings = false }
         )
     }
+    if (waterAmounts) {
+        WaterAmountDialog(
+            onSelect = {
+                app.setQuickServingAndAddWater(it)
+                waterAmounts = false
+            },
+            onDismiss = { waterAmounts = false }
+        )
+    }
+    saveMealType?.let { meal ->
+        SaveMealDialog(
+            meal = meal,
+            onDismiss = { saveMealType = null },
+            onSave = { name ->
+                app.saveMealTemplate(name, meal)
+                saveMealType = null
+            }
+        )
+    }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        state = listState,
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -678,8 +1014,11 @@ private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
                 }
             }
         }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        item(key = "water-heading") {
+            Row(
+                modifier = Modifier.testTag("water-section"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 SectionHeading("Water", Modifier.weight(1f))
                 TextButton(onClick = { hydrationSettings = true }) { Text("Settings") }
             }
@@ -698,18 +1037,104 @@ private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { app.addWater(state.hydrationPlan.servingMl) }) {
-                        Text("+${state.hydrationPlan.servingMl}")
+                    Surface(
+                        modifier = Modifier.combinedClickable(
+                            onClick = { app.addWater(state.hydrationPlan.servingMl) },
+                            onLongClick = { waterAmounts = true }
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            "+${state.hydrationPlan.servingMl} mL",
+                            Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+        if (state.foodTemplates.isNotEmpty() || state.recentFoods.isNotEmpty()) {
+            item { SectionHeading("Quick add") }
+        }
+        items(state.foodTemplates, key = { "template:${it.id}" }) { template ->
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (template.kind == "FAVORITE") Icons.Default.Star else Icons.Default.LocalDining,
+                        null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(template.name, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (template.kind == "FAVORITE") "Favorite food" else "Saved meal",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { app.logFoodTemplate(template) }) {
+                        Icon(Icons.Default.Add, "Add ${template.name}")
+                    }
+                    IconButton(onClick = { app.deleteFoodTemplate(template) }) {
+                        Icon(Icons.Default.Delete, "Delete ${template.name}")
+                    }
+                }
+            }
+        }
+        val recentFoods = state.recentFoods
+            .distinctBy { "${it.catalogId}:${it.name}:${it.servingGrams}" }
+            .take(5)
+        items(recentFoods, key = { "recent:${it.id}" }) { entry ->
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(entry.name, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Recent | ${entry.calories} kcal",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { app.saveFavoriteFood(entry) }) {
+                        Icon(Icons.Default.Star, "Favorite ${entry.name}")
+                    }
+                    IconButton(onClick = { app.logRecentFood(entry) }) {
+                        Icon(Icons.Default.Add, "Add ${entry.name}")
                     }
                 }
             }
         }
         MealType.entries.forEach { meal ->
-            item { SectionHeading(meal.name.lowercase().replaceFirstChar(Char::uppercase)) }
             val entries = state.food.filter { it.mealType == meal.name }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SectionHeading(
+                        meal.name.lowercase().replaceFirstChar(Char::uppercase),
+                        Modifier.weight(1f)
+                    )
+                    if (entries.isNotEmpty()) {
+                        TextButton(onClick = { saveMealType = meal }) { Text("Save meal") }
+                    }
+                }
+            }
             if (entries.isEmpty()) item { Text("Nothing logged", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(entries, key = { it.id }) { entry ->
-                FoodLogRow(entry, { showFood = entry }, { app.duplicateFood(entry.id) }, { app.deleteFood(entry) })
+                FoodLogRow(
+                    entry,
+                    { showFood = entry },
+                    { app.duplicateFood(entry.id) },
+                    { app.saveFavoriteFood(entry) },
+                    { app.deleteFood(entry) }
+                )
             }
         }
         if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
@@ -717,7 +1142,13 @@ private fun NutritionScreen(app: NutRunViewModel, state: NutRunUiState) {
 }
 
 @Composable
-private fun FoodLogRow(entry: FoodLogEntity, edit: () -> Unit, duplicate: () -> Unit, delete: () -> Unit) {
+private fun FoodLogRow(
+    entry: FoodLogEntity,
+    edit: () -> Unit,
+    duplicate: () -> Unit,
+    favorite: () -> Unit,
+    delete: () -> Unit
+) {
     var menu by remember { mutableStateOf(false) }
     Card(shape = RoundedCornerShape(8.dp)) {
         Row(
@@ -733,11 +1164,40 @@ private fun FoodLogRow(entry: FoodLogEntity, edit: () -> Unit, duplicate: () -> 
                 DropdownMenu(menu, { menu = false }) {
                     DropdownMenuItem({ Text("Edit") }, { menu = false; edit() }, leadingIcon = { Icon(Icons.Default.Edit, null) })
                     DropdownMenuItem({ Text("Duplicate") }, { menu = false; duplicate() }, leadingIcon = { Icon(Icons.Default.Add, null) })
+                    DropdownMenuItem({ Text("Add to favorites") }, { menu = false; favorite() }, leadingIcon = { Icon(Icons.Default.Star, null) })
                     DropdownMenuItem({ Text("Delete") }, { menu = false; delete() }, leadingIcon = { Icon(Icons.Default.Delete, null) })
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SaveMealDialog(
+    meal: MealType,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    val defaultName = meal.name.lowercase().replaceFirstChar(Char::uppercase)
+    var name by rememberSaveable(meal) { mutableStateOf("$defaultName meal") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save meal") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Meal name") },
+                singleLine = true
+            )
+        },
+        confirmButton = {
+            Button(onClick = { if (name.isNotBlank()) onSave(name.trim()) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
@@ -801,21 +1261,13 @@ private fun HydrationSettingsDialog(
 ) {
     var goal by remember { mutableStateOf(initial.goalMl.toString()) }
     var serving by remember { mutableStateOf(initial.servingMl.toString()) }
-    var start by remember { mutableStateOf((initial.wakingStartMinute / 60).toString()) }
-    var end by remember { mutableStateOf((initial.wakingEndMinute / 60).toString()) }
-    var interval by remember { mutableStateOf(initial.intervalMinutes.toString()) }
-    var enabled by remember { mutableStateOf(initial.remindersEnabled) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Hydration settings") },
+        title = { Text("Water settings") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { OutlinedTextField(goal, { goal = it }, label = { Text("Daily goal (mL)") }) }
                 item { OutlinedTextField(serving, { serving = it }, label = { Text("Quick serving (mL)") }) }
-                item { OutlinedTextField(start, { start = it }, label = { Text("Wake hour (0-23)") }) }
-                item { OutlinedTextField(end, { end = it }, label = { Text("Sleep hour (1-24)") }) }
-                item { OutlinedTextField(interval, { interval = it }, label = { Text("Reminder interval (minutes)") }) }
-                item { Row(verticalAlignment = Alignment.CenterVertically) { Text("Reminders", Modifier.weight(1f)); Switch(enabled, { enabled = it }) } }
             }
         },
         confirmButton = {
@@ -823,14 +1275,60 @@ private fun HydrationSettingsDialog(
                 onSave(
                     initial.copy(
                         goalMl = goal.toIntOrNull() ?: initial.goalMl,
-                        servingMl = serving.toIntOrNull() ?: initial.servingMl,
-                        wakingStartMinute = (start.toIntOrNull() ?: 8) * 60,
-                        wakingEndMinute = (end.toIntOrNull() ?: 22) * 60,
-                        intervalMinutes = interval.toIntOrNull() ?: 120,
-                        remindersEnabled = enabled
+                        servingMl = serving.toIntOrNull() ?: initial.servingMl
                     )
                 )
             }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun WaterAmountDialog(onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    var custom by rememberSaveable { mutableStateOf("") }
+    var showCustom by rememberSaveable { mutableStateOf(false) }
+    val parsed = custom.toIntOrNull()
+    val customError = showCustom && custom.isNotBlank() && !isValidWaterAmount(parsed)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Log water") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(listOf(180, 240, 300, 500, 750, 1_000)) { amount ->
+                    OutlinedButton(
+                        onClick = { onSelect(amount) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("$amount mL") }
+                }
+                item {
+                    TextButton(onClick = { showCustom = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Custom")
+                    }
+                }
+                if (showCustom) {
+                    item {
+                        OutlinedTextField(
+                            custom,
+                            { custom = it.filter(Char::isDigit) },
+                            label = { Text("Custom amount (mL)") },
+                            supportingText = {
+                                if (customError) Text("Enter an amount from 50 to 2000 mL.")
+                            },
+                            isError = customError,
+                            singleLine = true
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (showCustom) {
+                Button(
+                    onClick = { parsed?.let(onSelect) },
+                    enabled = isValidWaterAmount(parsed)
+                ) { Text("Log") }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -1002,8 +1500,21 @@ private fun RouteFallback(points: List<WalkPointEntity>) {
 }
 
 @Composable
-private fun ProgressScreen(app: NutRunViewModel, state: NutRunUiState) {
+private fun ProgressScreen(
+    app: NutRunViewModel,
+    state: NutRunUiState,
+    training: TrainingViewModel
+) {
     var editWeight by remember { mutableStateOf(false) }
+    val healthConnect by app.healthConnectState.collectAsState()
+    val healthPermissionLauncher = rememberLauncherForActivityResult(
+        PermissionController.createRequestPermissionResultContract()
+    ) { granted ->
+        app.refreshHealthConnectStatus()
+        if (granted.containsAll(app.healthConnectPermissions)) {
+            app.synchronizeHealthConnect(training.workoutHistory)
+        }
+    }
     val profile = state.profile ?: return
     val estimate = state.healthEstimate ?: return
     if (editWeight) {
@@ -1023,6 +1534,108 @@ private fun ProgressScreen(app: NutRunViewModel, state: NutRunUiState) {
         }
         item {
             Text("General guidance only, not medical advice.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        }
+        item { SectionHeading("Health Connect") }
+        item {
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        when {
+                            !healthConnect.available -> "Health Connect is unavailable on this device."
+                            healthConnect.permissionGranted -> "Connected"
+                            else -> "Share only the health records you approve."
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (healthConnect.importedSteps > 0) {
+                        Text("${healthConnect.importedSteps} steps imported today")
+                    }
+                    healthConnect.lastSyncMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (healthConnect.busy) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                    Button(
+                        onClick = {
+                            if (healthConnect.permissionGranted) {
+                                app.synchronizeHealthConnect(training.workoutHistory)
+                            } else {
+                                healthPermissionLauncher.launch(app.healthConnectPermissions)
+                            }
+                        },
+                        enabled = healthConnect.available && !healthConnect.busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (healthConnect.permissionGranted) "Sync Health Connect" else "Connect Health Connect")
+                    }
+                }
+            }
+        }
+        item {
+            SectionHeading("Training overview", Modifier.testTag("training-overview"))
+        }
+        item {
+            val week = trainingWeek()
+            val planned = week.sumOf { training.sessionsForDate(it).size }
+            val completed = training.workoutHistory.count { it.performedOn in week.first()..week.last() }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryCard(
+                    "$completed / $planned",
+                    "workouts this week",
+                    Modifier.weight(1f),
+                    Color(0xFFE3F3E8)
+                )
+                SummaryCard(
+                    "${training.weeklyVolume().roundToInt()} kg",
+                    "weekly volume",
+                    Modifier.weight(1f),
+                    Color(0xFFDDEFFC)
+                )
+            }
+        }
+        item {
+            SectionHeading("Recent training", Modifier.testTag("recent-training-heading"))
+        }
+        val structuredHistory = training.workoutHistory.take(10)
+        val legacyHistory = recentTrainingHistory(training.history).take(10)
+        if (structuredHistory.isEmpty() && legacyHistory.isEmpty()) {
+            item {
+                Text(
+                    "Completed workouts will appear here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else if (structuredHistory.isNotEmpty()) {
+            items(structuredHistory, key = WorkoutRecord::id) { workout ->
+                ActionCard(
+                    workout.sessionName,
+                    "${formatToday(workout.performedOn)} | " +
+                        "${workout.completedLogicalTargets}/${workout.totalLogicalTargets} targets | " +
+                        "${workout.totalVolumeKg.roundToInt()} kg volume",
+                    Icons.Default.FitnessCenter
+                )
+            }
+        } else {
+            items(legacyHistory) { entry ->
+                ActionCard(entry, "Workout completed", Icons.Default.FitnessCenter)
+            }
+        }
+        val records = training.personalRecords().take(8)
+        if (records.isNotEmpty()) {
+            item { SectionHeading("Personal records") }
+            items(records, key = ExerciseRecord::exerciseId) { record ->
+                val exercise = training.exerciseLibrary.firstOrNull { it.id == record.exerciseId }
+                ActionCard(
+                    exercise?.name ?: record.exerciseId,
+                    "Best ${displayWeight(record.bestWeightKg, training.usesMetricUnits)} | " +
+                        "Estimated 1RM ${displayWeight(record.estimatedOneRepMaxKg, training.usesMetricUnits)}",
+                    Icons.Default.FitnessCenter
+                )
+            }
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1069,7 +1682,13 @@ private fun WeightDialog(profile: UserProfile, onSave: (UserProfile) -> Unit, on
 }
 
 @Composable
-private fun ProfileScreen(app: NutRunViewModel, state: NutRunUiState, onBack: () -> Unit) {
+private fun ProfileScreen(
+    app: NutRunViewModel,
+    state: NutRunUiState,
+    onBack: () -> Unit,
+    onEditHealth: () -> Unit,
+    onNotifications: () -> Unit
+) {
     var confirmDelete by remember { mutableStateOf(false) }
     val profile = state.profile ?: return
     val billing by app.billingState.collectAsStateWithLifecycle()
@@ -1100,6 +1719,18 @@ private fun ProfileScreen(app: NutRunViewModel, state: NutRunUiState, onBack: ()
             )
         }
         item {
+            OutlinedButton(onClick = onEditHealth, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Edit, null)
+                Text("Edit health details")
+            }
+        }
+        item {
+            OutlinedButton(onClick = onNotifications, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.WaterDrop, null)
+                Text("Notification settings")
+            }
+        }
+        item {
             Card(shape = RoundedCornerShape(8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Dark theme", Modifier.weight(1f))
@@ -1107,7 +1738,7 @@ private fun ProfileScreen(app: NutRunViewModel, state: NutRunUiState, onBack: ()
                 }
             }
         }
-        item {
+        if (!isDemoAccount(state.session.authenticatedUserId)) item {
             Card(shape = RoundedCornerShape(8.dp)) {
                 Column(Modifier.padding(14.dp)) {
                     Text("Ad-free subscription", fontWeight = FontWeight.Bold)
@@ -1129,7 +1760,7 @@ private fun ProfileScreen(app: NutRunViewModel, state: NutRunUiState, onBack: ()
                 }
             }
         }
-        if (BuildConfig.DEBUG) item {
+        if (BuildConfig.DEBUG && !isDemoAccount(state.session.authenticatedUserId)) item {
             OutlinedButton(
                 onClick = { app.setSubscriberForDevelopment(state.session.entitlement() != EntitlementKind.SUBSCRIBER) },
                 modifier = Modifier.fillMaxWidth()
@@ -1146,6 +1777,272 @@ private fun ProfileScreen(app: NutRunViewModel, state: NutRunUiState, onBack: ()
         }
     }
 }
+
+@Composable
+private fun EditHealthDetailsScreen(
+    profile: UserProfile,
+    onSave: (UserProfile) -> Unit,
+    onBack: () -> Unit
+) {
+    var birthDate by rememberSaveable { mutableStateOf(profile.birthDate.toString()) }
+    var sex by rememberSaveable { mutableStateOf(profile.biologicalSex) }
+    var units by rememberSaveable { mutableStateOf(profile.unitSystem) }
+    var height by rememberSaveable {
+        mutableStateOf(
+            "%.1f".format(
+                if (profile.unitSystem == UnitSystem.METRIC) profile.heightCm else profile.heightCm / 2.54
+            )
+        )
+    }
+    var weight by rememberSaveable {
+        mutableStateOf(
+            "%.1f".format(
+                if (profile.unitSystem == UnitSystem.METRIC) profile.weightKg else profile.weightKg * KG_TO_POUNDS
+            )
+        )
+    }
+    var activity by rememberSaveable { mutableStateOf(profile.activityLevel) }
+    var goal by rememberSaveable { mutableStateOf(profile.goal) }
+    var calorieTarget by rememberSaveable { mutableStateOf(profile.calorieTarget.toString()) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val parsedDate = runCatching { LocalDate.parse(birthDate) }.getOrNull()
+    val enteredHeight = height.toDoubleOrNull()
+    val enteredWeight = weight.toDoubleOrNull()
+    val heightCm = enteredHeight?.let { if (units == UnitSystem.METRIC) it else it * 2.54 }
+    val weightKg = enteredWeight?.let { if (units == UnitSystem.METRIC) it else it / KG_TO_POUNDS }
+    val estimate = if (parsedDate != null && heightCm != null && weightKg != null) {
+        runCatching {
+            calculateHealthEstimate(parsedDate, sex, heightCm, weightKg, activity, goal)
+        }.getOrNull()
+    } else null
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { TextButton(onClick = onBack) { Text("Back") } }
+        item { OutlinedTextField(profile.email, {}, Modifier.fillMaxWidth(), label = { Text("Email") }, readOnly = true) }
+        item { OutlinedTextField(birthDate, { birthDate = it }, Modifier.fillMaxWidth(), label = { Text("Birth date (YYYY-MM-DD)") }) }
+        item { ChoiceRow("Biological sex", BiologicalSex.entries, sex, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { sex = it } }
+        item {
+            ChoiceRow("Units", UnitSystem.entries, units, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { selected ->
+                if (selected != units) {
+                    val currentHeightCm = height.toDoubleOrNull()?.let {
+                        if (units == UnitSystem.METRIC) it else it * 2.54
+                    }
+                    val currentWeightKg = weight.toDoubleOrNull()?.let {
+                        if (units == UnitSystem.METRIC) it else it / KG_TO_POUNDS
+                    }
+                    units = selected
+                    currentHeightCm?.let {
+                        height = "%.1f".format(if (selected == UnitSystem.METRIC) it else it / 2.54)
+                    }
+                    currentWeightKg?.let {
+                        weight = "%.1f".format(if (selected == UnitSystem.METRIC) it else it * KG_TO_POUNDS)
+                    }
+                }
+            }
+        }
+        item { OutlinedTextField(height, { height = it }, Modifier.fillMaxWidth(), label = { Text(if (units == UnitSystem.METRIC) "Height (cm)" else "Height (inches)") }) }
+        item { OutlinedTextField(weight, { weight = it }, Modifier.fillMaxWidth(), label = { Text(if (units == UnitSystem.METRIC) "Weight (kg)" else "Weight (lb)") }) }
+        item { ChoiceRow("Activity", ActivityLevel.entries, activity, { it.name.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase) }) { activity = it } }
+        item { ChoiceRow("Goal", HealthGoal.entries, goal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { goal = it } }
+        item {
+            OutlinedTextField(
+                calorieTarget,
+                { calorieTarget = it.filter(Char::isDigit) },
+                Modifier.fillMaxWidth(),
+                label = { Text("Daily calorie target") }
+            )
+        }
+        estimate?.let { health ->
+            item {
+                Card(shape = RoundedCornerShape(8.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("BMI %.1f".format(health.bmi), fontWeight = FontWeight.Bold)
+                        Text("BMR ${health.bmrKcal} kcal")
+                        Text("TDEE ${health.tdeeKcal} kcal")
+                        Text("Recommended ${health.calorieTarget} kcal")
+                        TextButton(onClick = { calorieTarget = health.calorieTarget.toString() }) {
+                            Text("Use recommended target")
+                        }
+                    }
+                }
+            }
+        }
+        error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+        item {
+            Button(
+                onClick = {
+                    val target = calorieTarget.toIntOrNull()
+                    if (
+                        parsedDate == null || heightCm == null || weightKg == null ||
+                        heightCm <= 0 || weightKg <= 0 || target == null || target <= 0
+                    ) {
+                        error = "Check the date, measurements, and calorie target."
+                    } else {
+                        onSave(
+                            profile.copy(
+                                birthDate = parsedDate,
+                                biologicalSex = sex,
+                                heightCm = heightCm,
+                                weightKg = weightKg,
+                                activityLevel = activity,
+                                goal = goal,
+                                unitSystem = units,
+                                calorieTarget = target
+                            )
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save health details") }
+        }
+    }
+}
+
+@Composable
+private fun NotificationSettingsScreen(
+    app: NutRunViewModel,
+    state: NutRunUiState,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var waterEnabled by rememberSaveable(state.hydrationPlan.remindersEnabled) {
+        mutableStateOf(state.hydrationPlan.remindersEnabled)
+    }
+    var interval by rememberSaveable(state.hydrationPlan.intervalMinutes) {
+        mutableStateOf(state.hydrationPlan.intervalMinutes.toString())
+    }
+    var wakingStart by rememberSaveable(state.hydrationPlan.wakingStartMinute) {
+        mutableStateOf(formatMinute(state.hydrationPlan.wakingStartMinute))
+    }
+    var wakingEnd by rememberSaveable(state.hydrationPlan.wakingEndMinute) {
+        mutableStateOf(formatMinute(state.hydrationPlan.wakingEndMinute))
+    }
+    val training = state.trainingReminderSettings
+    var trainingEnabled by rememberSaveable(training.enabled) { mutableStateOf(training.enabled) }
+    var previousTime by rememberSaveable(training.previousDayMinute) { mutableStateOf(formatMinute(training.previousDayMinute)) }
+    var sameTime by rememberSaveable(training.sameDayMinute) { mutableStateOf(formatMinute(training.sameDayMinute)) }
+    var permissionGranted by remember {
+        mutableStateOf(
+            android.os.Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { permissionGranted = it }
+    fun requestPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !permissionGranted) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    val intervalValue = interval.toIntOrNull()
+    val startMinute = parseMinute(wakingStart)
+    val endMinute = parseMinute(wakingEnd)
+    val previousMinute = parseMinute(previousTime)
+    val sameMinute = parseMinute(sameTime)
+    val valid = intervalValue != null && intervalValue >= 15 &&
+        startMinute != null && endMinute != null && endMinute > startMinute &&
+        previousMinute != null && sameMinute != null
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { TextButton(onClick = onBack) { Text("Back") } }
+        item {
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Water reminders", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        Switch(waterEnabled, {
+                            waterEnabled = it
+                            if (it) requestPermission()
+                        })
+                    }
+                    if (waterEnabled) {
+                        OutlinedTextField(interval, { interval = it.filter(Char::isDigit) }, label = { Text("Interval (minutes)") })
+                        OutlinedTextField(wakingStart, { wakingStart = it }, label = { Text("Waking start (HH:mm)") })
+                        OutlinedTextField(wakingEnd, { wakingEnd = it }, label = { Text("Waking end (HH:mm)") })
+                    }
+                }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Training reminders", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        Switch(trainingEnabled, {
+                            trainingEnabled = it
+                            if (it) requestPermission()
+                        })
+                    }
+                    if (trainingEnabled) {
+                        OutlinedTextField(previousTime, { previousTime = it }, label = { Text("Previous day (HH:mm)") })
+                        OutlinedTextField(sameTime, { sameTime = it }, label = { Text("Same day (HH:mm)") })
+                    }
+                }
+            }
+        }
+        if (!permissionGranted && (waterEnabled || trainingEnabled)) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Notification permission is required.", fontWeight = FontWeight.Bold)
+                        TextButton(onClick = {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            )
+                        }) { Text("Open Android notification settings") }
+                    }
+                }
+            }
+        }
+        if (!valid) item { Text("Use valid times and an interval of at least 15 minutes.", color = MaterialTheme.colorScheme.error) }
+        item {
+            Button(
+                enabled = valid,
+                onClick = {
+                    app.saveHydrationPlan(
+                        state.hydrationPlan.copy(
+                            remindersEnabled = waterEnabled,
+                            intervalMinutes = intervalValue!!,
+                            wakingStartMinute = startMinute!!,
+                            wakingEndMinute = endMinute!!
+                        )
+                    )
+                    app.saveTrainingReminderSettings(
+                        training.copy(
+                            enabled = trainingEnabled,
+                            previousDayMinute = previousMinute!!,
+                            sameDayMinute = sameMinute!!,
+                            timezoneId = java.time.ZoneId.systemDefault().id
+                        )
+                    )
+                    onBack()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save notification settings") }
+        }
+    }
+}
+
+private fun formatMinute(minute: Int): String = "%02d:%02d".format(minute / 60, minute % 60)
+
+private fun parseMinute(value: String): Int? = runCatching {
+    val time = LocalTime.parse(value)
+    time.hour * 60 + time.minute
+}.getOrNull()
 
 @Composable
 private fun AddSupplementDialog(
@@ -1206,27 +2103,105 @@ private fun AddTrainingSessionDialog(
 
 @Composable
 private fun ExercisePickerDialog(
-    model: PrototypeViewModel,
+    model: TrainingViewModel,
     sessionId: String,
     onDismiss: () -> Unit
 ) {
     val session = model.sessions.firstOrNull { it.id == sessionId }
+    var query by rememberSaveable { mutableStateOf("") }
+    var category by rememberSaveable { mutableStateOf("All") }
+    var removeTarget by remember { mutableStateOf<ExerciseTarget?>(null) }
+    removeTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { removeTarget = null },
+            title = { Text("Remove ${target.exercise.name}?") },
+            text = { Text("This removes it only from ${session?.name.orEmpty()}.") },
+            confirmButton = {
+                Button(onClick = {
+                    model.selectSession(sessionId)
+                    model.removeExerciseFromSelectedSession(target.id)
+                    removeTarget = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { removeTarget = null }) { Text("Cancel") } }
+        )
+    }
+    val includedIds = session?.exercises.orEmpty().map { it.exercise.id }.toSet()
+    val results = filterExercises(model.exerciseLibrary, query, category)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Exercises for ${session?.name.orEmpty()}") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(model.exerciseLibrary, key = { it.id }) { exercise ->
+                item {
+                    OutlinedTextField(
+                        query,
+                        { query = it },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Search exercises") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        singleLine = true
+                    )
+                }
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("All", "Strength", "Bodyweight", "Cardio", "Mobility").forEach {
+                            FilterChip(
+                                selected = category == it,
+                                onClick = { category = it },
+                                label = { Text(it) }
+                            )
+                        }
+                    }
+                }
+                if (session?.exercises?.isNotEmpty() == true) {
+                    item { Text("In this session", fontWeight = FontWeight.Bold) }
+                    items(session.exercises, key = { "current-${it.id}" }) { target ->
+                        Card(shape = RoundedCornerShape(8.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
+                                    Text(target.summary(model.usesMetricUnits), fontSize = 12.sp)
+                                }
+                                IconButton(onClick = { removeTarget = target }) {
+                                    Icon(Icons.Default.Delete, "Remove ${target.exercise.name}")
+                                }
+                            }
+                        }
+                    }
+                }
+                item { Text("Exercise catalog", fontWeight = FontWeight.Bold) }
+                items(results, key = { it.id }) { exercise ->
+                    val included = exercise.id in includedIds
                     Card(
-                        Modifier.fillMaxWidth().clickable {
+                        Modifier.fillMaxWidth().clickable(enabled = !included) {
                             model.selectSession(sessionId)
                             model.addExerciseToSelectedSession(exercise)
                         },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (included) {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        ),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Column(Modifier.padding(10.dp)) {
-                            Text(exercise.name, fontWeight = FontWeight.SemiBold)
-                            Text("${exercise.category} | ${exercise.primaryMuscles}", fontSize = 12.sp)
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(exercise.name, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${exercise.category} | ${exercise.primaryMuscles} | ${exercise.secondaryMuscles}",
+                                    fontSize = 12.sp
+                                )
+                            }
+                            if (included) Icon(Icons.Default.Check, "Already included")
                         }
                     }
                 }
@@ -1237,8 +2212,172 @@ private fun ExercisePickerDialog(
 }
 
 @Composable
-private fun SummaryCard(value: String, label: String, modifier: Modifier, color: Color) {
-    Card(modifier, shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(containerColor = color)) {
+private fun WorkoutSetRow(
+    set: WorkoutSetLog,
+    metric: Boolean,
+    onChange: (Int?, Double?, Int?, Double?, Boolean) -> Unit
+) {
+    var reps by remember(set.id) { mutableStateOf(set.reps?.toString().orEmpty()) }
+    var weight by remember(set.id) {
+        mutableStateOf(
+            set.weightKg?.let {
+                formatMeasurementForInput(if (metric) it else it * KG_TO_POUNDS)
+            }.orEmpty()
+        )
+    }
+    var minutes by remember(set.id) {
+        mutableStateOf(set.durationSeconds?.div(60.0)?.let(::formatMeasurementForInput).orEmpty())
+    }
+    var rpe by remember(set.id) { mutableStateOf(set.rpe?.let(::formatMeasurementForInput).orEmpty()) }
+
+    fun emit(completed: Boolean = set.completed) {
+        val parsedReps = reps.toIntOrNull()
+        val enteredWeight = weight.toDoubleOrNull()
+        val parsedMinutes = minutes.toDoubleOrNull()
+        val parsedRpe = rpe.toDoubleOrNull()
+        if (reps.isNotBlank() && parsedReps !in 0..1_000) return
+        if (weight.isNotBlank() && (enteredWeight == null || enteredWeight < 0.0)) return
+        if (minutes.isNotBlank() && (parsedMinutes == null || parsedMinutes !in 0.0..1_440.0)) return
+        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 1.0..10.0)) return
+        onChange(
+            parsedReps,
+            enteredWeight?.let { if (metric) it else it / KG_TO_POUNDS },
+            parsedMinutes?.times(60)?.roundToInt(),
+            parsedRpe,
+            completed
+        )
+    }
+
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("${set.setNumber}", modifier = Modifier.width(22.dp), fontWeight = FontWeight.Bold)
+        if (set.durationSeconds != null) {
+            OutlinedTextField(
+                value = minutes,
+                onValueChange = { minutes = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text("Minutes") },
+                singleLine = true
+            )
+        } else {
+            OutlinedTextField(
+                value = weight,
+                onValueChange = { weight = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text(if (metric) "kg" else "lb") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = reps,
+                onValueChange = { reps = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text("Reps") },
+                singleLine = true
+            )
+        }
+        OutlinedTextField(
+            value = rpe,
+            onValueChange = { rpe = it; emit() },
+            modifier = Modifier.weight(0.8f),
+            label = { Text("RPE") },
+            singleLine = true
+        )
+        Checkbox(
+            checked = set.completed,
+            onCheckedChange = { emit(it) }
+        )
+    }
+}
+
+@Composable
+private fun RestTimerBar(
+    remainingSeconds: Int,
+    onAddTime: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Rest", fontWeight = FontWeight.Bold)
+                Text(
+                    "%d:%02d".format(remainingSeconds / 60, remainingSeconds % 60),
+                    fontSize = 22.sp
+                )
+            }
+            TextButton(onClick = onAddTime) { Text("+30 sec") }
+            TextButton(onClick = onSkip) { Text("Skip") }
+        }
+    }
+}
+
+@Composable
+private fun RescheduleTrainingDialog(
+    session: TrainingSession,
+    originalDate: LocalDate,
+    onDismiss: () -> Unit,
+    onMove: (LocalDate) -> Unit
+) {
+    var date by rememberSaveable(session.id, originalDate) {
+        mutableStateOf(originalDate.plusDays(1).toString())
+    }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Move ${session.name}") },
+        text = {
+            Column {
+                Text("Originally ${formatToday(originalDate)}")
+                OutlinedTextField(
+                    value = date,
+                    onValueChange = { date = it; error = null },
+                    label = { Text("New date (YYYY-MM-DD)") },
+                    singleLine = true
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val parsed = runCatching { LocalDate.parse(date) }.getOrNull()
+                if (parsed == null) error = "Enter a valid date."
+                else onMove(parsed)
+            }) { Text("Move") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private fun formatMeasurementForInput(value: Double): String {
+    val rounded = (value * 10).roundToInt() / 10.0
+    return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+}
+
+@Composable
+private fun SummaryCard(
+    value: String,
+    label: String,
+    modifier: Modifier,
+    color: Color,
+    onClick: (() -> Unit)? = null,
+    testTag: String? = null
+) {
+    val taggedModifier = testTag?.let { modifier.testTag(it) } ?: modifier
+    Card(
+        taggedModifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = color)
+    ) {
         Column(Modifier.padding(10.dp)) {
             Text(value, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF202426))
             Text(label, fontSize = 11.sp, color = Color(0xFF4F5B62))
@@ -1247,8 +2386,20 @@ private fun SummaryCard(value: String, label: String, modifier: Modifier, color:
 }
 
 @Composable
-private fun ActionCard(title: String, subtitle: String, icon: ImageVector) {
-    Card(shape = RoundedCornerShape(8.dp)) {
+private fun ActionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: (() -> Unit)? = null,
+    testTag: String? = null
+) {
+    val taggedModifier = testTag?.let { Modifier.testTag(it) } ?: Modifier
+    Card(
+        modifier = taggedModifier.then(
+            if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(12.dp))

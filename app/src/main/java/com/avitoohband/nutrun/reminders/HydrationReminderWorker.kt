@@ -3,7 +3,9 @@ package com.avitoohband.nutrun.reminders
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -15,6 +17,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.avitoohband.nutrun.data.HydrationPlanEntity
+import com.avitoohband.nutrun.MainActivity
 import com.avitoohband.nutrun.data.NutRunDatabase
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.domain.isHydrationReminderEligible
@@ -88,6 +91,17 @@ class HydrationReminderWorker(
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Time for water")
             .setContentText("$consumedMl of $goalMl mL logged today")
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    applicationContext,
+                    2_002,
+                    Intent(applicationContext, MainActivity::class.java)
+                        .putExtra(MainActivity.EXTRA_DESTINATION, "nutrition")
+                        .putExtra(MainActivity.EXTRA_WATER_SECTION, true)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
             .setAutoCancel(true)
             .build()
         NotificationManagerCompat.from(applicationContext).notify(2_002, notification)

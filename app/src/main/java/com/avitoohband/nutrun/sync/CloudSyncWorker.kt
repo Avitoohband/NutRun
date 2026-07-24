@@ -230,7 +230,7 @@ class CloudSyncWorker(
                 servingMl = value.optInt("servingMl", 250),
                 wakingStartMinute = value.optInt("wakingStartMinute", 8 * 60),
                 wakingEndMinute = value.optInt("wakingEndMinute", 22 * 60),
-                intervalMinutes = value.optInt("intervalMinutes", 120),
+                intervalMinutes = value.optInt("intervalMinutes", 60),
                 remindersEnabled = value.optBoolean("remindersEnabled", true)
             )
         }

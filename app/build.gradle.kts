@@ -80,6 +80,7 @@ dependencies {
     implementation(libs.billing.ktx)
     implementation(libs.play.services.ads)
     implementation(libs.firebase.auth)
+    implementation(libs.androidx.health.connect.client)
     ksp(libs.androidx.room.compiler)
     ksp(libs.hilt.compiler)
     debugImplementation(libs.androidx.ui.tooling)

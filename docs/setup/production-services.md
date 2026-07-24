@@ -29,6 +29,13 @@ Create Play products named:
 Purchase verification and entitlement changes must come from the backend. The
 debug-only subscription toggle must never be exposed in release builds.
 
+NutRun requests Health Connect access only from the Progress screen. Before a
+Play release, complete the Health apps declaration and privacy-policy
+disclosures for steps, weight, hydration, nutrition, and exercise sessions.
+The project uses Health Connect `1.1.0-alpha11` while it remains on
+`compileSdk 35` and AGP `8.7.3`; moving to the stable `1.1.0` client requires
+upgrading to `compileSdk 36` and a compatible Android Gradle Plugin together.
+
 ## Cloud Run
 
 Deploy `backend/` with Application Default Credentials and these environment

@@ -15,6 +15,7 @@ import android.location.Location
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.avitoohband.nutrun.isDemoAccount
 import com.avitoohband.nutrun.data.NutRunDao
 import com.avitoohband.nutrun.data.WalkPointEntity
 import com.avitoohband.nutrun.data.WalkSessionEntity
@@ -281,6 +282,7 @@ class WalkRecordingService : Service(), SensorEventListener {
     }
 
     private suspend fun enqueueFinishedWalk(walk: WalkSessionEntity) {
+        if (isDemoAccount(walk.userId)) return
         val points = dao.walkPoints(walk.userId, walk.id)
         val route = JSONArray().apply {
             points.forEach { point ->
