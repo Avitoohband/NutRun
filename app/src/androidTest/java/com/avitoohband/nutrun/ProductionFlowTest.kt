@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.espresso.Espresso.pressBack
 import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
@@ -140,6 +141,13 @@ class ProductionFlowTest {
         composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
         composeRule.onNodeWithTag("walk-details-heading").assertIsDisplayed()
         composeRule.onNodeWithText("Average pace").assertIsDisplayed()
+        composeRule.onNodeWithTag("walk-details-back").performClick()
+        composeRule.onNodeWithTag("walk-details-heading").assertDoesNotExist()
+
+        composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
+        composeRule.onNodeWithTag("walk-details-heading").assertIsDisplayed()
+        pressBack()
+        composeRule.onNodeWithTag("walk-details-heading").assertDoesNotExist()
     }
 
     @Test

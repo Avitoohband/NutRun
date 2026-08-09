@@ -153,7 +153,8 @@ class NutRunViewModel @Inject constructor(
         .flatMapLatest { id -> id?.let(repository::walkPoints) ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val selectedWalkId = MutableStateFlow<String?>(null)
+    private val _selectedWalkId = MutableStateFlow<String?>(null)
+    val selectedWalkId: StateFlow<String?> = _selectedWalkId
     val selectedWalkRoutePoints: StateFlow<List<WalkPointEntity>> = selectedWalkId
         .flatMapLatest { id -> id?.let(repository::walkPoints) ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -459,6 +460,7 @@ class NutRunViewModel @Inject constructor(
     }
 
     fun signOut() {
+        clearSelectedWalk()
         viewModelScope.launch {
             val userId = state.value.session.authenticatedUserId
             repository.updateWalkState(com.avitoohband.nutrun.domain.WalkState.PAUSED)
@@ -468,11 +470,11 @@ class NutRunViewModel @Inject constructor(
     }
 
     fun selectCompletedWalk(id: String) {
-        selectedWalkId.value = id
+        _selectedWalkId.value = id
     }
 
     fun clearSelectedWalk() {
-        selectedWalkId.value = null
+        _selectedWalkId.value = null
     }
 
     fun deleteAccount() {

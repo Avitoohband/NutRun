@@ -25,7 +25,7 @@ class WalkPresentationTest {
     )
 
     @Test
-    fun activeRouteSessionIdUsesTheActiveWalkId() {
+    fun activeRouteSessionIdUsesTheActiveWalkIdAndReturnsNullAfterFinish() {
         assertNull(activeRouteSessionId(null))
         assertEquals("walk-1", activeRouteSessionId(walk))
     }

@@ -1,6 +1,7 @@
 package com.avitoohband.nutrun
 
 import com.avitoohband.nutrun.data.WalkSessionEntity
+import com.avitoohband.nutrun.data.WalkPointEntity
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -40,3 +41,30 @@ fun formatWalkDuration(durationMillis: Long): String {
 fun averageWalkPaceMinutesPerKm(walk: WalkSessionEntity): Double? =
     (walk.distanceMeters / 1_000.0).takeIf { it > 0.0 }
         ?.let { distanceKm -> walk.accumulatedDurationMillis / 60_000.0 / distanceKm }
+
+sealed interface WalkRouteCameraFraming {
+    data object None : WalkRouteCameraFraming
+
+    data class Center(
+        val latitude: Double,
+        val longitude: Double
+    ) : WalkRouteCameraFraming
+
+    data class Bounds(
+        val south: Double,
+        val west: Double,
+        val north: Double,
+        val east: Double
+    ) : WalkRouteCameraFraming
+}
+
+fun walkRouteCameraFraming(points: List<WalkPointEntity>): WalkRouteCameraFraming = when (points.size) {
+    0 -> WalkRouteCameraFraming.None
+    1 -> points.single().let { WalkRouteCameraFraming.Center(it.latitude, it.longitude) }
+    else -> WalkRouteCameraFraming.Bounds(
+        south = points.minOf(WalkPointEntity::latitude),
+        west = points.minOf(WalkPointEntity::longitude),
+        north = points.maxOf(WalkPointEntity::latitude),
+        east = points.maxOf(WalkPointEntity::longitude)
+    )
+}

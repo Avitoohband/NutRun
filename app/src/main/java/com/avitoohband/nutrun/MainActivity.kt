@@ -12,6 +12,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -93,12 +94,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -1650,8 +1653,8 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
     val context = LocalContext.current
     val active = state.activeWalk
     val points by appViewModel.routePoints.collectAsStateWithLifecycle()
+    val selectedWalkId by appViewModel.selectedWalkId.collectAsStateWithLifecycle()
     val selectedWalkRoutePoints by appViewModel.selectedWalkRoutePoints.collectAsStateWithLifecycle()
-    var selectedWalkId by rememberSaveable { mutableStateOf<String?>(null) }
     var permissionDenied by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -1672,10 +1675,7 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
             WalkDetailsScreen(
                 walk = walk,
                 points = selectedWalkRoutePoints,
-                onBack = {
-                    selectedWalkId = null
-                    appViewModel.clearSelectedWalk()
-                }
+                onBack = appViewModel::clearSelectedWalk
             )
             return
         }
@@ -1764,10 +1764,7 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
                 title = "%.2f km".format(walk.distanceMeters / 1_000),
                 subtitle = "${formatWalkDate(walk.startedAtMillis)} | ${formatWalkDuration(walk.accumulatedDurationMillis)}",
                 icon = Icons.AutoMirrored.Filled.DirectionsRun,
-                onClick = {
-                    selectedWalkId = walk.id
-                    appViewModel.selectCompletedWalk(walk.id)
-                },
+                onClick = { appViewModel.selectCompletedWalk(walk.id) },
                 testTag = "walk-history-card"
             )
         }
@@ -1790,24 +1787,41 @@ private fun RouteMap(points: List<WalkPointEntity>, testTag: String? = null) {
     ) {
         if (BuildConfig.MAPS_CONFIGURED) {
             val cameraPositionState = rememberCameraPositionState()
-            LaunchedEffect(points) {
-                when (points.size) {
-                    0 -> Unit
-                    1 -> cameraPositionState.move(
+            val framing = walkRouteCameraFraming(points)
+            var mapLoaded by remember { mutableStateOf(false) }
+            var mapSize by remember { mutableStateOf(IntSize.Zero) }
+            LaunchedEffect(mapLoaded, mapSize, framing) {
+                if (!mapLoaded) return@LaunchedEffect
+                when (framing) {
+                    WalkRouteCameraFraming.None -> Unit
+                    is WalkRouteCameraFraming.Center -> cameraPositionState.move(
                         CameraUpdateFactory.newLatLngZoom(
-                            LatLng(points.first().latitude, points.first().longitude),
+                            LatLng(framing.latitude, framing.longitude),
                             16f
                         )
                     )
-                    else -> {
-                        val bounds = LatLngBounds.Builder().apply {
-                            points.forEach { include(LatLng(it.latitude, it.longitude)) }
-                        }.build()
-                        cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+                    is WalkRouteCameraFraming.Bounds -> {
+                        if (mapSize.width <= 192 || mapSize.height <= 192) return@LaunchedEffect
+                        val bounds = LatLngBounds(
+                            LatLng(framing.south, framing.west),
+                            LatLng(framing.north, framing.east)
+                        )
+                        cameraPositionState.move(
+                            CameraUpdateFactory.newLatLngBounds(
+                                bounds,
+                                mapSize.width,
+                                mapSize.height,
+                                96
+                            )
+                        )
                     }
                 }
             }
-            GoogleMap(Modifier.fillMaxSize(), cameraPositionState = cameraPositionState) {
+            GoogleMap(
+                modifier = Modifier.fillMaxSize().onSizeChanged { mapSize = it },
+                cameraPositionState = cameraPositionState,
+                onMapLoaded = { mapLoaded = true }
+            ) {
                 if (points.size > 1) {
                     Polyline(points = points.map { LatLng(it.latitude, it.longitude) })
                 }
@@ -1824,6 +1838,7 @@ private fun WalkDetailsScreen(
     points: List<WalkPointEntity>,
     onBack: () -> Unit
 ) {
+    BackHandler(onBack = onBack)
     val pace = averageWalkPaceMinutesPerKm(walk)?.let { minutesPerKm ->
         val seconds = (minutesPerKm * 60).roundToInt()
         "%d:%02d /km".format(seconds / 60, seconds % 60)
