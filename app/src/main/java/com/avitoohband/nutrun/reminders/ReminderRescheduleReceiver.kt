@@ -23,6 +23,41 @@ import kotlinx.coroutines.launch
 
 enum class ReminderSystem { HYDRATION, TRAINING, SUPPLEMENTS }
 
+interface ReminderRecoveryStateStore {
+    suspend fun current(userId: String): Set<ReminderSystem>
+    suspend fun merge(userId: String, systems: Set<ReminderSystem>)
+    suspend fun completeAttempt(
+        userId: String,
+        attempted: Set<ReminderSystem>,
+        stillFailing: Set<ReminderSystem>
+    )
+}
+
+private class PreferenceReminderRecoveryStateStore(
+    private val preferences: AppPreferences
+) : ReminderRecoveryStateStore {
+    override suspend fun current(userId: String): Set<ReminderSystem> = preferences
+        .reminderRecoverySystems(userId)
+        .mapNotNull { runCatching { ReminderSystem.valueOf(it) }.getOrNull() }
+        .toSet()
+
+    override suspend fun merge(userId: String, systems: Set<ReminderSystem>) {
+        preferences.mergeReminderRecoverySystems(userId, systems.map(ReminderSystem::name).toSet())
+    }
+
+    override suspend fun completeAttempt(
+        userId: String,
+        attempted: Set<ReminderSystem>,
+        stillFailing: Set<ReminderSystem>
+    ) {
+        preferences.completeReminderRecoveryAttempt(
+            userId,
+            attempted.map(ReminderSystem::name).toSet(),
+            stillFailing.map(ReminderSystem::name).toSet()
+        )
+    }
+}
+
 data class ReminderRescheduleOutcome(val failedSystems: Set<ReminderSystem>) {
     val requiresRecovery: Boolean get() = failedSystems.isNotEmpty()
 
@@ -62,19 +97,10 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
         }
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
-            var userId: String? = null
             try {
-                userId = AppPreferences(context).currentSession().authenticatedUserId ?: return@launch
-                val outcome = rescheduleReminderSystemsForUser(context, userId)
-                if (outcome.requiresRecovery) {
-                    ReminderRescheduleRecoveryScheduler(context).schedule(userId, outcome.failedSystems)
-                }
+                reminderRescheduleReceiverDispatcher(context).dispatch()
             } catch (error: CancellationException) {
                 throw error
-            } catch (_: Exception) {
-                userId?.let {
-                    ReminderRescheduleRecoveryScheduler(context).schedule(it, ReminderSystem.entries.toSet())
-                }
             } finally {
                 pending.finish()
             }
@@ -82,35 +108,101 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
     }
 }
 
+class ReminderRescheduleReceiverDispatcher(
+    private val authenticatedUserId: suspend () -> String?,
+    private val reschedule: suspend (String, Set<ReminderSystem>) -> ReminderRescheduleOutcome,
+    private val scheduleRecovery: suspend (String, Set<ReminderSystem>) -> Unit
+) {
+    suspend fun dispatch() {
+        val userId = authenticatedUserId() ?: return
+        try {
+            val outcome = reschedule(userId, ReminderSystem.entries.toSet())
+            if (outcome.requiresRecovery) scheduleRecovery(userId, outcome.failedSystems)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            scheduleRecovery(userId, ReminderSystem.entries.toSet())
+        }
+    }
+}
+
+private fun reminderRescheduleReceiverDispatcher(context: Context) = ReminderRescheduleReceiverDispatcher(
+    authenticatedUserId = { AppPreferences(context).currentSession().authenticatedUserId },
+    reschedule = { userId, systems -> rescheduleReminderSystemsForUser(context, userId, systems) },
+    scheduleRecovery = { userId, systems -> ReminderRescheduleRecoveryScheduler(context).schedule(userId, systems) }
+)
+
+interface ReminderRescheduleUserStore {
+    suspend fun hydrationPlan(userId: String): HydrationPlanEntity?
+    suspend fun trainingSettings(userId: String): TrainingReminderSettingsEntity?
+    suspend fun supplementSettings(userId: String): SupplementReminderSettingsEntity?
+    suspend fun saveSupplementSettings(settings: SupplementReminderSettingsEntity)
+}
+
+interface ReminderRescheduleUserSchedulers {
+    suspend fun scheduleHydration(settings: HydrationPlanEntity)
+    suspend fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity)
+    suspend fun scheduleSupplements(userId: String, settings: SupplementReminderSettingsEntity)
+}
+
+suspend fun rescheduleReminderSystemsForUser(
+    userId: String,
+    systems: Set<ReminderSystem> = ReminderSystem.entries.toSet(),
+    store: ReminderRescheduleUserStore,
+    schedulers: ReminderRescheduleUserSchedulers,
+    timezone: ZoneId = ZoneId.systemDefault()
+): ReminderRescheduleOutcome = rescheduleReminderSystems(
+    hydration = {
+        val hydration = store.hydrationPlan(userId) ?: HydrationPlanEntity(userId = userId)
+        schedulers.scheduleHydration(hydration)
+    },
+    training = {
+        val training = (store.trainingSettings(userId) ?: TrainingReminderSettingsEntity(userId = userId))
+            .copy(timezoneId = timezone.id)
+        schedulers.scheduleTraining(userId, training)
+    },
+    supplements = {
+        val supplements = (store.supplementSettings(userId)
+            ?: SupplementReminderSettingsEntity(userId = userId))
+            .copy(
+                id = "supplement-reminders:$userId",
+                userId = userId,
+                timezoneId = timezone.id
+            )
+        store.saveSupplementSettings(supplements)
+        schedulers.scheduleSupplements(userId, supplements)
+    },
+    systems = systems
+)
+
 private suspend fun rescheduleReminderSystemsForUser(
     context: Context,
     userId: String,
     systems: Set<ReminderSystem> = ReminderSystem.entries.toSet()
 ): ReminderRescheduleOutcome {
     val dao = NutRunDatabase.getInstance(context).dao()
-    return rescheduleReminderSystems(
-        hydration = {
-            val hydration = dao.hydrationPlan(userId) ?: HydrationPlanEntity(userId = userId)
-            HydrationScheduler(context).schedule(hydration)
+    return rescheduleReminderSystemsForUser(
+        userId = userId,
+        systems = systems,
+        store = object : ReminderRescheduleUserStore {
+            override suspend fun hydrationPlan(userId: String) = dao.hydrationPlan(userId)
+            override suspend fun trainingSettings(userId: String) = dao.trainingReminderSettings(userId)
+            override suspend fun supplementSettings(userId: String) = dao.supplementReminderSettings(userId)
+            override suspend fun saveSupplementSettings(settings: SupplementReminderSettingsEntity) {
+                dao.saveSupplementReminderSettings(settings)
+            }
         },
-        training = {
-            val training = (dao.trainingReminderSettings(userId)
-                ?: TrainingReminderSettingsEntity(userId = userId))
-                .copy(timezoneId = ZoneId.systemDefault().id)
-            TrainingReminderScheduler(context).schedule(userId, training)
-        },
-        supplements = {
-            val supplements = (dao.supplementReminderSettings(userId)
-                ?: SupplementReminderSettingsEntity(userId = userId))
-                .copy(
-                    id = "supplement-reminders:$userId",
-                    userId = userId,
-                    timezoneId = ZoneId.systemDefault().id
-                )
-            dao.saveSupplementReminderSettings(supplements)
-            SupplementReminderScheduler(context).schedule(userId, supplements)
-        },
-        systems = systems
+        schedulers = object : ReminderRescheduleUserSchedulers {
+            override suspend fun scheduleHydration(settings: HydrationPlanEntity) {
+                HydrationScheduler(context).schedule(settings)
+            }
+            override suspend fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) {
+                TrainingReminderScheduler(context).schedule(userId, settings)
+            }
+            override suspend fun scheduleSupplements(userId: String, settings: SupplementReminderSettingsEntity) {
+                SupplementReminderScheduler(context).schedule(userId, settings)
+            }
+        }
     )
 }
 
@@ -124,13 +216,10 @@ class ReminderRescheduleRecoveryWorker(
             return Result.success()
         }
         return try {
-            val systems = inputData.getString(KEY_SYSTEMS)
-                ?.split(',')
-                ?.mapNotNull { runCatching { ReminderSystem.valueOf(it) }.getOrNull() }
-                ?.toSet()
-                .orEmpty()
-                .ifEmpty { ReminderSystem.entries.toSet() }
-            val outcome = rescheduleReminderSystemsForUser(applicationContext, userId, systems)
+            val recoveryStore = PreferenceReminderRecoveryStateStore(AppPreferences(applicationContext))
+            val outcome = runReminderRecoveryAttempt(userId, recoveryStore) { systems ->
+                rescheduleReminderSystemsForUser(applicationContext, userId, systems)
+            }
             when (recoveryWorkResult(runAttemptCount, outcome.requiresRecovery)) {
                 ReminderRecoveryResult.Success -> Result.success()
                 ReminderRecoveryResult.Retry -> Result.retry()
@@ -152,6 +241,17 @@ class ReminderRescheduleRecoveryWorker(
     }
 }
 
+suspend fun runReminderRecoveryAttempt(
+    userId: String,
+    stateStore: ReminderRecoveryStateStore,
+    reschedule: suspend (Set<ReminderSystem>) -> ReminderRescheduleOutcome
+): ReminderRescheduleOutcome {
+    val systems = stateStore.current(userId).ifEmpty { ReminderSystem.entries.toSet() }
+    val outcome = reschedule(systems)
+    stateStore.completeAttempt(userId, systems, outcome.failedSystems)
+    return outcome
+}
+
 enum class ReminderRecoveryResult { Success, Retry, Failure }
 
 const val MAX_REMINDER_RECOVERY_ATTEMPTS = 3
@@ -163,18 +263,22 @@ fun recoveryWorkResult(attempt: Int, requiresRecovery: Boolean): ReminderRecover
 }
 
 class ReminderRescheduleRecoveryScheduler(
-    private val enqueuer: ReminderWorkEnqueuer
+    private val enqueuer: ReminderWorkEnqueuer,
+    private val stateStore: ReminderRecoveryStateStore? = null
 ) {
-    constructor(context: Context) : this(WorkManagerReminderWorkEnqueuer(context))
+    constructor(context: Context) : this(
+        WorkManagerReminderWorkEnqueuer(context),
+        PreferenceReminderRecoveryStateStore(AppPreferences(context))
+    )
 
-    fun schedule(userId: String, systems: Set<ReminderSystem>) {
+    suspend fun schedule(userId: String, systems: Set<ReminderSystem>) {
         if (userId.isBlank() || systems.isEmpty()) return
+        stateStore?.merge(userId, systems)
         val request = OneTimeWorkRequestBuilder<ReminderRescheduleRecoveryWorker>()
             .setInputData(
                 workDataOf(
                     ReminderRescheduleRecoveryWorker.KEY_USER_ID to userId,
-                    ReminderRescheduleRecoveryWorker.KEY_SYSTEMS to
-                        systems.sortedBy(ReminderSystem::name).joinToString(",") { it.name }
+                    ReminderRescheduleRecoveryWorker.KEY_SYSTEMS to "state"
                 )
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)

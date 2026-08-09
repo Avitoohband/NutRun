@@ -4,7 +4,10 @@ import androidx.work.BackoffPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
 import com.avitoohband.nutrun.reminders.ReminderRescheduleOutcome
+import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverDispatcher
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
+import com.avitoohband.nutrun.reminders.ReminderRescheduleUserSchedulers
+import com.avitoohband.nutrun.reminders.ReminderRescheduleUserStore
 import com.avitoohband.nutrun.reminders.ReminderSystem
 import com.avitoohband.nutrun.reminders.ReminderWorkEnqueuer
 import com.avitoohband.nutrun.reminders.SupplementDeliveryClaim
@@ -18,6 +21,8 @@ import com.avitoohband.nutrun.reminders.claimedSupplementDelivery
 import com.avitoohband.nutrun.reminders.deliverSupplementNotification
 import com.avitoohband.nutrun.reminders.isSupplementDeliveryDateValid
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystems
+import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsForUser
+import com.avitoohband.nutrun.reminders.runReminderRecoveryAttempt
 import com.avitoohband.nutrun.reminders.supplementDeliveryId
 import com.avitoohband.nutrun.reminders.supplementDeliveryDecision
 import com.avitoohband.nutrun.reminders.supplementSchedulingDecision
@@ -292,18 +297,100 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
-    fun recoverySchedulerKeepsUniqueExponentialBackoffWork() {
+    fun recoverySchedulerKeepsUniqueExponentialBackoffWork() = runBlocking {
         val enqueuer = RecordingWorkEnqueuer()
-        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+        val state = FakeRecoveryStateStore()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
 
         scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
 
         val work = enqueuer.enqueued.single()
         assertEquals("reminder-reschedule-recovery:user", work.name)
         assertEquals(ExistingWorkPolicy.KEEP, work.policy)
-        assertEquals("SUPPLEMENTS", work.request.workSpec.input.getString("systems"))
+        assertEquals("state", work.request.workSpec.input.getString("systems"))
         assertEquals(BackoffPolicy.EXPONENTIAL, work.request.workSpec.backoffPolicy)
         assertEquals(15_000L, work.request.workSpec.backoffDelayDuration)
+        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
+    }
+
+    @Test
+    fun recoveryStateMergesDisjointFailuresPerAccountAndDropsRecoveredSystems() = runBlocking {
+        val state = FakeRecoveryStateStore()
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
+        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+        scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+        scheduler.schedule("other", setOf(ReminderSystem.TRAINING))
+        state.completeAttempt(
+            "user",
+            attempted = setOf(ReminderSystem.HYDRATION),
+            stillFailing = emptySet()
+        )
+
+        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
+        assertEquals(setOf(ReminderSystem.TRAINING), state.current("other"))
+        assertEquals(
+            listOf(
+                "reminder-reschedule-recovery:user",
+                "reminder-reschedule-recovery:user",
+                "reminder-reschedule-recovery:other"
+            ),
+            enqueuer.enqueued.map { it.name }
+        )
+        assertTrue(enqueuer.enqueued.all { it.policy == ExistingWorkPolicy.KEEP })
+    }
+
+    @Test
+    fun recoveryAttemptReadsMergedFailuresAndClearsOnlySystemsThatRecovered() = runBlocking {
+        val state = FakeRecoveryStateStore()
+        state.merge("user", setOf(ReminderSystem.HYDRATION))
+        state.merge("other", setOf(ReminderSystem.TRAINING))
+        val attempted = mutableListOf<Set<ReminderSystem>>()
+
+        runReminderRecoveryAttempt("user", state) { systems ->
+            attempted += systems
+            state.merge("user", setOf(ReminderSystem.SUPPLEMENTS))
+            ReminderRescheduleOutcome(emptySet())
+        }
+        runReminderRecoveryAttempt("user", state) { systems ->
+            attempted += systems
+            ReminderRescheduleOutcome(setOf(ReminderSystem.SUPPLEMENTS))
+        }
+        runReminderRecoveryAttempt("user", state) { systems ->
+            attempted += systems
+            ReminderRescheduleOutcome.Complete
+        }
+
+        assertEquals(
+            listOf(
+                setOf(ReminderSystem.HYDRATION),
+                setOf(ReminderSystem.SUPPLEMENTS),
+                setOf(ReminderSystem.SUPPLEMENTS)
+            ),
+            attempted
+        )
+        assertTrue(state.current("user").isEmpty())
+        assertEquals(setOf(ReminderSystem.TRAINING), state.current("other"))
+    }
+
+    @Test
+    fun receiverDispatcherRunsRealUserRescheduleAndHandsCurrentFailuresToRecovery() = runBlocking {
+        val store = FakeReceiverStore()
+        val schedulers = FakeReceiverSchedulers(failHydration = true)
+        val recovered = mutableListOf<Pair<String, Set<ReminderSystem>>>()
+        val dispatcher = ReminderRescheduleReceiverDispatcher(
+            authenticatedUserId = { "user" },
+            reschedule = { userId, systems ->
+                rescheduleReminderSystemsForUser(userId, systems, store, schedulers, zone)
+            },
+            scheduleRecovery = { userId, failures -> recovered += userId to failures }
+        )
+
+        dispatcher.dispatch()
+
+        assertEquals(zone.id, store.savedSupplementSettings.single().timezoneId)
+        assertEquals(listOf("supplements"), schedulers.calls.filter { it == "supplements" })
+        assertEquals(listOf("user" to setOf(ReminderSystem.HYDRATION)), recovered)
     }
 
     @Test
@@ -418,6 +505,55 @@ class SupplementReminderWorkerTest {
             if (throwOnRelease) throw IllegalStateException()
             releaseCalls += 1
             state = SupplementDeliveryClaim.Available
+        }
+    }
+
+    private class FakeRecoveryStateStore : com.avitoohband.nutrun.reminders.ReminderRecoveryStateStore {
+        private val values = mutableMapOf<String, Set<ReminderSystem>>()
+        override suspend fun current(userId: String): Set<ReminderSystem> = values[userId].orEmpty()
+        override suspend fun merge(userId: String, systems: Set<ReminderSystem>) {
+            values[userId] = values[userId].orEmpty() + systems
+        }
+        override suspend fun completeAttempt(
+            userId: String,
+            attempted: Set<ReminderSystem>,
+            stillFailing: Set<ReminderSystem>
+        ) {
+            values[userId] = (values[userId].orEmpty() - attempted) + stillFailing
+        }
+    }
+
+    private class FakeReceiverStore : ReminderRescheduleUserStore {
+        val savedSupplementSettings = mutableListOf<com.avitoohband.nutrun.data.SupplementReminderSettingsEntity>()
+        override suspend fun hydrationPlan(userId: String) = null
+        override suspend fun trainingSettings(userId: String) = null
+        override suspend fun supplementSettings(userId: String) = null
+        override suspend fun saveSupplementSettings(
+            settings: com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+        ) {
+            savedSupplementSettings += settings
+        }
+    }
+
+    private class FakeReceiverSchedulers(
+        private val failHydration: Boolean = false
+    ) : ReminderRescheduleUserSchedulers {
+        val calls = mutableListOf<String>()
+        override suspend fun scheduleHydration(settings: com.avitoohband.nutrun.data.HydrationPlanEntity) {
+            calls += "hydration"
+            if (failHydration) throw IllegalStateException("hydration unavailable")
+        }
+        override suspend fun scheduleTraining(
+            userId: String,
+            settings: com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
+        ) {
+            calls += "training"
+        }
+        override suspend fun scheduleSupplements(
+            userId: String,
+            settings: com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+        ) {
+            calls += "supplements"
         }
     }
 }
