@@ -253,7 +253,25 @@ class SupplementReminderWorkerTest {
 
         assertEquals(SupplementNotificationDeliveryResult.FinalizePending, result)
         assertEquals(1, posts)
-        assertEquals(SupplementDeliveryClaim.Pending, store.acquire(claim(), 1_001))
+        assertEquals(SupplementDeliveryClaim.Posted, store.acquire(claim(), 1_001))
+    }
+
+    @Test
+    fun thrownFinalizeAfterPostDoesNotReleaseOrRepeatTheNotification() = runBlocking {
+        val store = FakeDeliveryStore(throwOnFinalize = true)
+        var posts = 0
+
+        assertEquals(SupplementNotificationDeliveryResult.FinalizePending, claimedSupplementDelivery(store, claim(), 1_000) { posts += 1 })
+        assertEquals(SupplementNotificationDeliveryResult.FinalizePending, claimedSupplementDelivery(store, claim(), 2_000) { posts += 1 })
+        assertEquals(1, posts)
+    }
+
+    @Test
+    fun releaseFailureAfterPostFailureRemainsRetryableUntilClaimExpires() = runBlocking {
+        val store = FakeDeliveryStore(throwOnRelease = true)
+        assertEquals(SupplementNotificationDeliveryResult.Retry, claimedSupplementDelivery(store, claim(), 1_000) { throw IllegalStateException() })
+        assertEquals(SupplementNotificationDeliveryResult.Retry, claimedSupplementDelivery(store, claim(), 1_001) {})
+        assertEquals(SupplementNotificationDeliveryResult.Delivered, claimedSupplementDelivery(store, claim(), 1_000 + 15 * 60_000) {})
     }
 
     @Test
@@ -359,7 +377,9 @@ class SupplementReminderWorkerTest {
     }
 
     private class FakeDeliveryStore(
-        private val finalizeSucceeds: Boolean = true
+        private val finalizeSucceeds: Boolean = true,
+        private val throwOnFinalize: Boolean = false,
+        private val throwOnRelease: Boolean = false
     ) : SupplementDeliveryStore {
         private var state = SupplementDeliveryClaim.Available
         private var claimedAtMillis = 0L
@@ -383,12 +403,19 @@ class SupplementReminderWorkerTest {
         }
 
         override suspend fun finalize(claimId: String, deliveredAtMillis: Long): Boolean {
+            if (throwOnFinalize) throw IllegalStateException()
             if (!finalizeSucceeds) return false
             state = SupplementDeliveryClaim.Delivered
             return true
         }
 
+        override suspend fun markPosted(claimId: String): Boolean {
+            state = SupplementDeliveryClaim.Posted
+            return true
+        }
+
         override suspend fun release(claimId: String) {
+            if (throwOnRelease) throw IllegalStateException()
             releaseCalls += 1
             state = SupplementDeliveryClaim.Available
         }

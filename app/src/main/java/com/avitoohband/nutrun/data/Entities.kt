@@ -124,6 +124,7 @@ data class ReminderDeliveryEntity(
 ) {
     companion object {
         const val STATE_PENDING = "PENDING"
+        const val STATE_POSTED = "POSTED"
         const val STATE_DELIVERED = "DELIVERED"
     }
 }

@@ -145,9 +145,12 @@ interface NutRunDao {
 
     @Query(
         "UPDATE reminder_delivery SET state = 'DELIVERED', deliveredAtMillis = :deliveredAtMillis " +
-            "WHERE id = :id AND state = 'PENDING'"
+            "WHERE id = :id AND state = 'POSTED'"
     )
     suspend fun finalizeReminderDelivery(id: String, deliveredAtMillis: Long): Int
+
+    @Query("UPDATE reminder_delivery SET state = 'POSTED' WHERE id = :id AND state = 'PENDING'")
+    suspend fun markReminderDeliveryPosted(id: String): Int
 
     @Query("DELETE FROM reminder_delivery WHERE id = :id AND state = 'PENDING'")
     suspend fun releaseReminderDeliveryClaim(id: String): Int
@@ -162,6 +165,7 @@ interface NutRunDao {
             ReminderDeliveryEntity.STATE_PENDING -> {
                 deleteExpiredReminderDeliveryClaim(claim.id, expiredBeforeMillis)
             }
+            "POSTED" -> return "Posted"
         }
         return if (recordReminderDelivery(claim) != -1L) "Acquired" else "Pending"
     }

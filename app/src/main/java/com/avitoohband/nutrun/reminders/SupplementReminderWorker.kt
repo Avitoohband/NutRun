@@ -103,7 +103,7 @@ fun supplementDeliveryDecision(
 
 enum class SupplementNotificationDeliveryResult { Delivered, AlreadyDelivered, Retry, FinalizePending }
 
-enum class SupplementDeliveryClaim { Available, Acquired, Pending, Delivered }
+enum class SupplementDeliveryClaim { Available, Acquired, Pending, Posted, Delivered }
 
 data class SupplementDeliveryClaimRequest(
     val id: String,
@@ -114,6 +114,7 @@ data class SupplementDeliveryClaimRequest(
 
 interface SupplementDeliveryStore {
     suspend fun acquire(claim: SupplementDeliveryClaimRequest, nowMillis: Long): SupplementDeliveryClaim
+    suspend fun markPosted(claimId: String): Boolean
     suspend fun finalize(claimId: String, deliveredAtMillis: Long): Boolean
     suspend fun release(claimId: String)
 }
@@ -123,23 +124,30 @@ suspend fun claimedSupplementDelivery(
     claim: SupplementDeliveryClaimRequest,
     nowMillis: Long,
     postNotification: suspend () -> Unit
-): SupplementNotificationDeliveryResult = when (store.acquire(claim, nowMillis)) {
-    SupplementDeliveryClaim.Delivered,
-    SupplementDeliveryClaim.Pending -> SupplementNotificationDeliveryResult.AlreadyDelivered
+): SupplementNotificationDeliveryResult {
+    return when (store.acquire(claim, nowMillis)) {
+    SupplementDeliveryClaim.Delivered -> SupplementNotificationDeliveryResult.AlreadyDelivered
+    SupplementDeliveryClaim.Posted -> SupplementNotificationDeliveryResult.FinalizePending
+    SupplementDeliveryClaim.Pending -> SupplementNotificationDeliveryResult.Retry
     SupplementDeliveryClaim.Available -> SupplementNotificationDeliveryResult.Retry
     SupplementDeliveryClaim.Acquired -> try {
         postNotification()
-        if (store.finalize(claim.id, nowMillis)) {
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        runCatching { store.release(claim.id) }
+        return SupplementNotificationDeliveryResult.Retry
+    }.let {
+        val posted = runCatching { store.markPosted(claim.id) }.getOrDefault(false)
+        if (!posted) {
+            SupplementNotificationDeliveryResult.FinalizePending
+        } else if (runCatching { store.finalize(claim.id, nowMillis) }.getOrDefault(false)) {
             SupplementNotificationDeliveryResult.Delivered
         } else {
             SupplementNotificationDeliveryResult.FinalizePending
         }
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        store.release(claim.id)
-        SupplementNotificationDeliveryResult.Retry
     }
+}
 }
 
 private val supplementDeliveryLocks = Array(32) { Mutex() }
@@ -425,6 +433,8 @@ private class RoomSupplementDeliveryStore(
 
     override suspend fun finalize(claimId: String, deliveredAtMillis: Long): Boolean =
         dao.finalizeReminderDelivery(claimId, deliveredAtMillis) == 1
+
+    override suspend fun markPosted(claimId: String): Boolean = dao.markReminderDeliveryPosted(claimId) == 1
 
     override suspend fun release(claimId: String) {
         dao.releaseReminderDeliveryClaim(claimId)
