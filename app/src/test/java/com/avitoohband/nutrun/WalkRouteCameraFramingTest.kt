@@ -37,6 +37,24 @@ class WalkRouteCameraFramingTest {
         )
     }
 
+    @Test
+    fun antimeridianRouteUsesTheNarrowWrappingBounds() {
+        assertEquals(
+            WalkRouteCameraFraming.Bounds(
+                south = 10.0,
+                west = 179.0,
+                north = 11.0,
+                east = -179.0
+            ),
+            walkRouteCameraFraming(
+                listOf(
+                    point(latitude = 10.0, longitude = 179.0),
+                    point(latitude = 11.0, longitude = -179.0)
+                )
+            )
+        )
+    }
+
     private fun point(latitude: Double, longitude: Double) = WalkPointEntity(
         id = "$latitude:$longitude",
         userId = "user-1",

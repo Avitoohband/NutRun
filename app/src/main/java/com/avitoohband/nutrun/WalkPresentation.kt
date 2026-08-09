@@ -61,10 +61,22 @@ sealed interface WalkRouteCameraFraming {
 fun walkRouteCameraFraming(points: List<WalkPointEntity>): WalkRouteCameraFraming = when (points.size) {
     0 -> WalkRouteCameraFraming.None
     1 -> points.single().let { WalkRouteCameraFraming.Center(it.latitude, it.longitude) }
-    else -> WalkRouteCameraFraming.Bounds(
-        south = points.minOf(WalkPointEntity::latitude),
-        west = points.minOf(WalkPointEntity::longitude),
-        north = points.maxOf(WalkPointEntity::latitude),
-        east = points.maxOf(WalkPointEntity::longitude)
-    )
+    else -> {
+        val (west, east) = narrowestLongitudeBounds(points.map(WalkPointEntity::longitude))
+        WalkRouteCameraFraming.Bounds(
+            south = points.minOf(WalkPointEntity::latitude),
+            west = west,
+            north = points.maxOf(WalkPointEntity::latitude),
+            east = east
+        )
+    }
+}
+
+private fun narrowestLongitudeBounds(longitudes: List<Double>): Pair<Double, Double> {
+    val sorted = longitudes.sorted()
+    val largestGapIndex = sorted.indices.maxBy { index ->
+        val next = sorted.getOrElse(index + 1) { sorted.first() + 360.0 }
+        next - sorted[index]
+    }
+    return sorted[(largestGapIndex + 1) % sorted.size] to sorted[largestGapIndex]
 }
