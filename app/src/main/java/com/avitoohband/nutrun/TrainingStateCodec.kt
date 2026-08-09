@@ -18,7 +18,9 @@ data class PersistedTrainingState(
     val workoutHistory: List<WorkoutRecord>,
     val scheduleOverrides: List<TrainingScheduleOverride>,
     val activeSetLogs: Map<String, List<WorkoutSetLog>>,
-    val activeWorkoutStartedAtMillis: Long?
+    val activeWorkoutStartedAtMillis: Long?,
+    val defaultRestTimerSeconds: Int,
+    val usesMetricUnits: Boolean
 )
 
 fun defaultSupplements() = listOf(
@@ -157,7 +159,9 @@ fun encodeTrainingState(
     workoutHistory: List<WorkoutRecord> = emptyList(),
     scheduleOverrides: List<TrainingScheduleOverride> = emptyList(),
     activeSetLogs: Map<String, List<WorkoutSetLog>> = emptyMap(),
-    activeWorkoutStartedAtMillis: Long? = null
+    activeWorkoutStartedAtMillis: Long? = null,
+    defaultRestTimerSeconds: Int = 90,
+    usesMetricUnits: Boolean = true
 ): String = JSONObject()
     .put("supplements", JSONArray().apply {
         supplements.forEach { supplement ->
@@ -247,6 +251,8 @@ fun encodeTrainingState(
         }
     })
     .putNullable("activeWorkoutStartedAtMillis", activeWorkoutStartedAtMillis)
+    .put("defaultRestTimerSeconds", defaultRestTimerSeconds.coerceIn(15, 600))
+    .put("usesMetricUnits", usesMetricUnits)
     .toString()
 
 fun decodeTrainingState(
@@ -349,7 +355,10 @@ fun decodeTrainingState(
         workoutHistory = workoutHistory,
         scheduleOverrides = scheduleOverrides,
         activeSetLogs = activeSetLogs,
-        activeWorkoutStartedAtMillis = root.nullableLong("activeWorkoutStartedAtMillis")
+        activeWorkoutStartedAtMillis = root.nullableLong("activeWorkoutStartedAtMillis"),
+        defaultRestTimerSeconds = root.optInt("defaultRestTimerSeconds", 90)
+            .coerceIn(15, 600),
+        usesMetricUnits = root.optBoolean("usesMetricUnits", true)
     )
 }.getOrNull()
 
@@ -357,6 +366,7 @@ private fun WorkoutSetLog.toJson() = JSONObject()
     .put("id", id)
     .put("targetId", targetId)
     .put("exerciseId", exerciseId)
+    .putNullable("exerciseName", exerciseName)
     .put("setNumber", setNumber)
     .putNullable("reps", reps)
     .putNullable("weightKg", weightKg)
@@ -368,6 +378,7 @@ private fun JSONObject.toWorkoutSet() = WorkoutSetLog(
     id = getString("id"),
     targetId = getString("targetId"),
     exerciseId = getString("exerciseId"),
+    exerciseName = nullableString("exerciseName"),
     setNumber = getInt("setNumber"),
     reps = nullableInt("reps"),
     weightKg = nullableDouble("weightKg"),

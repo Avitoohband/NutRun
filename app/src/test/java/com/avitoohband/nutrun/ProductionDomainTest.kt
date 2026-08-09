@@ -9,6 +9,7 @@ import com.avitoohband.nutrun.domain.HealthGoal
 import com.avitoohband.nutrun.domain.RouteSample
 import com.avitoohband.nutrun.domain.acceptedRouteDistanceMeters
 import com.avitoohband.nutrun.domain.calculateHealthEstimate
+import com.avitoohband.nutrun.domain.crossedHydrationGoal
 import com.avitoohband.nutrun.domain.isHydrationReminderEligible
 import com.avitoohband.nutrun.domain.nutritionSummary
 import com.avitoohband.nutrun.domain.sessionSteps
@@ -61,7 +62,16 @@ class ProductionDomainTest {
     fun hydrationStopsAtGoalAndOutsideWakingWindow() {
         assertTrue(isHydrationReminderEligible(1_000, 2_000, 12 * 60, 8 * 60, 22 * 60))
         assertFalse(isHydrationReminderEligible(2_000, 2_000, 12 * 60, 8 * 60, 22 * 60))
+        assertTrue(isHydrationReminderEligible(2_000, 2_500, 12 * 60, 8 * 60, 22 * 60))
         assertFalse(isHydrationReminderEligible(1_000, 2_000, 23 * 60, 8 * 60, 22 * 60))
+    }
+
+    @Test
+    fun hydrationCelebratesOnlyWhenCrossingTheCurrentGoal() {
+        assertTrue(crossedHydrationGoal(1_750, 2_000, 2_000))
+        assertFalse(crossedHydrationGoal(2_000, 2_250, 2_000))
+        assertFalse(crossedHydrationGoal(2_000, 2_250, 2_500))
+        assertTrue(crossedHydrationGoal(2_250, 2_500, 2_500))
     }
 
     @Test
@@ -122,7 +132,9 @@ class ProductionDomainTest {
             suggestionDecision = SuggestionDecision.ACCEPTED,
             suggestedWeightKg = 45.0,
             workoutHistory = model.workoutHistory,
-            scheduleOverrides = listOf(override)
+            scheduleOverrides = listOf(override),
+            defaultRestTimerSeconds = 135,
+            usesMetricUnits = false
         )
 
         val restored = decodeTrainingState(payload, model.exerciseLibrary)!!
@@ -134,6 +146,8 @@ class ProductionDomainTest {
         assertEquals(45.0, restored.suggestedWeightKg, 0.001)
         assertEquals(model.workoutHistory.toList(), restored.workoutHistory)
         assertEquals(listOf(override), restored.scheduleOverrides)
+        assertEquals(135, restored.defaultRestTimerSeconds)
+        assertFalse(restored.usesMetricUnits)
     }
 
     @Test

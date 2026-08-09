@@ -45,6 +45,19 @@ data class SupplementSchedule(
         RecurrenceType.EVERY_N_DAYS -> "Every ${intervalDays.coerceAtLeast(1)} days"
         RecurrenceType.WEEKDAYS -> weekdays.sortedBy { it.value }.joinToString(", ") { it.name.take(3).lowercase().replaceFirstChar(Char::uppercase) }
     }
+
+    fun selectedWeekdays(referenceDate: LocalDate = LocalDate.now()): Set<DayOfWeek> =
+        when (type) {
+            RecurrenceType.DAILY -> DayOfWeek.entries.toSet()
+            RecurrenceType.WEEKDAYS -> weekdays
+            RecurrenceType.EVERY_N_DAYS -> {
+                val weekStart = referenceDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                (0L..6L)
+                    .map(weekStart::plusDays)
+                    .filter(::isDueOn)
+                    .mapTo(linkedSetOf()) { it.dayOfWeek }
+            }
+        }
 }
 
 data class TrialState(
@@ -128,6 +141,7 @@ data class WorkoutSetLog(
     val id: String,
     val targetId: String,
     val exerciseId: String,
+    val exerciseName: String? = null,
     val setNumber: Int,
     val reps: Int? = null,
     val weightKg: Double? = null,

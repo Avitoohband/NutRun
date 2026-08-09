@@ -1,8 +1,11 @@
 package com.avitoohband.nutrun
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -72,16 +75,91 @@ class ProductionFlowTest {
         ) {
             composeRule.onNodeWithText("This week").assertIsDisplayed()
             composeRule.onNodeWithTag("training-list").performScrollToNode(
-                hasTestTag("start-session-session-sunday-cardio")
+                hasTestTag("session-card-session-sunday-cardio")
             )
             composeRule
-                .onNodeWithTag("start-session-session-sunday-cardio")
+                .onNodeWithTag("session-card-session-sunday-cardio")
                 .performClick()
         }
         composeRule.onNodeWithText("Choose one cardio option.").assertIsDisplayed()
         composeRule.onAllNodesWithText("RPE", useUnmergedTree = true)[0].assertIsDisplayed()
         composeRule.onNodeWithText("Pause").assertDoesNotExist()
+        composeRule.onNodeWithTag("cancel-workout").assertIsDisplayed()
+        composeRule.onNodeWithTag("weight-unit-lb").performClick().assertIsSelected()
+        composeRule.onNodeWithTag("weight-unit-kg").performClick().assertIsSelected()
+        composeRule.onNodeWithTag("rest-timer-settings").performClick()
+        composeRule.onNodeWithText("Default rest timer").assertIsDisplayed()
+        composeRule.onNodeWithText("120 sec").performClick()
+        composeRule.onNodeWithText("Save").performClick()
         composeRule.onNodeWithText("Finish").performClick()
         composeRule.onNodeWithText("Done").performClick()
+        composeRule.onNodeWithTag("bottom-nav-progress").performClick()
+        composeRule.onNodeWithTag("recent-training-heading").performScrollTo()
+        composeRule.onAllNodesWithTag("recent-workout-card")[0]
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithTag("workout-details-heading").assertIsDisplayed()
+        composeRule.onNodeWithText("Exercises").assertIsDisplayed()
+        composeRule.onNodeWithText("Brisk walk").assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-workout-history").performClick()
+        composeRule.onNodeWithTag("edit-workout-heading").assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-workout-list")
+            .performScrollToNode(hasText("Weight (kg)"))
+        composeRule.onAllNodesWithText("Weight (kg)", useUnmergedTree = true)[0]
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("cancel-edit-workout").performClick()
+        composeRule.onNodeWithTag("delete-workout-history").performClick()
+        composeRule.onNodeWithText("Delete workout?").assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+    }
+
+    @Test
+    fun consumedNutritionRequestDoesNotReopenAfterRecreation() {
+        enterDemo()
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.intent
+                .putExtra(MainActivity.EXTRA_DESTINATION, "nutrition")
+                .putExtra(MainActivity.EXTRA_WATER_SECTION, true)
+        }
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Nutrition").fetchSemanticsNodes().size >= 2
+        }
+
+        composeRule.onNodeWithTag("bottom-nav-today").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Today's training").assertIsDisplayed()
+    }
+
+    @Test
+    fun todayOpensAllSupplementManagement() {
+        enterDemo()
+        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+
+        composeRule.onNodeWithText("Manage supplements").assertIsDisplayed()
+        composeRule.onNodeWithText("All supplements and their scheduled days").assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-supplement-supplement-1").performClick()
+        composeRule.onNodeWithText("Edit supplement").assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithTag("add-managed-supplement").performClick()
+        composeRule.onNodeWithText("Take on").assertIsDisplayed()
+        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "All days")
+            .forEach { label ->
+                composeRule.onNodeWithText(label).assertIsDisplayed()
+            }
+        composeRule.onNodeWithText("All days").performClick()
+    }
+
+    private fun enterDemo() {
+        composeRule.onNodeWithTag("demo-login").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
+        }
     }
 }

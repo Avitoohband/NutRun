@@ -24,6 +24,7 @@ import com.avitoohband.nutrun.domain.FoodCatalogItem
 import com.avitoohband.nutrun.domain.MealType
 import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.calculateHealthEstimate
+import com.avitoohband.nutrun.domain.crossedHydrationGoal
 import com.avitoohband.nutrun.health.NutRunHealthConnectManager
 import com.avitoohband.nutrun.reminders.HydrationScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
@@ -33,6 +34,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -43,8 +46,16 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+data class HydrationGoalCelebration(
+    val goalMl: Int,
+    val totalMl: Int
+)
 
 data class NutRunUiState(
     val session: SessionPreferences = SessionPreferences(),
@@ -100,6 +111,11 @@ class NutRunViewModel @Inject constructor(
     private val healthConnectManager: NutRunHealthConnectManager
 ) : ViewModel() {
     private val currentDate = MutableStateFlow(LocalDate.now())
+    private val hydrationLogMutex = Mutex()
+    private val _hydrationGoalCelebrations =
+        MutableSharedFlow<HydrationGoalCelebration>(extraBufferCapacity = 1)
+    val hydrationGoalCelebrations: SharedFlow<HydrationGoalCelebration> =
+        _hydrationGoalCelebrations.asSharedFlow()
     private val food = currentDate.flatMapLatest(repository::food)
     private val water = currentDate.flatMapLatest(repository::water)
 
@@ -348,13 +364,38 @@ class NutRunViewModel @Inject constructor(
     }
 
     fun addWater(amountMl: Int) {
-        viewModelScope.launch { repository.addWater(amountMl) }
+        viewModelScope.launch {
+            runCatching { logWaterAndCelebrate(amountMl, updateQuickServing = false) }
+                .onFailure { message.value = it.message ?: "Could not log water." }
+        }
     }
 
     fun setQuickServingAndAddWater(amountMl: Int) {
         viewModelScope.launch {
-            runCatching { repository.setQuickServingAndAddWater(amountMl) }
+            runCatching { logWaterAndCelebrate(amountMl, updateQuickServing = true) }
                 .onFailure { message.value = it.message ?: "Could not log water." }
+        }
+    }
+
+    private suspend fun logWaterAndCelebrate(
+        amountMl: Int,
+        updateQuickServing: Boolean
+    ) {
+        hydrationLogMutex.withLock {
+            val date = LocalDate.now()
+            val previousMl = repository.currentWaterTotal(date)
+            val goalMl = repository.currentHydrationPlan()?.goalMl
+                ?: state.value.hydrationPlan.goalMl
+            val totalMl = if (updateQuickServing) {
+                repository.setQuickServingAndAddWater(amountMl, date)
+            } else {
+                repository.addWater(amountMl, date)
+            }
+            if (crossedHydrationGoal(previousMl, totalMl, goalMl)) {
+                _hydrationGoalCelebrations.emit(
+                    HydrationGoalCelebration(goalMl = goalMl, totalMl = totalMl)
+                )
+            }
         }
     }
 

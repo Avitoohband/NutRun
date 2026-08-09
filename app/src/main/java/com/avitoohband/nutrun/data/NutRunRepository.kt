@@ -310,7 +310,7 @@ class NutRunRepository @Inject constructor(
         queue(accountId, "foodLogs", entry.id, "DELETE", null)
     }
 
-    suspend fun addWater(amountMl: Int, date: LocalDate = LocalDate.now()) {
+    suspend fun addWater(amountMl: Int, date: LocalDate = LocalDate.now()): Int {
         require(amountMl in 1..5_000)
         val accountId = requireUserId()
         val entry = WaterLogEntity(
@@ -322,9 +322,13 @@ class NutRunRepository @Inject constructor(
         )
         dao.saveWater(entry)
         queue(accountId, "waterLogs", entry.id, "UPSERT", entry.toJson())
+        return dao.waterTotal(accountId, date.toString())
     }
 
-    suspend fun setQuickServingAndAddWater(amountMl: Int, date: LocalDate = LocalDate.now()) {
+    suspend fun setQuickServingAndAddWater(
+        amountMl: Int,
+        date: LocalDate = LocalDate.now()
+    ): Int {
         require(amountMl in 50..2_000)
         val accountId = requireUserId()
         val currentPlan = dao.hydrationPlan(accountId) ?: defaultHydrationPlan(accountId)
@@ -339,7 +343,16 @@ class NutRunRepository @Inject constructor(
         dao.saveQuickServingAndWater(plan, entry)
         queue(accountId, "hydrationPlan", plan.id, "UPSERT", plan.toJson())
         queue(accountId, "waterLogs", entry.id, "UPSERT", entry.toJson())
+        return dao.waterTotal(accountId, date.toString())
     }
+
+    suspend fun currentWaterTotal(date: LocalDate = LocalDate.now()): Int {
+        val accountId = requireUserId()
+        return dao.waterTotal(accountId, date.toString())
+    }
+
+    suspend fun currentHydrationPlan(): HydrationPlanEntity? =
+        dao.hydrationPlan(requireUserId())
 
     suspend fun saveHydrationPlan(plan: HydrationPlanEntity) {
         require(plan.goalMl in 250..10_000)

@@ -120,6 +120,12 @@ fun isHydrationReminderEligible(
     wakingEndMinute: Int
 ): Boolean = consumedMl < goalMl && currentMinuteOfDay in wakingStartMinute..wakingEndMinute
 
+fun crossedHydrationGoal(
+    previousMl: Int,
+    currentMl: Int,
+    goalMl: Int
+): Boolean = previousMl < goalMl && currentMl >= goalMl
+
 fun acceptedRouteDistanceMeters(previous: RouteSample?, current: RouteSample): Float? {
     if (current.accuracyMeters <= 0f || current.accuracyMeters > 50f) return null
     if (previous == null) return 0f

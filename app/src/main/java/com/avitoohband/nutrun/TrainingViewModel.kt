@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -53,6 +54,8 @@ class TrainingViewModel @Inject constructor(
         private set
     var restTimerEndAtMillis by mutableStateOf<Long?>(null)
         private set
+    var defaultRestTimerSeconds by mutableIntStateOf(90)
+        private set
 
     val exerciseLibrary = builtInExerciseCatalog()
     val supplements = mutableStateListOf<Supplement>().apply { addAll(defaultSupplements()) }
@@ -93,8 +96,10 @@ class TrainingViewModel @Inject constructor(
         notificationPermissionGranted = granted
     }
 
-    fun toggleUnits() {
-        usesMetricUnits = !usesMetricUnits
+    fun updateUsesMetricUnits(metric: Boolean) {
+        if (usesMetricUnits == metric) return
+        usesMetricUnits = metric
+        persistTrainingState()
     }
 
     fun toggleSupplement(id: String, checked: Boolean) {
@@ -109,6 +114,28 @@ class TrainingViewModel @Inject constructor(
 
     fun addSupplement(name: String, dose: String, schedule: SupplementSchedule) {
         supplements += Supplement(id("supplement"), name.trim(), dose.trim(), schedule)
+        persistTrainingState()
+    }
+
+    fun removeSupplement(id: String) {
+        if (supplements.removeAll { it.id == id }) {
+            persistTrainingState()
+        }
+    }
+
+    fun updateSupplement(
+        id: String,
+        name: String,
+        dose: String,
+        schedule: SupplementSchedule
+    ) {
+        val index = supplements.indexOfFirst { it.id == id }
+        if (index < 0) return
+        supplements[index] = supplements[index].copy(
+            name = name.trim(),
+            dose = dose.trim(),
+            schedule = schedule
+        )
         persistTrainingState()
     }
 
@@ -182,6 +209,7 @@ class TrainingViewModel @Inject constructor(
                     id = "${target.id}:$startedAt:$setNumber",
                     targetId = target.id,
                     exerciseId = target.exercise.id,
+                    exerciseName = target.exercise.name,
                     setNumber = setNumber,
                     reps = target.reps.takeIf { target.durationMinutes == null },
                     weightKg = target.weightKg,
@@ -250,7 +278,12 @@ class TrainingViewModel @Inject constructor(
             ?.filter { it.exerciseId == exerciseId && it.completed }
             .orEmpty()
 
-    fun startRestTimer(seconds: Int = 90) {
+    fun updateDefaultRestTimerSeconds(seconds: Int) {
+        defaultRestTimerSeconds = seconds.coerceIn(15, 600)
+        persistTrainingState()
+    }
+
+    fun startRestTimer(seconds: Int = defaultRestTimerSeconds) {
         restTimerEndAtMillis = System.currentTimeMillis() + seconds.coerceAtLeast(1) * 1_000L
     }
 
@@ -308,6 +341,66 @@ class TrainingViewModel @Inject constructor(
         activeSetLogs.clear()
         restTimerEndAtMillis = null
         persistTrainingState()
+    }
+
+    fun cancelWorkout() {
+        activeWorkoutSessionId = null
+        activeWorkoutStartedAtMillis = null
+        completedExerciseIds.clear()
+        activeSetLogs.clear()
+        restTimerEndAtMillis = null
+        persistTrainingState()
+    }
+
+    fun updateWorkoutRecord(updated: WorkoutRecord) {
+        val index = workoutHistory.indexOfFirst { it.id == updated.id }
+        if (index < 0) return
+        val previous = workoutHistory[index]
+        val completedTargets = updated.sets
+            .groupBy(WorkoutSetLog::targetId)
+            .filterValues { sets -> sets.isNotEmpty() && sets.all(WorkoutSetLog::completed) }
+            .keys
+        val session = sessions.firstOrNull { it.id == updated.sessionId }
+        val logicalCompleted = session?.completedLogicalTargetCount(
+            completedTargets.associateWith { true }
+        ) ?: completedTargets.size.coerceAtMost(updated.totalLogicalTargets)
+        val sanitized = updated.copy(
+            sessionName = updated.sessionName.trim(),
+            completedTargetIds = completedTargets,
+            completedLogicalTargets = logicalCompleted
+        )
+        workoutHistory[index] = sanitized
+        replaceLegacyWorkoutSummary(previous, sanitized)
+        persistTrainingState()
+    }
+
+    fun deleteWorkoutRecord(id: String) {
+        val index = workoutHistory.indexOfFirst { it.id == id }
+        if (index < 0) return
+        val removed = workoutHistory.removeAt(index)
+        removeLegacyWorkoutSummary(removed)
+        persistTrainingState()
+    }
+
+    private fun replaceLegacyWorkoutSummary(
+        previous: WorkoutRecord,
+        updated: WorkoutRecord
+    ) {
+        val index = history.indexOfFirst {
+            it.startsWith("${formatToday(previous.performedOn)} | ${previous.sessionName} |")
+        }
+        if (index >= 0) {
+            history[index] =
+                "${formatToday(updated.performedOn)} | ${updated.sessionName} | " +
+                    "completed ${updated.completedLogicalTargets}/${updated.totalLogicalTargets} targets"
+        }
+    }
+
+    private fun removeLegacyWorkoutSummary(workout: WorkoutRecord) {
+        val index = history.indexOfFirst {
+            it.startsWith("${formatToday(workout.performedOn)} | ${workout.sessionName} |")
+        }
+        if (index >= 0) history.removeAt(index)
     }
 
     fun activeSession(): TrainingSession? = sessions.firstOrNull { it.id == activeWorkoutSessionId }
@@ -397,7 +490,9 @@ class TrainingViewModel @Inject constructor(
             workoutHistory = workoutHistory,
             scheduleOverrides = scheduleOverrides,
             activeSetLogs = activeSetLogs,
-            activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis
+            activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis,
+            defaultRestTimerSeconds = defaultRestTimerSeconds,
+            usesMetricUnits = usesMetricUnits
         )
         restoredPayload = payload
         persistJob?.cancel()
@@ -430,6 +525,8 @@ class TrainingViewModel @Inject constructor(
             activeSetLogs.clear()
             activeSetLogs.putAll(restored.activeSetLogs)
             activeWorkoutStartedAtMillis = restored.activeWorkoutStartedAtMillis
+            defaultRestTimerSeconds = restored.defaultRestTimerSeconds
+            usesMetricUnits = restored.usesMetricUnits
         }
     }
 
@@ -447,6 +544,8 @@ class TrainingViewModel @Inject constructor(
         activeWorkoutSessionId = null
         activeWorkoutStartedAtMillis = null
         restTimerEndAtMillis = null
+        defaultRestTimerSeconds = 90
+        usesMetricUnits = true
         completedExerciseIds.clear()
         lastWorkoutSummary = null
         suggestionDecision = SuggestionDecision.PENDING

@@ -3,9 +3,14 @@ package com.avitoohband.nutrun
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.media.RingtoneManager
+import android.os.Build
 import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,12 +41,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalDining
@@ -135,6 +142,8 @@ import java.time.format.DateTimeParseException
 import java.time.LocalTime
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -147,7 +156,11 @@ class MainActivity : ComponentActivity() {
             NutRunRoot(
                 navigationRequest = navigationRequest,
                 onNavigationConsumed = { consumedId ->
-                    if (navigationRequest?.id == consumedId) navigationRequest = null
+                    if (navigationRequest?.id == consumedId) {
+                        navigationRequest = null
+                        intent.removeExtra(EXTRA_DESTINATION)
+                        intent.removeExtra(EXTRA_WATER_SECTION)
+                    }
                 }
             )
         }
@@ -198,6 +211,14 @@ fun NutRunRoot(
 ) {
     val state by app.state.collectAsStateWithLifecycle()
     val message by app.message.collectAsState()
+    var hydrationCelebration by remember {
+        mutableStateOf<HydrationGoalCelebration?>(null)
+    }
+    LaunchedEffect(app) {
+        app.hydrationGoalCelebrations.collect {
+            hydrationCelebration = it
+        }
+    }
     val dark = state.session.darkMode
     val colors = if (dark) androidx.compose.material3.darkColorScheme() else androidx.compose.material3.lightColorScheme()
 
@@ -221,7 +242,48 @@ fun NutRunRoot(
                 confirmButton = { TextButton(onClick = app::clearMessage) { Text("OK") } }
             )
         }
+        hydrationCelebration?.let { celebration ->
+            HydrationGoalTrophyDialog(
+                celebration = celebration,
+                onDismiss = { hydrationCelebration = null }
+            )
+        }
     }
+}
+
+@Composable
+internal fun HydrationGoalTrophyDialog(
+    celebration: HydrationGoalCelebration,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                Icons.Default.EmojiEvents,
+                "Hydration trophy",
+                modifier = Modifier.size(64.dp),
+                tint = Color(0xFFD49A00)
+            )
+        },
+        title = {
+            Text(
+                "Hydration goal reached!",
+                modifier = Modifier.testTag("hydration-goal-trophy")
+            )
+        },
+        text = {
+            Text(
+                "You reached your %,d mL water goal today. Great work!"
+                    .format(celebration.goalMl)
+            )
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Nice!")
+            }
+        }
+    )
 }
 
 @Composable
@@ -416,12 +478,6 @@ private fun MainApp(
     onNavigationConsumed: (Long) -> Unit
 ) {
     val navController = rememberNavController()
-    val activity = LocalActivity.current
-    val startRoute = remember {
-        activity?.intent?.getStringExtra(MainActivity.EXTRA_DESTINATION)
-            ?.takeIf { candidate -> destinations.any { it.route == candidate } }
-            ?: "today"
-    }
     var waterFocusRequest by rememberSaveable { mutableStateOf(0) }
     fun navigateTo(destination: String, focusWater: Boolean = false) {
         if (focusWater) waterFocusRequest += 1
@@ -430,15 +486,15 @@ private fun MainApp(
         }
     }
     LaunchedEffect(navigationRequest?.id) {
-        navigationRequest
-            ?.takeIf { request -> destinations.any { it.route == request.destination } }
-            ?.let { request ->
-                if (request.focusWater) waterFocusRequest += 1
-                navController.navigate(request.destination) {
-                    launchSingleTop = true
-                }
-                onNavigationConsumed(request.id)
-            }
+        val request = navigationRequest
+            ?.takeIf { candidate -> destinations.any { it.route == candidate.destination } }
+            ?: return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        if (request.focusWater) waterFocusRequest += 1
+        navController.navigate(request.destination) {
+            launchSingleTop = true
+        }
+        onNavigationConsumed(request.id)
     }
     val entry by navController.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: "today"
@@ -453,6 +509,7 @@ private fun MainApp(
                             "profile" -> "Profile"
                             "edit-health" -> "Health details"
                             "notifications" -> "Notifications"
+                            "supplements" -> "Supplements"
                             else -> "NutRun"
                         },
                         fontWeight = FontWeight.Bold
@@ -481,18 +538,26 @@ private fun MainApp(
             )
         },
         bottomBar = {
-            if (route !in setOf("profile", "edit-health", "notifications")) {
+            if (route !in setOf("profile", "edit-health", "notifications", "supplements")) {
                 NavigationBar {
                     destinations.forEach { destination ->
                         NavigationBarItem(
                             selected = route == destination.route,
                             onClick = {
-                                navController.navigate(destination.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
+                                val returnedToToday =
+                                    destination.route == "today" &&
+                                        navController.popBackStack("today", inclusive = false)
+                                if (!returnedToToday) {
+                                    navController.navigate(destination.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = destination.route != "today"
+                                    }
                                 }
                             },
+                            modifier = Modifier.testTag("bottom-nav-${destination.route}"),
                             icon = { Icon(destination.icon, destination.label) },
                             label = { Text(destination.label, fontSize = 10.sp) }
                         )
@@ -501,19 +566,26 @@ private fun MainApp(
             }
         }
     ) { padding ->
-        NavHost(navController, startDestination = startRoute, modifier = Modifier.padding(padding)) {
+        NavHost(navController, startDestination = "today", modifier = Modifier.padding(padding)) {
             composable("today") {
                 TodayScreen(
                     state,
                     training,
                     onTrainingClick = { navigateTo("training") },
-                    onWaterClick = { navigateTo("nutrition", focusWater = true) }
+                    onWaterClick = { navigateTo("nutrition", focusWater = true) },
+                    onManageSupplements = { navController.navigate("supplements") }
                 )
             }
             composable("training") { TrainingScreen(training) }
             composable("nutrition") { NutritionScreen(app, state, waterFocusRequest) }
             composable("walk") { WalkScreen(app, state) }
             composable("progress") { ProgressScreen(app, state, training) }
+            composable("supplements") {
+                SupplementsScreen(
+                    training = training,
+                    onBack = { navController.popBackStack() }
+                )
+            }
             composable("profile") {
                 ProfileScreen(
                     app,
@@ -549,15 +621,16 @@ private fun TodayScreen(
     state: NutRunUiState,
     training: TrainingViewModel,
     onTrainingClick: () -> Unit,
-    onWaterClick: () -> Unit
+    onWaterClick: () -> Unit,
+    onManageSupplements: () -> Unit
 ) {
     val profile = state.profile ?: return
     var addSupplement by remember { mutableStateOf(false) }
     if (addSupplement) {
         AddSupplementDialog(
             onDismiss = { addSupplement = false },
-            onAdd = { name, dose ->
-                training.addSupplement(name, dose, SupplementSchedule(RecurrenceType.DAILY))
+            onAdd = { name, dose, schedule ->
+                training.addSupplement(name, dose, schedule)
                 addSupplement = false
             }
         )
@@ -625,6 +698,12 @@ private fun TodayScreen(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionHeading("Supplements", Modifier.weight(1f))
+                TextButton(
+                    onClick = onManageSupplements,
+                    modifier = Modifier.testTag("manage-supplements")
+                ) {
+                    Text("Manage")
+                }
                 IconButton(onClick = { addSupplement = true }) { Icon(Icons.Default.Add, "Add supplement") }
             }
         }
@@ -657,7 +736,7 @@ private fun TodayScreen(
                             MaterialTheme.colorScheme.onSurface
                         }
                         Text(supplement.name, fontWeight = FontWeight.SemiBold, color = color)
-                        Text("${supplement.dose} | ${supplement.schedule.label()}", fontSize = 12.sp, color = color)
+                        Text(supplement.dose, fontSize = 12.sp, color = color)
                     }
                 }
             }
@@ -667,9 +746,137 @@ private fun TodayScreen(
 }
 
 @Composable
+private fun SupplementsScreen(
+    training: TrainingViewModel,
+    onBack: () -> Unit
+) {
+    var addSupplement by remember { mutableStateOf(false) }
+    var pendingRemoval by remember { mutableStateOf<Supplement?>(null) }
+    var editingSupplement by remember { mutableStateOf<Supplement?>(null) }
+
+    if (addSupplement) {
+        AddSupplementDialog(
+            onDismiss = { addSupplement = false },
+            onAdd = { name, dose, schedule ->
+                training.addSupplement(name, dose, schedule)
+                addSupplement = false
+            }
+        )
+    }
+    editingSupplement?.let { supplement ->
+        AddSupplementDialog(
+            existing = supplement,
+            onDismiss = { editingSupplement = null },
+            onAdd = { name, dose, schedule ->
+                training.updateSupplement(supplement.id, name, dose, schedule)
+                editingSupplement = null
+            }
+        )
+    }
+    pendingRemoval?.let { supplement ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove ${supplement.name}?") },
+            text = { Text("This removes the supplement from every scheduled day.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        training.removeSupplement(supplement.id)
+                        pendingRemoval = null
+                    }
+                ) {
+                    Text("Remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoval = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("Manage supplements", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "All supplements and their scheduled days",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(
+                    onClick = { addSupplement = true },
+                    modifier = Modifier.testTag("add-managed-supplement")
+                ) {
+                    Icon(Icons.Default.Add, "Add supplement")
+                }
+            }
+        }
+        if (training.supplements.isEmpty()) {
+            item {
+                Text(
+                    "No supplements added.",
+                    modifier = Modifier.padding(vertical = 24.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        items(training.supplements, key = { it.id }) { supplement ->
+            Card(
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(supplement.name, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            supplement.dose,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            supplement.schedule.label(),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = { editingSupplement = supplement },
+                        modifier = Modifier.testTag("edit-supplement-${supplement.id}")
+                    ) {
+                        Icon(Icons.Default.Edit, "Edit ${supplement.name}")
+                    }
+                    IconButton(onClick = { pendingRemoval = supplement }) {
+                        Icon(Icons.Default.Delete, "Remove ${supplement.name}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TrainingScreen(model: TrainingViewModel) {
     var addSession by remember { mutableStateOf(false) }
     var editSessionId by remember { mutableStateOf<String?>(null) }
+    var editRestTimer by remember { mutableStateOf(false) }
+    var confirmCancelWorkout by remember { mutableStateOf(false) }
     var rescheduleRequest by remember {
         mutableStateOf<Pair<TrainingSession, LocalDate>?>(null)
     }
@@ -679,6 +886,40 @@ private fun TrainingScreen(model: TrainingViewModel) {
             onSave = { name, day ->
                 model.addSession(name, day)
                 addSession = false
+            }
+        )
+    }
+    if (editRestTimer) {
+        RestTimerSettingsDialog(
+            currentSeconds = model.defaultRestTimerSeconds,
+            onSave = {
+                model.updateDefaultRestTimerSeconds(it)
+                editRestTimer = false
+            },
+            onDismiss = { editRestTimer = false }
+        )
+    }
+    if (confirmCancelWorkout) {
+        AlertDialog(
+            onDismissRequest = { confirmCancelWorkout = false },
+            title = { Text("Cancel workout?") },
+            text = {
+                Text("Your set entries from this workout will be discarded.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        model.cancelWorkout()
+                        confirmCancelWorkout = false
+                    }
+                ) {
+                    Text("Cancel workout")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCancelWorkout = false }) {
+                    Text("Keep training")
+                }
             }
         )
     }
@@ -709,6 +950,7 @@ private fun TrainingScreen(model: TrainingViewModel) {
         )
     }
     model.activeSession()?.let { session ->
+        val context = LocalContext.current
         val timerEnd = model.restTimerEndAtMillis
         var currentTime by remember(timerEnd) { mutableLongStateOf(System.currentTimeMillis()) }
         LaunchedEffect(timerEnd) {
@@ -716,13 +958,41 @@ private fun TrainingScreen(model: TrainingViewModel) {
                 delay(1_000)
                 currentTime = System.currentTimeMillis()
             }
-            if (timerEnd != null && currentTime >= timerEnd) model.skipRestTimer()
+            if (
+                timerEnd != null &&
+                currentTime >= timerEnd &&
+                model.restTimerEndAtMillis == timerEnd
+            ) {
+                model.skipRestTimer()
+                playRestTimerFinishedFeedback(context)
+            }
         }
         LazyColumn(
             Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item { Text(session.name, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        session.name,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    TextButton(
+                        onClick = { editRestTimer = true },
+                        modifier = Modifier.testTag("rest-timer-settings")
+                    ) {
+                        Text("Rest ${model.defaultRestTimerSeconds}s")
+                    }
+                }
+            }
+            item {
+                WeightUnitSelector(
+                    metric = model.usesMetricUnits,
+                    onSelected = model::updateUsesMetricUnits
+                )
+            }
             if (session.exercises.any { it.alternativeGroupId != null }) {
                 item {
                     Text(
@@ -791,9 +1061,23 @@ private fun TrainingScreen(model: TrainingViewModel) {
                 }
             }
             item {
-                Button(onClick = model::finishWorkout, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Stop, null)
-                    Text("Finish")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { confirmCancelWorkout = true },
+                        modifier = Modifier.weight(1f).testTag("cancel-workout")
+                    ) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = model::finishWorkout,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Stop, null)
+                        Text("Finish")
+                    }
                 }
             }
         }
@@ -804,11 +1088,25 @@ private fun TrainingScreen(model: TrainingViewModel) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            Text(
-                "Training",
-                modifier = Modifier.testTag("training-heading"),
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Training",
+                    modifier = Modifier.weight(1f).testTag("training-heading"),
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(
+                    onClick = { editRestTimer = true },
+                    modifier = Modifier.testTag("rest-timer-settings")
+                ) {
+                    Text("Rest ${model.defaultRestTimerSeconds}s")
+                }
+            }
+        }
+        item {
+            WeightUnitSelector(
+                metric = model.usesMetricUnits,
+                onSelected = model::updateUsesMetricUnits
             )
         }
         item { SectionHeading("This week") }
@@ -825,7 +1123,13 @@ private fun TrainingScreen(model: TrainingViewModel) {
                         .distinct()
                         .joinToString(" | ")
                 },
-                icon = if (completedNames.isEmpty()) Icons.Default.FitnessCenter else Icons.Default.Check
+                icon = if (completedNames.isEmpty()) Icons.Default.FitnessCenter else Icons.Default.Check,
+                onClick = scheduled.firstOrNull()?.let { session ->
+                    { model.startWorkout(session.id) }
+                },
+                testTag = scheduled.firstOrNull()?.let { session ->
+                    "week-session-${session.id}"
+                }
             )
         }
         item { SectionHeading("Program") }
@@ -833,6 +1137,10 @@ private fun TrainingScreen(model: TrainingViewModel) {
             val originalDate = trainingWeek().first { it.dayOfWeek == session.weekday }
             val isToday = model.sessionsForDate(LocalDate.now()).any { it.id == session.id }
             Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("session-card-${session.id}")
+                    .clickable { model.startWorkout(session.id) },
                 shape = RoundedCornerShape(8.dp),
                 border = if (isToday) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
             ) {
@@ -1506,6 +1814,8 @@ private fun ProgressScreen(
     training: TrainingViewModel
 ) {
     var editWeight by remember { mutableStateOf(false) }
+    var selectedWorkoutId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedLegacyWorkout by rememberSaveable { mutableStateOf<String?>(null) }
     val healthConnect by app.healthConnectState.collectAsState()
     val healthPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -1517,8 +1827,45 @@ private fun ProgressScreen(
     }
     val profile = state.profile ?: return
     val estimate = state.healthEstimate ?: return
+    training.workoutHistory
+        .firstOrNull { it.id == selectedWorkoutId }
+        ?.let { workout ->
+            WorkoutDetailsScreen(
+                workout = workout,
+                exerciseLibrary = training.exerciseLibrary,
+                metric = training.usesMetricUnits,
+                onBack = { selectedWorkoutId = null },
+                onUnitChange = training::updateUsesMetricUnits,
+                onSave = training::updateWorkoutRecord,
+                onDelete = {
+                    training.deleteWorkoutRecord(workout.id)
+                    selectedWorkoutId = null
+                }
+            )
+            return
+        }
     if (editWeight) {
         WeightDialog(profile, { app.saveProfile(it); editWeight = false }, { editWeight = false })
+    }
+    selectedLegacyWorkout?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { selectedLegacyWorkout = null },
+            title = { Text("Workout details") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(entry)
+                    Text(
+                        "Detailed exercise and set data was not recorded for this older workout.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedLegacyWorkout = null }) {
+                    Text("Done")
+                }
+            }
+        )
     }
     LazyColumn(
         Modifier.fillMaxSize().padding(16.dp),
@@ -1616,12 +1963,19 @@ private fun ProgressScreen(
                     "${formatToday(workout.performedOn)} | " +
                         "${workout.completedLogicalTargets}/${workout.totalLogicalTargets} targets | " +
                         "${workout.totalVolumeKg.roundToInt()} kg volume",
-                    Icons.Default.FitnessCenter
+                    Icons.Default.FitnessCenter,
+                    onClick = { selectedWorkoutId = workout.id },
+                    testTag = "recent-workout-card"
                 )
             }
         } else {
             items(legacyHistory) { entry ->
-                ActionCard(entry, "Workout completed", Icons.Default.FitnessCenter)
+                ActionCard(
+                    entry,
+                    "Workout completed",
+                    Icons.Default.FitnessCenter,
+                    onClick = { selectedLegacyWorkout = entry }
+                )
             }
         }
         val records = training.personalRecords().take(8)
@@ -1658,6 +2012,419 @@ private fun ProgressScreen(
             )
         }
         if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
+    }
+}
+
+@Composable
+private fun WorkoutDetailsScreen(
+    workout: WorkoutRecord,
+    exerciseLibrary: List<Exercise>,
+    metric: Boolean,
+    onBack: () -> Unit,
+    onUnitChange: (Boolean) -> Unit,
+    onSave: (WorkoutRecord) -> Unit,
+    onDelete: () -> Unit
+) {
+    var editing by rememberSaveable(workout.id) { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (editing) {
+        WorkoutHistoryEditScreen(
+            workout = workout,
+            exerciseLibrary = exerciseLibrary,
+            metric = metric,
+            onUnitChange = onUnitChange,
+            onCancel = { editing = false },
+            onSave = {
+                onSave(it)
+                editing = false
+            }
+        )
+        return
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete workout?") },
+            text = {
+                Text("This permanently removes this workout and its set history.")
+            },
+            confirmButton = {
+                Button(onClick = onDelete) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+    val elapsedSeconds =
+        ((workout.finishedAtMillis - workout.startedAtMillis).coerceAtLeast(0L) / 1_000L)
+    val setsByExercise = workout.sets.groupBy(WorkoutSetLog::exerciseId)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.testTag("workout-details-back")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to progress")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Workout details",
+                        modifier = Modifier.testTag("workout-details-heading"),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(workout.sessionName, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        formatToday(workout.performedOn),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(
+                    onClick = { editing = true },
+                    modifier = Modifier.testTag("edit-workout-history")
+                ) {
+                    Icon(Icons.Default.Edit, "Edit workout")
+                }
+                IconButton(
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.testTag("delete-workout-history")
+                ) {
+                    Icon(Icons.Default.Delete, "Delete workout")
+                }
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SummaryCard(
+                    formatElapsedTime(elapsedSeconds),
+                    "duration",
+                    Modifier.weight(1f),
+                    Color(0xFFDDEFFC)
+                )
+                SummaryCard(
+                    "${workout.totalVolumeKg.roundToInt()} kg",
+                    "volume",
+                    Modifier.weight(1f),
+                    Color(0xFFE3F3E8)
+                )
+                SummaryCard(
+                    "${workout.completedLogicalTargets}/${workout.totalLogicalTargets}",
+                    "targets",
+                    Modifier.weight(1f),
+                    Color(0xFFFFE7DE)
+                )
+            }
+        }
+        item {
+            WeightUnitSelector(metric = metric, onSelected = onUnitChange)
+        }
+        item { SectionHeading("Exercises") }
+        if (setsByExercise.isEmpty()) {
+            item {
+                Text(
+                    "Detailed set data was not recorded for this workout.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        items(setsByExercise.entries.toList(), key = { it.key }) { (exerciseId, sets) ->
+            val exerciseName = sets.firstNotNullOfOrNull(WorkoutSetLog::exerciseName)
+                ?: exerciseLibrary.firstOrNull { it.id == exerciseId }?.name
+                ?: exerciseId
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Text(exerciseName, fontWeight = FontWeight.Bold)
+                    sets.sortedBy(WorkoutSetLog::setNumber).forEach { set ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Set ${set.setNumber}",
+                                modifier = Modifier.width(54.dp),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                workoutSetDescription(set, metric),
+                                modifier = Modifier.weight(1f),
+                                color = if (set.completed) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                            if (set.completed) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    "Completed",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutHistoryEditScreen(
+    workout: WorkoutRecord,
+    exerciseLibrary: List<Exercise>,
+    metric: Boolean,
+    onUnitChange: (Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onSave: (WorkoutRecord) -> Unit
+) {
+    var sessionName by rememberSaveable(workout.id) {
+        mutableStateOf(workout.sessionName)
+    }
+    var performedOn by rememberSaveable(workout.id) {
+        mutableStateOf(workout.performedOn.toString())
+    }
+    var draftSets by remember(workout.id) { mutableStateOf(workout.sets) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+    val setsByExercise = draftSets.groupBy(WorkoutSetLog::exerciseId)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .testTag("edit-workout-list"),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onCancel,
+                    modifier = Modifier.testTag("cancel-edit-workout")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cancel editing")
+                }
+                Text(
+                    "Edit workout",
+                    modifier = Modifier.weight(1f).testTag("edit-workout-heading"),
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        item {
+            WeightUnitSelector(metric = metric, onSelected = onUnitChange)
+        }
+        item {
+            OutlinedTextField(
+                value = sessionName,
+                onValueChange = { sessionName = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Workout name") },
+                singleLine = true
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = performedOn,
+                onValueChange = { performedOn = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Date (YYYY-MM-DD)") },
+                singleLine = true
+            )
+        }
+        item { SectionHeading("Exercises and sets") }
+        items(setsByExercise.entries.toList(), key = { it.key }) { (exerciseId, sets) ->
+            val exerciseName = sets.firstNotNullOfOrNull(WorkoutSetLog::exerciseName)
+                ?: exerciseLibrary.firstOrNull { it.id == exerciseId }?.name
+                ?: exerciseId
+            Card(shape = RoundedCornerShape(8.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(exerciseName, fontWeight = FontWeight.Bold)
+                    sets.sortedBy(WorkoutSetLog::setNumber).forEach { set ->
+                        WorkoutHistorySetEditorRow(
+                            set = set,
+                            metric = metric,
+                            onChange = { updated ->
+                                draftSets = draftSets.map { current ->
+                                    if (current.id == updated.id) updated else current
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        validationError?.let { error ->
+            item {
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        item {
+            Button(
+                onClick = {
+                    val date = runCatching { LocalDate.parse(performedOn) }.getOrNull()
+                    when {
+                        sessionName.isBlank() ->
+                            validationError = "Workout name is required."
+                        date == null ->
+                            validationError = "Enter a valid date as YYYY-MM-DD."
+                        else -> {
+                            validationError = null
+                            onSave(
+                                workout.copy(
+                                    sessionName = sessionName.trim(),
+                                    performedOn = date,
+                                    sets = draftSets
+                                )
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().testTag("save-workout-history")
+            ) {
+                Text("Save changes")
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutHistorySetEditorRow(
+    set: WorkoutSetLog,
+    metric: Boolean,
+    onChange: (WorkoutSetLog) -> Unit
+) {
+    var reps by remember(set.id) { mutableStateOf(set.reps?.toString().orEmpty()) }
+    var weight by remember(set.id, metric) {
+        mutableStateOf(
+            set.weightKg?.let {
+                formatMeasurementForInput(if (metric) it else it * KG_TO_POUNDS)
+            }.orEmpty()
+        )
+    }
+    var minutes by remember(set.id) {
+        mutableStateOf(
+            set.durationSeconds?.div(60.0)
+                ?.let(::formatMeasurementForInput)
+                .orEmpty()
+        )
+    }
+    var rpe by remember(set.id) {
+        mutableStateOf(set.rpe?.let(::formatMeasurementForInput).orEmpty())
+    }
+
+    fun emit() {
+        val parsedReps = reps.toIntOrNull()
+        val enteredWeight = weight.toDoubleOrNull()
+        val parsedMinutes = minutes.toDoubleOrNull()
+        val parsedRpe = rpe.toDoubleOrNull()
+        if (reps.isNotBlank() && parsedReps !in 0..1_000) return
+        if (weight.isNotBlank() && (enteredWeight == null || enteredWeight !in 0.0..2_000.0)) return
+        if (minutes.isNotBlank() && (parsedMinutes == null || parsedMinutes !in 0.0..1_440.0)) return
+        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 1.0..10.0)) return
+        onChange(
+            set.copy(
+                reps = parsedReps,
+                weightKg = enteredWeight?.let { if (metric) it else it / KG_TO_POUNDS },
+                durationSeconds = parsedMinutes?.times(60)?.roundToInt(),
+                rpe = parsedRpe
+            )
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Set ${set.setNumber}",
+                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold
+            )
+            Text("Completed")
+            Checkbox(
+                checked = set.completed,
+                onCheckedChange = { onChange(set.copy(completed = it)) }
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = reps,
+                onValueChange = { reps = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text("Reps") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = weight,
+                onValueChange = { weight = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text(if (metric) "Weight (kg)" else "Weight (lb)") },
+                singleLine = true
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = minutes,
+                onValueChange = { minutes = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text("Minutes") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = rpe,
+                onValueChange = { rpe = it; emit() },
+                modifier = Modifier.weight(1f),
+                label = { Text("RPE") },
+                singleLine = true
+            )
+        }
+    }
+}
+
+private fun workoutSetDescription(set: WorkoutSetLog, metric: Boolean): String {
+    val details = buildList {
+        when {
+            set.reps != null && set.weightKg != null ->
+                add("${set.reps} reps x ${displayWeight(set.weightKg, metric)}")
+            set.reps != null -> add("${set.reps} reps")
+            set.weightKg != null -> add(displayWeight(set.weightKg, metric))
+        }
+        set.durationSeconds?.let { add(formatElapsedTime(it.toLong())) }
+        set.rpe?.let { add("RPE ${formatMeasurementForInput(it)}") }
+    }
+    val measured = details.joinToString(" | ").ifBlank { "No measurements" }
+    return if (set.completed) measured else "$measured | Not completed"
+}
+
+private fun formatElapsedTime(totalSeconds: Long): String {
+    val safeSeconds = totalSeconds.coerceAtLeast(0L)
+    val hours = safeSeconds / 3_600L
+    val minutes = safeSeconds % 3_600L / 60L
+    val seconds = safeSeconds % 60L
+    return when {
+        hours > 0L -> "%d:%02d:%02d".format(hours, minutes, seconds)
+        else -> "%d:%02d".format(minutes, seconds)
     }
 }
 
@@ -1967,8 +2734,8 @@ private fun NotificationSettingsScreen(
                     }
                     if (waterEnabled) {
                         OutlinedTextField(interval, { interval = it.filter(Char::isDigit) }, label = { Text("Interval (minutes)") })
-                        OutlinedTextField(wakingStart, { wakingStart = it }, label = { Text("Waking start (HH:mm)") })
-                        OutlinedTextField(wakingEnd, { wakingEnd = it }, label = { Text("Waking end (HH:mm)") })
+                        OutlinedTextField(wakingStart, { wakingStart = it }, label = { Text("First reminder (HH:mm)") })
+                        OutlinedTextField(wakingEnd, { wakingEnd = it }, label = { Text("Last reminder (HH:mm)") })
                     }
                 }
             }
@@ -2047,24 +2814,106 @@ private fun parseMinute(value: String): Int? = runCatching {
 @Composable
 private fun AddSupplementDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, String) -> Unit
+    onAdd: (String, String, SupplementSchedule) -> Unit,
+    existing: Supplement? = null
 ) {
-    var name by remember { mutableStateOf("") }
-    var dose by remember { mutableStateOf("") }
+    var name by remember(existing?.id) { mutableStateOf(existing?.name.orEmpty()) }
+    var dose by remember(existing?.id) { mutableStateOf(existing?.dose.orEmpty()) }
+    var selectedDays by remember(existing?.id) {
+        mutableStateOf(
+            existing?.schedule?.selectedWeekdays()
+                ?: setOf(LocalDate.now().dayOfWeek)
+        )
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add daily supplement") },
+        title = { Text(if (existing == null) "Add supplement" else "Edit supplement") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
                 OutlinedTextField(dose, { dose = it }, label = { Text("Dose and unit") }, singleLine = true)
+                Text("Take on", fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    DayOfWeek.entries.take(4).forEach { day ->
+                        FilterChip(
+                            selected = day in selectedDays,
+                            onClick = {
+                                selectedDays = if (day in selectedDays) {
+                                    selectedDays - day
+                                } else {
+                                    selectedDays + day
+                                }
+                            },
+                            label = {
+                                Text(
+                                    day.name.take(3).lowercase()
+                                        .replaceFirstChar(Char::uppercase)
+                                )
+                            }
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    DayOfWeek.entries.drop(4).forEach { day ->
+                        FilterChip(
+                            selected = day in selectedDays,
+                            onClick = {
+                                selectedDays = if (day in selectedDays) {
+                                    selectedDays - day
+                                } else {
+                                    selectedDays + day
+                                }
+                            },
+                            label = {
+                                Text(
+                                    day.name.take(3).lowercase()
+                                        .replaceFirstChar(Char::uppercase)
+                                )
+                            }
+                        )
+                    }
+                }
+                FilterChip(
+                    selected = selectedDays.size == DayOfWeek.entries.size,
+                    onClick = {
+                        selectedDays = if (selectedDays.size == DayOfWeek.entries.size) {
+                            emptySet()
+                        } else {
+                            DayOfWeek.entries.toSet()
+                        }
+                    },
+                    label = { Text("All days") }
+                )
+                if (selectedDays.isEmpty()) {
+                    Text(
+                        "Choose at least one day.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onAdd(name.trim(), dose.trim()) },
-                enabled = name.isNotBlank() && dose.isNotBlank()
-            ) { Text("Add") }
+                onClick = {
+                    onAdd(
+                        name.trim(),
+                        dose.trim(),
+                        SupplementSchedule(
+                            type = RecurrenceType.WEEKDAYS,
+                            startDate = LocalDate.now(),
+                            weekdays = selectedDays
+                        )
+                    )
+                },
+                enabled = name.isNotBlank() && dose.isNotBlank() && selectedDays.isNotEmpty()
+            ) { Text(if (existing == null) "Add" else "Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -2218,7 +3067,7 @@ private fun WorkoutSetRow(
     onChange: (Int?, Double?, Int?, Double?, Boolean) -> Unit
 ) {
     var reps by remember(set.id) { mutableStateOf(set.reps?.toString().orEmpty()) }
-    var weight by remember(set.id) {
+    var weight by remember(set.id, metric) {
         mutableStateOf(
             set.weightKg?.let {
                 formatMeasurementForInput(if (metric) it else it * KG_TO_POUNDS)
@@ -2317,6 +3166,115 @@ private fun RestTimerBar(
             }
             TextButton(onClick = onAddTime) { Text("+30 sec") }
             TextButton(onClick = onSkip) { Text("Skip") }
+        }
+    }
+}
+
+@Composable
+private fun WeightUnitSelector(
+    metric: Boolean,
+    onSelected: (Boolean) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("Weight unit", fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = metric,
+                onClick = { onSelected(true) },
+                modifier = Modifier.testTag("weight-unit-kg"),
+                label = { Text("Kilograms (kg)") }
+            )
+            FilterChip(
+                selected = !metric,
+                onClick = { onSelected(false) },
+                modifier = Modifier.testTag("weight-unit-lb"),
+                label = { Text("Pounds (lb)") }
+            )
+        }
+    }
+}
+
+@Composable
+private fun RestTimerSettingsDialog(
+    currentSeconds: Int,
+    onSave: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var seconds by rememberSaveable(currentSeconds) {
+        mutableStateOf(currentSeconds.toString())
+    }
+    val parsed = seconds.toIntOrNull()
+    val valid = parsed in 15..600
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Default rest timer") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ChoiceRow(
+                    title = "Quick choices",
+                    values = listOf(30, 60, 90, 120, 180),
+                    selected = parsed,
+                    label = { "$it sec" },
+                    onSelected = { seconds = it.toString() }
+                )
+                OutlinedTextField(
+                    value = seconds,
+                    onValueChange = { seconds = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Seconds") },
+                    singleLine = true
+                )
+                if (!valid) {
+                    Text(
+                        "Enter a duration from 15 to 600 seconds.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
+                Text(
+                    "The timer starts after you complete a set.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { parsed?.let(onSave) },
+                enabled = valid
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Suppress("DEPRECATION")
+private fun playRestTimerFinishedFeedback(context: Context) {
+    runCatching {
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        RingtoneManager.getRingtone(context, soundUri)?.play()
+    }
+    runCatching {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(VibratorManager::class.java).defaultVibrator
+        } else {
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+        if (vibrator.hasVibrator()) {
+            vibrator.vibrate(
+                VibrationEffect.createWaveform(
+                    longArrayOf(0L, 180L, 100L, 260L),
+                    -1
+                )
+            )
         }
     }
 }
