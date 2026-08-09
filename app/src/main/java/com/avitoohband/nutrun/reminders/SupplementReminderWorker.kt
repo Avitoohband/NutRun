@@ -28,10 +28,13 @@ import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private const val SUPPLEMENT_CHANNEL = "supplements"
 private const val EXTRA_SUPPLEMENTS_SECTION = "supplements_section"
@@ -41,6 +44,88 @@ fun supplementDeliveryId(userId: String, date: LocalDate, minute: Int): String =
 
 fun isSupplementDeliveryDateValid(intended: LocalDate, current: LocalDate): Boolean =
     intended == current
+
+sealed interface SupplementReminderScheduleDecision {
+    data class Cancel(val uniqueWorkName: String) : SupplementReminderScheduleDecision
+
+    data class Enqueue(
+        val uniqueWorkName: String,
+        val userId: String,
+        val intendedDate: LocalDate,
+        val minute: Int
+    ) : SupplementReminderScheduleDecision
+}
+
+fun supplementSchedulingDecision(
+    userId: String,
+    authenticatedUserId: String?,
+    enabled: Boolean,
+    next: ZonedDateTime?
+): SupplementReminderScheduleDecision {
+    val workName = supplementReminderWorkName(userId)
+    if (userId.isBlank() || authenticatedUserId != userId || !enabled || next == null) {
+        return SupplementReminderScheduleDecision.Cancel(workName)
+    }
+    return SupplementReminderScheduleDecision.Enqueue(
+        uniqueWorkName = workName,
+        userId = userId,
+        intendedDate = next.toLocalDate(),
+        minute = next.hour * 60 + next.minute
+    )
+}
+
+sealed interface SupplementDeliveryDecision {
+    data object Cancel : SupplementDeliveryDecision
+    data object Reschedule : SupplementDeliveryDecision
+    data class Deliver(val supplements: List<com.avitoohband.nutrun.Supplement>) :
+        SupplementDeliveryDecision
+}
+
+fun supplementDeliveryDecision(
+    userId: String,
+    authenticatedUserId: String?,
+    enabled: Boolean,
+    intendedDate: LocalDate,
+    currentDate: LocalDate,
+    minute: Int,
+    supplements: List<com.avitoohband.nutrun.Supplement>
+): SupplementDeliveryDecision {
+    if (authenticatedUserId != userId || !enabled) return SupplementDeliveryDecision.Cancel
+    if (!isSupplementDeliveryDateValid(intendedDate, currentDate)) {
+        return SupplementDeliveryDecision.Reschedule
+    }
+    val due = supplementsDueForReminder(supplements, intendedDate, minute)
+    return due.takeIf(List<*>::isNotEmpty)
+        ?.let(SupplementDeliveryDecision::Deliver)
+        ?: SupplementDeliveryDecision.Reschedule
+}
+
+enum class SupplementNotificationDeliveryResult { Delivered, AlreadyDelivered, Retry }
+
+private val supplementDeliveryLocks = Array(32) { Mutex() }
+
+suspend fun deliverSupplementNotification(
+    deliveryId: String,
+    alreadyDelivered: suspend () -> Boolean,
+    postNotification: suspend () -> Unit,
+    recordDelivery: suspend () -> Boolean
+): SupplementNotificationDeliveryResult = supplementDeliveryLocks[
+    (deliveryId.hashCode() and Int.MAX_VALUE) % supplementDeliveryLocks.size
+].withLock {
+    try {
+        if (alreadyDelivered()) return@withLock SupplementNotificationDeliveryResult.AlreadyDelivered
+        postNotification()
+        if (recordDelivery()) {
+            SupplementNotificationDeliveryResult.Delivered
+        } else {
+            SupplementNotificationDeliveryResult.AlreadyDelivered
+        }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        SupplementNotificationDeliveryResult.Retry
+    }
+}
 
 class SupplementReminderWorker(
     appContext: Context,
@@ -56,21 +141,26 @@ class SupplementReminderWorker(
 
         val scheduler = SupplementReminderScheduler(applicationContext)
         try {
-            if (AppPreferences(applicationContext).currentSession().authenticatedUserId != userId) {
-                scheduler.cancel(userId)
-                return Result.success()
-            }
-
             val dao = NutRunDatabase.getInstance(applicationContext).dao()
             val settings = dao.supplementReminderSettings(userId)
                 ?: SupplementReminderSettingsEntity(userId = userId)
-            if (!settings.enabled) {
+            val authenticatedUserId = AppPreferences(applicationContext).currentSession().authenticatedUserId
+            val baseDecision = supplementDeliveryDecision(
+                userId = userId,
+                authenticatedUserId = authenticatedUserId,
+                enabled = settings.enabled,
+                intendedDate = intendedDate,
+                currentDate = LocalDate.now(settings.zone()),
+                minute = minute,
+                supplements = emptyList()
+            )
+            if (baseDecision == SupplementDeliveryDecision.Cancel) {
                 scheduler.cancel(userId)
                 return Result.success()
             }
-
-            val zone = settings.zone()
-            if (!isSupplementDeliveryDateValid(intendedDate, LocalDate.now(zone))) {
+            if (baseDecision == SupplementDeliveryDecision.Reschedule &&
+                !isSupplementDeliveryDateValid(intendedDate, LocalDate.now(settings.zone()))
+            ) {
                 scheduler.schedule(userId, settings)
                 return Result.success()
             }
@@ -79,10 +169,25 @@ class SupplementReminderWorker(
                 ?.let { decodeTrainingState(it.payloadJson, builtInExerciseCatalog()) }
                 ?.supplements
                 .orEmpty()
-            val dueSupplements = supplementsDueForReminder(supplements, intendedDate, minute)
-            if (dueSupplements.isEmpty()) {
-                scheduler.schedule(userId, settings)
-                return Result.success()
+            val deliveryDecision = supplementDeliveryDecision(
+                userId = userId,
+                authenticatedUserId = authenticatedUserId,
+                enabled = settings.enabled,
+                intendedDate = intendedDate,
+                currentDate = LocalDate.now(settings.zone()),
+                minute = minute,
+                supplements = supplements
+            )
+            val dueSupplements = when (deliveryDecision) {
+                SupplementDeliveryDecision.Cancel -> {
+                    scheduler.cancel(userId)
+                    return Result.success()
+                }
+                SupplementDeliveryDecision.Reschedule -> {
+                    scheduler.schedule(userId, settings)
+                    return Result.success()
+                }
+                is SupplementDeliveryDecision.Deliver -> deliveryDecision.supplements
             }
 
             val reminderType = "SUPPLEMENT:$minute"
@@ -92,19 +197,37 @@ class SupplementReminderWorker(
             }
 
             if (notificationsAllowed()) {
-                val delivery = ReminderDeliveryEntity(
-                    id = supplementDeliveryId(userId, intendedDate, minute),
-                    userId = userId,
-                    reminderType = reminderType,
-                    trainingDate = intendedDate.toString(),
-                    deliveredAtMillis = System.currentTimeMillis()
-                )
-                if (dao.recordReminderDelivery(delivery) != -1L) {
-                    showNotification(dueSupplements, userId, intendedDate, minute)
+                when (
+                    deliverSupplementNotification(
+                        deliveryId = supplementDeliveryId(userId, intendedDate, minute),
+                        alreadyDelivered = {
+                            dao.reminderDelivered(userId, reminderType, intendedDate.toString())
+                        },
+                        postNotification = {
+                            showNotification(dueSupplements, userId, intendedDate, minute)
+                        },
+                        recordDelivery = {
+                            dao.recordReminderDelivery(
+                                ReminderDeliveryEntity(
+                                    id = supplementDeliveryId(userId, intendedDate, minute),
+                                    userId = userId,
+                                    reminderType = reminderType,
+                                    trainingDate = intendedDate.toString(),
+                                    deliveredAtMillis = System.currentTimeMillis()
+                                )
+                            ) != -1L
+                        }
+                    )
+                ) {
+                    SupplementNotificationDeliveryResult.Retry -> return Result.retry()
+                    SupplementNotificationDeliveryResult.Delivered,
+                    SupplementNotificationDeliveryResult.AlreadyDelivered -> Unit
                 }
             }
             scheduler.schedule(userId, settings)
             return Result.success()
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             return Result.retry()
         }
@@ -166,9 +289,8 @@ class SupplementReminderScheduler @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     suspend fun schedule(userId: String, settings: SupplementReminderSettingsEntity) {
-        if (userId.isBlank() || !settings.enabled ||
-            AppPreferences(context).currentSession().authenticatedUserId != userId
-        ) {
+        val authenticatedUserId = AppPreferences(context).currentSession().authenticatedUserId
+        if (userId.isBlank() || !settings.enabled || authenticatedUserId != userId) {
             cancel(userId)
             return
         }
@@ -184,20 +306,25 @@ class SupplementReminderScheduler @Inject constructor(
             return
         }
 
-        val minute = next.hour * 60 + next.minute
+        val decision = supplementSchedulingDecision(userId, authenticatedUserId, settings.enabled, next)
+        val enqueue = decision as? SupplementReminderScheduleDecision.Enqueue
+        if (enqueue == null) {
+            cancel(userId)
+            return
+        }
         val delay = Duration.between(now, next).toMillis().coerceAtLeast(0)
         val request = OneTimeWorkRequestBuilder<SupplementReminderWorker>()
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
             .setInputData(
                 workDataOf(
-                    SupplementReminderWorker.KEY_USER_ID to userId,
-                    SupplementReminderWorker.KEY_DATE to next.toLocalDate().toString(),
-                    SupplementReminderWorker.KEY_MINUTE to minute
+                    SupplementReminderWorker.KEY_USER_ID to enqueue.userId,
+                    SupplementReminderWorker.KEY_DATE to enqueue.intendedDate.toString(),
+                    SupplementReminderWorker.KEY_MINUTE to enqueue.minute
                 )
             )
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
-            workName(userId),
+            enqueue.uniqueWorkName,
             ExistingWorkPolicy.REPLACE,
             request
         )
@@ -208,9 +335,11 @@ class SupplementReminderScheduler @Inject constructor(
     }
 
     companion object {
-        fun workName(userId: String): String = "supplement-reminder:$userId"
+        fun workName(userId: String): String = supplementReminderWorkName(userId)
     }
 }
+
+private fun supplementReminderWorkName(userId: String): String = "supplement-reminder:$userId"
 
 private fun SupplementReminderSettingsEntity.zone(): ZoneId =
     runCatching { ZoneId.of(timezoneId) }.getOrDefault(ZoneId.systemDefault())
