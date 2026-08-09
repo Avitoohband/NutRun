@@ -112,10 +112,16 @@ private fun increasedWeight(currentWeightKg: Double, usesMetricUnits: Boolean): 
 
 private fun reducedWeight(currentWeightKg: Double, usesMetricUnits: Boolean): Double =
     if (usesMetricUnits) {
-        roundToIncrement(currentWeightKg * 0.95, 2.5)
+        strictlyReducedWeight(currentWeightKg, 0.5)
     } else {
-        roundToIncrement(currentWeightKg * KG_TO_POUNDS * 0.95, 5.0) / KG_TO_POUNDS
+        strictlyReducedWeight(currentWeightKg * KG_TO_POUNDS, 1.0) / KG_TO_POUNDS
     }
 
-private fun roundToIncrement(value: Double, increment: Double): Double =
-    round(value / increment) * increment
+private fun strictlyReducedWeight(currentWeight: Double, resolution: Double): Double {
+    val exactReduction = currentWeight * 0.95
+    val roundedReduction = round(exactReduction / resolution) * resolution
+    if (roundedReduction > 0.0 && roundedReduction < currentWeight) return roundedReduction
+
+    val steppedReduction = currentWeight - resolution
+    return if (steppedReduction > 0.0) steppedReduction else exactReduction
+}

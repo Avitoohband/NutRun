@@ -71,7 +71,7 @@ class ProgressionSuggestionsTest {
 
         assertEquals(ProgressionAction.REDUCE, suggestion?.action)
         assertEquals(41.0, suggestion?.currentWeightKg ?: 0.0, 0.001)
-        assertEquals(40.0, suggestion?.suggestedWeightKg ?: 0.0, 0.001)
+        assertEquals(39.0, suggestion?.suggestedWeightKg ?: 0.0, 0.001)
     }
 
     @Test
@@ -87,6 +87,42 @@ class ProgressionSuggestionsTest {
 
         assertEquals(ProgressionAction.REDUCE, suggestion?.action)
         assertEquals(43.091275151, suggestion?.suggestedWeightKg ?: 0.0, 0.000001)
+    }
+
+    @Test
+    fun metricReductionRoundsTenKilogramsToHalfKilogramResolutionBelowTheCurrentLoad() {
+        val suggestion = reductionSuggestion(weightKg = 10.0, usesMetricUnits = true)
+
+        assertEquals(ProgressionAction.REDUCE, suggestion?.action)
+        assertEquals(9.5, suggestion?.suggestedWeightKg ?: 0.0, 0.001)
+        assertTrue((suggestion?.suggestedWeightKg ?: Double.POSITIVE_INFINITY) in 0.0..<10.0)
+    }
+
+    @Test
+    fun imperialReductionRoundsTenKilogramsToOnePoundResolutionBelowTheCurrentLoad() {
+        val suggestion = reductionSuggestion(weightKg = 10.0, usesMetricUnits = false)
+
+        assertEquals(ProgressionAction.REDUCE, suggestion?.action)
+        assertEquals(9.525439770211, suggestion?.suggestedWeightKg ?: 0.0, 0.000001)
+        assertTrue((suggestion?.suggestedWeightKg ?: Double.POSITIVE_INFINITY) in 0.0..<10.0)
+    }
+
+    @Test
+    fun metricReductionUsesExactFivePercentForSubHalfKilogramLoads() {
+        val suggestion = reductionSuggestion(weightKg = 0.25, usesMetricUnits = true)
+
+        assertEquals(ProgressionAction.REDUCE, suggestion?.action)
+        assertEquals(0.2375, suggestion?.suggestedWeightKg ?: 0.0, 0.000001)
+        assertTrue((suggestion?.suggestedWeightKg ?: Double.POSITIVE_INFINITY) in 0.0..<0.25)
+    }
+
+    @Test
+    fun imperialReductionUsesExactFivePercentForSubOnePoundLoads() {
+        val suggestion = reductionSuggestion(weightKg = 0.2, usesMetricUnits = false)
+
+        assertEquals(ProgressionAction.REDUCE, suggestion?.action)
+        assertEquals(0.19, suggestion?.suggestedWeightKg ?: 0.0, 0.000001)
+        assertTrue((suggestion?.suggestedWeightKg ?: Double.POSITIVE_INFINITY) in 0.0..<0.2)
     }
 
     @Test
@@ -170,6 +206,16 @@ class ProgressionSuggestionsTest {
         maximumReps = 12,
         weightKg = weightKg
     )
+
+    private fun reductionSuggestion(weightKg: Double, usesMetricUnits: Boolean): ProgressionSuggestion? =
+        progressionSuggestion(
+            target = weightedTarget(weightKg),
+            history = listOf(
+                attempt(finishedAtMillis = 100L, weightKg = weightKg, reps = listOf(9, 10, 10)),
+                attempt(finishedAtMillis = 200L, weightKg = weightKg, reps = listOf(9, 9, 10))
+            ),
+            usesMetricUnits = usesMetricUnits
+        )
 
     private fun attempt(
         finishedAtMillis: Long = 100L,

@@ -35,3 +35,15 @@ The engine returns typed `INCREASE`, `KEEP`, or `REDUCE` suggestions without cha
 - Confirmed no mutation operations are performed on `target` or `history`.
 - Confirmed `git diff --check` has no whitespace errors.
 - Confirmed the only implementation changes are the two Task 1 Kotlin files; this report is the requested Task 1 evidence artifact.
+
+## Fix Round 1/5: Strictly Lower Reductions
+
+The prior reduction rounding could return the current load or a heavier load when a five-percent reduction was rounded to the nearest 2.5 kg or 5 lb increment. This fix changes only reduction rounding:
+
+- Metric reductions round `current * 0.95` to the nearest 0.5 kg.
+- Imperial reductions round in pounds to the nearest 1 lb, then convert the result back to canonical kilograms.
+- A rounded result is used only when it is positive and strictly below the current load. Otherwise the engine subtracts one resolution; if that is not positive, it returns the exact positive five-percent reduction.
+
+Focused regression tests were added before the implementation change for metric and imperial 10 kg reductions plus sub-resolution light loads. The focused red run completed 15 tests with the five expected reduction failures. After the helper change, the focused suite passed 15/15. The full `./gradlew.bat testDebugUnitTest` suite also passed.
+
+The reviewer-noted one-miss `KEEP` and equal-timestamp tie-break tests remain explicitly deferred and were not added in this scope.
