@@ -6,6 +6,7 @@ import android.content.Intent
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.HydrationPlanEntity
 import com.avitoohband.nutrun.data.NutRunDatabase
+import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,15 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
                     ?: TrainingReminderSettingsEntity(userId = userId))
                     .copy(timezoneId = ZoneId.systemDefault().id)
                 TrainingReminderScheduler(context).schedule(userId, training)
+                val supplements = (dao.supplementReminderSettings(userId)
+                    ?: SupplementReminderSettingsEntity(userId = userId))
+                    .copy(
+                        id = "supplement-reminders:$userId",
+                        userId = userId,
+                        timezoneId = ZoneId.systemDefault().id
+                    )
+                dao.saveSupplementReminderSettings(supplements)
+                SupplementReminderScheduler(context).schedule(userId, supplements)
             } finally {
                 pending.finish()
             }
