@@ -1,5 +1,6 @@
 package com.avitoohband.nutrun
 
+import android.Manifest
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasTestTag
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
@@ -114,6 +116,33 @@ class ProductionFlowTest {
     }
 
     @Test
+    fun completedWalkOpensWalkHistoryDetails() {
+        enterDemo()
+        grantWalkPermissions()
+        composeRule.onNodeWithTag("bottom-nav-walk").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Start walk").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithText("Resume").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (composeRule.onAllNodesWithText("Start walk").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithText("Start walk").performClick()
+        } else {
+            composeRule.onNodeWithText("Resume").performClick()
+        }
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Finish").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Finish").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Start walk").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
+        composeRule.onNodeWithTag("walk-details-heading").assertIsDisplayed()
+        composeRule.onNodeWithText("Average pace").assertIsDisplayed()
+    }
+
+    @Test
     fun consumedNutritionRequestDoesNotReopenAfterRecreation() {
         enterDemo()
         composeRule.activityRule.scenario.onActivity { activity ->
@@ -161,5 +190,14 @@ class ProductionFlowTest {
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun grantWalkPermissions() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val packageName = instrumentation.targetContext.packageName
+        listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACTIVITY_RECOGNITION)
+            .forEach { permission ->
+                instrumentation.uiAutomation.executeShellCommand("pm grant $packageName $permission").close()
+            }
     }
 }

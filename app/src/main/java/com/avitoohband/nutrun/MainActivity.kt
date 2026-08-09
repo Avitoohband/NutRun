@@ -129,9 +129,12 @@ import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.WalkState
 import com.avitoohband.nutrun.domain.calculateHealthEstimate
 import com.avitoohband.nutrun.walk.WalkRecordingService
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.Polyline
+import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
@@ -1647,6 +1650,8 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
     val context = LocalContext.current
     val active = state.activeWalk
     val points by appViewModel.routePoints.collectAsStateWithLifecycle()
+    val selectedWalkRoutePoints by appViewModel.selectedWalkRoutePoints.collectAsStateWithLifecycle()
+    var selectedWalkId by rememberSaveable { mutableStateOf<String?>(null) }
     var permissionDenied by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -1662,6 +1667,20 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
         else permissionDenied = true
     }
 
+    selectedWalkId?.let { id ->
+        state.walks.firstOrNull { it.id == id }?.let { walk ->
+            WalkDetailsScreen(
+                walk = walk,
+                points = selectedWalkRoutePoints,
+                onBack = {
+                    selectedWalkId = null
+                    appViewModel.clearSelectedWalk()
+                }
+            )
+            return
+        }
+    }
+
     LazyColumn(
         Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1670,7 +1689,7 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
             Text("Recorded walks", fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Text("Route tracking runs only after you press Start.")
         }
-        item { RouteMap(points) }
+        item { RouteMap(points, testTag = "active-walk-route-map") }
         active?.let { walk ->
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1743,8 +1762,13 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
         items(state.walks.filter { it.state == WalkState.FINISHED.name }, key = { it.id }) { walk ->
             ActionCard(
                 title = "%.2f km".format(walk.distanceMeters / 1_000),
-                subtitle = "${walk.steps?.let { "$it steps" } ?: "Steps unavailable"} | ${walk.accumulatedDurationMillis / 60_000} min",
-                icon = Icons.AutoMirrored.Filled.DirectionsRun
+                subtitle = "${formatWalkDate(walk.startedAtMillis)} | ${formatWalkDuration(walk.accumulatedDurationMillis)}",
+                icon = Icons.AutoMirrored.Filled.DirectionsRun,
+                onClick = {
+                    selectedWalkId = walk.id
+                    appViewModel.selectCompletedWalk(walk.id)
+                },
+                testTag = "walk-history-card"
             )
         }
     }
@@ -1758,19 +1782,113 @@ private fun sendWalkAction(context: Context, action: String, userId: String?) {
 }
 
 @Composable
-private fun RouteMap(points: List<WalkPointEntity>) {
+private fun RouteMap(points: List<WalkPointEntity>, testTag: String? = null) {
+    val modifier = testTag?.let(Modifier::testTag) ?: Modifier
     Card(
-        Modifier.fillMaxWidth().height(240.dp),
+        modifier.fillMaxWidth().height(240.dp),
         shape = RoundedCornerShape(8.dp)
     ) {
         if (BuildConfig.MAPS_CONFIGURED) {
-            GoogleMap(Modifier.fillMaxSize()) {
+            val cameraPositionState = rememberCameraPositionState()
+            LaunchedEffect(points) {
+                when (points.size) {
+                    0 -> Unit
+                    1 -> cameraPositionState.move(
+                        CameraUpdateFactory.newLatLngZoom(
+                            LatLng(points.first().latitude, points.first().longitude),
+                            16f
+                        )
+                    )
+                    else -> {
+                        val bounds = LatLngBounds.Builder().apply {
+                            points.forEach { include(LatLng(it.latitude, it.longitude)) }
+                        }.build()
+                        cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 96))
+                    }
+                }
+            }
+            GoogleMap(Modifier.fillMaxSize(), cameraPositionState = cameraPositionState) {
                 if (points.size > 1) {
                     Polyline(points = points.map { LatLng(it.latitude, it.longitude) })
                 }
             }
         } else {
             RouteFallback(points)
+        }
+    }
+}
+
+@Composable
+private fun WalkDetailsScreen(
+    walk: com.avitoohband.nutrun.data.WalkSessionEntity,
+    points: List<WalkPointEntity>,
+    onBack: () -> Unit
+) {
+    val pace = averageWalkPaceMinutesPerKm(walk)?.let { minutesPerKm ->
+        val seconds = (minutesPerKm * 60).roundToInt()
+        "%d:%02d /km".format(seconds / 60, seconds % 60)
+    } ?: "Unavailable"
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.testTag("walk-details-back")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to walks")
+                }
+                Column {
+                    Text(
+                        "Walk details",
+                        modifier = Modifier.testTag("walk-details-heading"),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(formatWalkDate(walk.startedAtMillis), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        formatWalkTimeRange(walk),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        item { RouteMap(points, testTag = "walk-details-route-map") }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryCard(
+                    "%.2f".format(walk.distanceMeters / 1_000),
+                    "km",
+                    Modifier.weight(1f),
+                    Color(0xFFDDEFFC)
+                )
+                SummaryCard(
+                    formatWalkDuration(walk.accumulatedDurationMillis),
+                    "duration",
+                    Modifier.weight(1f),
+                    Color(0xFFFFE7DE)
+                )
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryCard(
+                    walk.steps?.toString() ?: "Unavailable",
+                    "steps",
+                    Modifier.weight(1f),
+                    Color(0xFFE3F3E8)
+                )
+                SummaryCard(
+                    pace,
+                    "Average pace",
+                    Modifier.weight(1f),
+                    Color(0xFFF5E5D7)
+                )
+            }
         }
     }
 }
