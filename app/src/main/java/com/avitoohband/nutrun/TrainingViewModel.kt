@@ -198,6 +198,7 @@ class TrainingViewModel @Inject constructor(
 
     fun startWorkout(sessionId: String) {
         val session = sessions.firstOrNull { it.id == sessionId } ?: return
+        if (session.exercises.isEmpty()) return
         val startedAt = System.currentTimeMillis()
         activeWorkoutSessionId = sessionId
         activeWorkoutStartedAtMillis = startedAt

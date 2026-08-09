@@ -1140,7 +1140,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                         .joinToString(" | ")
                 },
                 icon = if (completedNames.isEmpty()) Icons.Default.FitnessCenter else Icons.Default.Check,
-                onClick = scheduled.firstOrNull()?.let { session ->
+                onClick = scheduled.firstOrNull { it.exercises.isNotEmpty() }?.let { session ->
                     { model.startWorkout(session.id) }
                 },
                 testTag = scheduled.firstOrNull()?.let { session ->
@@ -1152,11 +1152,12 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         items(model.sessions, key = { it.id }) { session ->
             val originalDate = trainingWeek().first { it.dayOfWeek == session.weekday }
             val isToday = model.sessionsForDate(LocalDate.now()).any { it.id == session.id }
+            val canStart = session.exercises.isNotEmpty()
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("session-card-${session.id}")
-                    .clickable { model.startWorkout(session.id) },
+                    .clickable(enabled = canStart) { model.startWorkout(session.id) },
                 shape = RoundedCornerShape(8.dp),
                 border = if (isToday) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
             ) {
@@ -1182,10 +1183,18 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                         }
                         IconButton(
                             onClick = { model.startWorkout(session.id) },
+                            enabled = canStart,
                             modifier = Modifier.testTag("start-session-${session.id}")
                         ) {
                             Icon(Icons.Default.PlayArrow, "Start ${session.name}")
                         }
+                    }
+                    if (!canStart) {
+                        Text(
+                            "Add exercises to start",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp
+                        )
                     }
                     model.progressionSuggestions(session).forEach { (target, suggestion) ->
                         ProgressionSuggestionText(

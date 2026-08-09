@@ -345,7 +345,12 @@ fun decodeTrainingState(
         sessions = sessions,
         history = sanitizeTrainingHistory(root.optJSONArray("history")?.strings().orEmpty()),
         selectedSessionId = root.nullableString("selectedSessionId"),
-        activeWorkoutSessionId = root.nullableString("activeWorkoutSessionId"),
+        activeWorkoutSessionId = root.nullableString("activeWorkoutSessionId")
+            ?.takeIf { activeId ->
+                sessions.any { session ->
+                    session.id == activeId && session.exercises.isNotEmpty()
+                }
+            },
         isWorkoutPaused = false,
         completedExerciseIds = completed,
         suggestionDecision = SuggestionDecision.valueOf(

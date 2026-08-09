@@ -3,6 +3,7 @@ package com.avitoohband.nutrun
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
@@ -335,6 +336,25 @@ class ProductionFlowTest {
 class ProgressionSuggestionComposeTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun emptySessionRequiresExercisesBeforeItCanStart() {
+        val model = TrainingViewModel(null, null)
+        model.addSession("Regular", java.time.DayOfWeek.SUNDAY)
+        val emptySession = requireNotNull(model.selectedSession())
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("training-list").performScrollToNode(
+            hasTestTag("session-card-${emptySession.id}")
+        )
+        composeRule.onNodeWithTag("start-session-${emptySession.id}").assertIsNotEnabled()
+        composeRule.onNodeWithText("Add exercises to start").assertIsDisplayed()
+    }
 
     @Test
     fun progressionSuggestionAppearsBeforeStartAndDuringLogging() {

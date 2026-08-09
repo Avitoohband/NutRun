@@ -130,6 +130,30 @@ class DefaultTrainingProgramTest {
     }
 
     @Test
+    fun persistedEmptyWorkoutIsNotRestoredAsActive() {
+        val emptySession = TrainingSession(
+            id = "empty-session",
+            name = "Regular",
+            weekday = DayOfWeek.SUNDAY
+        )
+        val payload = encodeTrainingState(
+            supplements = defaultSupplements(),
+            sessions = listOf(emptySession),
+            history = emptyList(),
+            selectedSessionId = emptySession.id,
+            activeWorkoutSessionId = emptySession.id,
+            isWorkoutPaused = false,
+            completedExerciseIds = emptyMap(),
+            suggestionDecision = SuggestionDecision.PENDING,
+            suggestedWeightKg = 42.5
+        )
+
+        val restored = requireNotNull(decodeTrainingState(payload, catalog))
+
+        assertNull(restored.activeWorkoutSessionId)
+    }
+
+    @Test
     fun demoCredentialsAreDebugOnlyAndProfileUsesRecommendedDefaults() {
         assertTrue(canUseDemoAccount(true, " demo ", "123456"))
         assertFalse(canUseDemoAccount(false, "demo", "123456"))

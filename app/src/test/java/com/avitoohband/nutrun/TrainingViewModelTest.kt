@@ -10,6 +10,18 @@ import org.junit.Test
 
 class TrainingViewModelTest {
     @Test
+    fun emptyTrainingSessionCannotStart() {
+        val model = TrainingViewModel(null, null)
+        model.addSession("Regular", java.time.DayOfWeek.SUNDAY)
+        val emptySession = requireNotNull(model.selectedSession())
+
+        model.startWorkout(emptySession.id)
+
+        assertNull(model.activeSession())
+        assertNull(model.activeWorkoutSessionId)
+    }
+
+    @Test
     fun progressionSuggestionRecalculatesAfterFinishedWorkoutWithoutChangingTarget() {
         val (model, session, target) = weightedTargetFixture()
 
