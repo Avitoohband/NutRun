@@ -11,6 +11,7 @@ import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.WalkState
 import com.avitoohband.nutrun.sync.SyncScheduler
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -57,6 +58,10 @@ class NutRunRepository @Inject constructor(
     val trainingReminderSettings = userId.flatMapLatest { id ->
         id?.let(dao::observeTrainingReminderSettings) ?: flowOf(null)
     }.map { it ?: TrainingReminderSettingsEntity() }
+
+    val supplementReminderSettings = userId.flatMapLatest { id ->
+        id?.let(dao::observeSupplementReminderSettings) ?: flowOf(null)
+    }.map { it ?: SupplementReminderSettingsEntity() }
 
     val walks = userId.flatMapLatest { id ->
         id?.let(dao::observeWalks) ?: flowOf(emptyList())
@@ -376,6 +381,20 @@ class NutRunRepository @Inject constructor(
 
     suspend fun currentTrainingReminderSettings(): TrainingReminderSettingsEntity? =
         dao.trainingReminderSettings(requireUserId())
+
+    suspend fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity) {
+        val accountId = requireUserId()
+        dao.saveSupplementReminderSettings(
+            settings.copy(
+                id = "supplement-reminders:$accountId",
+                userId = accountId,
+                timezoneId = ZoneId.systemDefault().id
+            )
+        )
+    }
+
+    suspend fun currentSupplementReminderSettings(): SupplementReminderSettingsEntity? =
+        dao.supplementReminderSettings(requireUserId())
 
     suspend fun waterTotal(date: LocalDate = LocalDate.now()): Int =
         dao.waterTotal(requireUserId(), date.toString())

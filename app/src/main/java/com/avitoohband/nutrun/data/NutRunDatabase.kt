@@ -19,10 +19,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WalkPointEntity::class,
         TrainingStateEntity::class,
         TrainingReminderSettingsEntity::class,
+        SupplementReminderSettingsEntity::class,
         ReminderDeliveryEntity::class,
         SyncOperationEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class NutRunDatabase : RoomDatabase() {
@@ -157,6 +158,25 @@ abstract class NutRunDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS supplement_reminder_settings (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        userId TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        timezoneId TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_supplement_reminder_settings_userId " +
+                        "ON supplement_reminder_settings(userId)"
+                )
+            }
+        }
+
         @Volatile private var instance: NutRunDatabase? = null
 
         fun getInstance(context: Context): NutRunDatabase =
@@ -165,7 +185,7 @@ abstract class NutRunDatabase : RoomDatabase() {
                     context.applicationContext,
                     NutRunDatabase::class.java,
                     "nutrun.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { instance = it }
             }

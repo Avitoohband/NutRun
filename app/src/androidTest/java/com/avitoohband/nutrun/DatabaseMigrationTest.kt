@@ -147,9 +147,53 @@ class DatabaseMigrationTest {
         migrated.close()
     }
 
+    @Test
+    @Throws(IOException::class)
+    fun migrationFourToFivePreservesTrainingStateAndAddsSupplementReminderSettings() {
+        val payload = "{\"supplements\":[]}"
+        helper.createDatabase(DATABASE_NAME_V5, 4).apply {
+            insert(
+                "training_state",
+                SQLiteDatabase.CONFLICT_REPLACE,
+                ContentValues().apply {
+                    put("userId", "user")
+                    put("payloadJson", payload)
+                    put("updatedAtMillis", 1L)
+                    put("pendingSync", 0)
+                }
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME_V5,
+            5,
+            true,
+            NutRunDatabase.MIGRATION_4_5
+        )
+        assertQueryValue(
+            migrated,
+            "SELECT payloadJson FROM training_state WHERE userId = 'user'",
+            payload
+        )
+        assertQueryValue(migrated, "SELECT COUNT(*) FROM supplement_reminder_settings", 0)
+        migrated.close()
+    }
+
+    private fun assertQueryValue(database: SupportSQLiteDatabase, query: String, expected: Any) {
+        database.query(query).use { cursor ->
+            cursor.moveToFirst()
+            when (expected) {
+                is String -> assertEquals(expected, cursor.getString(0))
+                is Int -> assertEquals(expected, cursor.getInt(0))
+            }
+        }
+    }
+
     companion object {
         private const val DATABASE_NAME = "migration-test"
         private const val DATABASE_NAME_V3 = "migration-test-v3"
         private const val DATABASE_NAME_V4 = "migration-test-v4"
+        private const val DATABASE_NAME_V5 = "migration-test-v5"
     }
 }

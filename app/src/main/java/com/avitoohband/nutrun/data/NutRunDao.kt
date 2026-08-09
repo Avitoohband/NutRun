@@ -116,6 +116,15 @@ interface NutRunDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity)
 
+    @Query("SELECT * FROM supplement_reminder_settings WHERE userId = :userId LIMIT 1")
+    fun observeSupplementReminderSettings(userId: String): Flow<SupplementReminderSettingsEntity?>
+
+    @Query("SELECT * FROM supplement_reminder_settings WHERE userId = :userId LIMIT 1")
+    suspend fun supplementReminderSettings(userId: String): SupplementReminderSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity)
+
     @Query(
         "SELECT EXISTS(SELECT 1 FROM reminder_delivery WHERE userId = :userId " +
             "AND reminderType = :type AND trainingDate = :trainingDate)"
@@ -320,6 +329,7 @@ interface NutRunDao {
         clearHydration(userId)
         clearTraining(userId)
         clearTrainingReminderSettings(userId)
+        clearSupplementReminderSettings(userId)
         clearReminderDeliveries(userId)
         clearSync(userId)
     }
@@ -353,6 +363,9 @@ interface NutRunDao {
 
     @Query("DELETE FROM training_reminder_settings WHERE userId = :userId")
     suspend fun clearTrainingReminderSettings(userId: String)
+
+    @Query("DELETE FROM supplement_reminder_settings WHERE userId = :userId")
+    suspend fun clearSupplementReminderSettings(userId: String)
 
     @Query("DELETE FROM reminder_delivery WHERE userId = :userId")
     suspend fun clearReminderDeliveries(userId: String)

@@ -171,6 +171,8 @@ fun encodeTrainingState(
                     .put("name", supplement.name)
                     .put("dose", supplement.dose)
                     .putNullable("completedOn", supplement.completedOn?.toString())
+                    .put("reminderEnabled", supplement.reminderEnabled)
+                    .put("reminderMinute", supplement.reminderMinute)
                     .put("scheduleType", supplement.schedule.type.name)
                     .put("startDate", supplement.schedule.startDate.toString())
                     .put("intervalDays", supplement.schedule.intervalDays)
@@ -276,7 +278,10 @@ fun decodeTrainingState(
                     ?.toSet()
                     .orEmpty()
             ),
-            completedOn = item.nullableString("completedOn")?.let(LocalDate::parse)
+            completedOn = item.nullableString("completedOn")?.let(LocalDate::parse),
+            reminderEnabled = item.optBoolean("reminderEnabled", false),
+            reminderMinute = item.optInt("reminderMinute", 8 * 60).takeIf { it in 0 until 24 * 60 }
+                ?: 8 * 60
         )
     }
     val sessions = root.getJSONArray("sessions").objects().map { item ->

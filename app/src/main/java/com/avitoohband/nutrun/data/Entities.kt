@@ -3,6 +3,7 @@ package com.avitoohband.nutrun.data
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.time.ZoneId
 
 @Entity(tableName = "user_profile", indices = [Index("userId")])
 data class UserProfileEntity(
@@ -92,6 +93,17 @@ data class TrainingReminderSettingsEntity(
     val previousDayMinute: Int = 20 * 60,
     val sameDayMinute: Int = 8 * 60,
     val timezoneId: String = java.time.ZoneId.systemDefault().id
+)
+
+@Entity(
+    tableName = "supplement_reminder_settings",
+    indices = [Index("userId", unique = true)]
+)
+data class SupplementReminderSettingsEntity(
+    @PrimaryKey val id: String = "",
+    val userId: String = "",
+    val enabled: Boolean = false,
+    val timezoneId: String = ZoneId.systemDefault().id
 )
 
 @Entity(
