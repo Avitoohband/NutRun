@@ -52,6 +52,7 @@ class AppPreferences @Inject constructor(
         fun trialStartedAt(userId: String) = longPreferencesKey("account_${userId}_trial_started_at")
         fun subscriber(userId: String) = booleanPreferencesKey("account_${userId}_subscriber")
         fun reminderRecoverySystems(userId: String) = stringPreferencesKey("account_${userId}_reminder_recovery")
+        fun reminderRecoveryClosing(userId: String) = booleanPreferencesKey("account_${userId}_reminder_recovery_closing")
     }
 
     val session: Flow<SessionPreferences> = context.dataStore.data.map { values ->
@@ -100,25 +101,51 @@ class AppPreferences @Inject constructor(
         ?.toSet()
         .orEmpty()
 
-    suspend fun mergeReminderRecoverySystems(userId: String, systems: Set<String>) {
+    suspend fun mergeReminderRecoverySystems(userId: String, systems: Set<String>): Boolean {
+        var replaceFinishingWork = false
         context.dataStore.edit { values ->
+            replaceFinishingWork = values[Keys.reminderRecoveryClosing(userId)] == true
             val merged = reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) + systems
             values[Keys.reminderRecoverySystems(userId)] = merged.sorted().joinToString(",")
         }
+        return replaceFinishingWork
     }
+
+    suspend fun beginReminderRecoveryAttempt(userId: String) {
+        context.dataStore.edit { it[Keys.reminderRecoveryClosing(userId)] = false }
+    }
+
+    data class ReminderRecoveryCompletion(
+        val pendingSystems: Set<String>,
+        val retryCurrentWork: Boolean,
+        val handoffSystems: Set<String>,
+        val exhaustedFailure: Boolean
+    )
 
     suspend fun completeReminderRecoveryAttempt(
         userId: String,
         attempted: Set<String>,
-        stillFailing: Set<String>
-    ): Set<String> {
-        var updated = emptySet<String>()
+        stillFailing: Set<String>,
+        exhausted: Boolean
+    ): ReminderRecoveryCompletion {
+        var completion = ReminderRecoveryCompletion(emptySet(), false, emptySet(), false)
         context.dataStore.edit { values ->
-            updated = (reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) - attempted) + stillFailing
-            if (updated.isEmpty()) values.remove(Keys.reminderRecoverySystems(userId))
-            else values[Keys.reminderRecoverySystems(userId)] = updated.sorted().joinToString(",")
+            val unresolved =
+                (reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) - attempted) + stillFailing
+            val pending = if (exhausted) unresolved - attempted else unresolved
+            val retryCurrentWork = !exhausted && pending.isNotEmpty()
+            val handoffSystems = if (exhausted) pending else emptySet()
+            completion = ReminderRecoveryCompletion(
+                pendingSystems = pending,
+                retryCurrentWork = retryCurrentWork,
+                handoffSystems = handoffSystems,
+                exhaustedFailure = exhausted && stillFailing.any { it in attempted }
+            )
+            if (pending.isEmpty()) values.remove(Keys.reminderRecoverySystems(userId))
+            else values[Keys.reminderRecoverySystems(userId)] = pending.sorted().joinToString(",")
+            values[Keys.reminderRecoveryClosing(userId)] = !retryCurrentWork
         }
-        return updated
+        return completion
     }
 
     suspend fun clearAccount(userId: String) {
@@ -127,6 +154,7 @@ class AppPreferences @Inject constructor(
             values.remove(Keys.trialStartedAt(userId))
             values.remove(Keys.subscriber(userId))
             values.remove(Keys.reminderRecoverySystems(userId))
+            values.remove(Keys.reminderRecoveryClosing(userId))
             if (values[Keys.currentUserId] == userId) values.remove(Keys.currentUserId)
         }
     }

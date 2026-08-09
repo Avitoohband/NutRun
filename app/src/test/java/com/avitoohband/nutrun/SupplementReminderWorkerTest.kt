@@ -11,6 +11,7 @@ import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverDispatcher
 import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiver
 import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverRuntime
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
+import com.avitoohband.nutrun.reminders.ReminderRecoveryAction
 import com.avitoohband.nutrun.reminders.ReminderRescheduleUserSchedulers
 import com.avitoohband.nutrun.reminders.ReminderRescheduleUserStore
 import com.avitoohband.nutrun.reminders.ReminderSystem
@@ -28,6 +29,7 @@ import com.avitoohband.nutrun.reminders.isSupplementDeliveryDateValid
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystems
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsForUser
 import com.avitoohband.nutrun.reminders.runReminderRecoveryAttempt
+import com.avitoohband.nutrun.reminders.executeReminderRecoveryAttempt
 import com.avitoohband.nutrun.reminders.supplementDeliveryId
 import com.avitoohband.nutrun.reminders.supplementDeliveryDecision
 import com.avitoohband.nutrun.reminders.supplementSchedulingDecision
@@ -329,7 +331,8 @@ class SupplementReminderWorkerTest {
         state.completeAttempt(
             "user",
             attempted = setOf(ReminderSystem.HYDRATION),
-            stillFailing = emptySet()
+            stillFailing = emptySet(),
+            exhausted = false
         )
 
         assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
@@ -397,6 +400,58 @@ class SupplementReminderWorkerTest {
             com.avitoohband.nutrun.reminders.ReminderRecoveryResult.Retry,
             recoveryWorkResult(attempt = 0, requiresRecovery = outcome.requiresRecovery)
         )
+    }
+
+    @Test
+    fun mergeAfterCompletionCaptureReplacesFinishingChainWithLiveContinuation() = runBlocking {
+        val state = FakeRecoveryStateStore()
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
+        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+        state.afterComplete = { scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS)) }
+
+        val attempt = executeReminderRecoveryAttempt("user", state, attempt = 0) {
+            ReminderRescheduleOutcome.Complete
+        }
+
+        assertEquals(ReminderRecoveryAction.Success, attempt.action)
+        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
+        assertEquals(setOf("reminder-reschedule-recovery:user"), enqueuer.enqueued.map { it.name }.toSet())
+        assertEquals(ExistingWorkPolicy.REPLACE, enqueuer.enqueued.last().policy)
+        assertEquals("reminder-reschedule-recovery:user", enqueuer.enqueued.last().name)
+    }
+
+    @Test
+    fun finalAttemptHandsOffOnlyNewUnattemptedFailures() = runBlocking {
+        val state = FakeRecoveryStateStore()
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
+        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+
+        val attempt = executeReminderRecoveryAttempt("user", state, attempt = 2) { systems ->
+            assertEquals(setOf(ReminderSystem.HYDRATION), systems)
+            scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+            ReminderRescheduleOutcome(setOf(ReminderSystem.HYDRATION))
+        }
+
+        val handoff = attempt.action as ReminderRecoveryAction.Handoff
+        assertEquals(ReminderRecoveryAction.Handoff(setOf(ReminderSystem.SUPPLEMENTS)), handoff)
+        scheduler.schedule("user", handoff.systems)
+        assertEquals(ExistingWorkPolicy.REPLACE, enqueuer.enqueued.last().policy)
+        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
+    }
+
+    @Test
+    fun finalAttemptStopsAlreadyExhaustedFailureWithoutContinuation() = runBlocking {
+        val state = FakeRecoveryStateStore()
+        state.merge("user", setOf(ReminderSystem.HYDRATION))
+
+        val attempt = executeReminderRecoveryAttempt("user", state, attempt = 2) {
+            ReminderRescheduleOutcome(setOf(ReminderSystem.HYDRATION))
+        }
+
+        assertEquals(ReminderRecoveryAction.Failure, attempt.action)
+        assertTrue(state.current("user").isEmpty())
     }
 
     @Test
@@ -563,17 +618,33 @@ class SupplementReminderWorkerTest {
 
     private class FakeRecoveryStateStore : com.avitoohband.nutrun.reminders.ReminderRecoveryStateStore {
         private val values = mutableMapOf<String, Set<ReminderSystem>>()
+        private val closing = mutableSetOf<String>()
+        var afterComplete: (suspend () -> Unit)? = null
         override suspend fun current(userId: String): Set<ReminderSystem> = values[userId].orEmpty()
-        override suspend fun merge(userId: String, systems: Set<ReminderSystem>) {
+        override suspend fun merge(userId: String, systems: Set<ReminderSystem>): ExistingWorkPolicy {
             values[userId] = values[userId].orEmpty() + systems
+            return if (userId in closing) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+        }
+        override suspend fun beginAttempt(userId: String) {
+            closing -= userId
         }
         override suspend fun completeAttempt(
             userId: String,
             attempted: Set<ReminderSystem>,
-            stillFailing: Set<ReminderSystem>
-        ): Set<ReminderSystem> {
-            values[userId] = (values[userId].orEmpty() - attempted) + stillFailing
-            return values[userId].orEmpty()
+            stillFailing: Set<ReminderSystem>,
+            exhausted: Boolean
+        ): com.avitoohband.nutrun.reminders.ReminderRecoveryCompletion {
+            val unresolved = (values[userId].orEmpty() - attempted) + stillFailing
+            val pending = if (exhausted) unresolved - attempted else unresolved
+            values[userId] = pending
+            if (pending.isEmpty() || exhausted) closing += userId
+            afterComplete?.invoke()
+            return com.avitoohband.nutrun.reminders.ReminderRecoveryCompletion(
+                pendingSystems = pending,
+                retryCurrentWork = !exhausted && pending.isNotEmpty(),
+                handoffSystems = if (exhausted) pending else emptySet(),
+                exhaustedFailure = exhausted && stillFailing.any { it in attempted }
+            )
         }
     }
 
