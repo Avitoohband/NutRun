@@ -878,7 +878,7 @@ private fun SupplementsScreen(
 }
 
 @Composable
-private fun TrainingScreen(model: TrainingViewModel) {
+internal fun TrainingScreen(model: TrainingViewModel) {
     var addSession by remember { mutableStateOf(false) }
     var editSessionId by remember { mutableStateOf<String?>(null) }
     var editRestTimer by remember { mutableStateOf(false) }
@@ -1028,6 +1028,14 @@ private fun TrainingScreen(model: TrainingViewModel) {
                     ) {
                         Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
                         Text(target.summary(model.usesMetricUnits))
+                        model.progressionSuggestion(target)?.let { suggestion ->
+                            ProgressionSuggestionText(
+                                target = target,
+                                suggestion = suggestion,
+                                usesMetricUnits = model.usesMetricUnits,
+                                testTag = "active-progression-${target.id}"
+                            )
+                        }
                         target.intensityGuidance?.let {
                             Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                         }
@@ -1177,6 +1185,14 @@ private fun TrainingScreen(model: TrainingViewModel) {
                             Icon(Icons.Default.PlayArrow, "Start ${session.name}")
                         }
                     }
+                    model.progressionSuggestions(session).forEach { (target, suggestion) ->
+                        ProgressionSuggestionText(
+                            target = target,
+                            suggestion = suggestion,
+                            usesMetricUnits = model.usesMetricUnits,
+                            testTag = "program-progression-${target.id}"
+                        )
+                    }
                     TextButton(onClick = {
                         model.selectSession(session.id)
                         editSessionId = session.id
@@ -1202,6 +1218,28 @@ private fun TrainingScreen(model: TrainingViewModel) {
             }
         }
     }
+}
+
+@Composable
+private fun ProgressionSuggestionText(
+    target: ExerciseTarget,
+    suggestion: ProgressionSuggestion,
+    usesMetricUnits: Boolean,
+    testTag: String
+) {
+    val action = when (suggestion.action) {
+        ProgressionAction.INCREASE -> "Increase to"
+        ProgressionAction.KEEP -> "Keep"
+        ProgressionAction.REDUCE -> "Reduce to"
+    }
+    Text(
+        text = "${target.exercise.name}: $action " +
+            displayWeight(suggestion.suggestedWeightKg, usesMetricUnits),
+        modifier = Modifier.testTag(testTag),
+        color = MaterialTheme.colorScheme.primary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

@@ -1,11 +1,14 @@
 package com.avitoohband.nutrun
 
 import android.Manifest
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -207,5 +210,62 @@ class ProductionFlowTest {
             .forEach { permission ->
                 instrumentation.uiAutomation.executeShellCommand("pm grant $packageName $permission").close()
             }
+    }
+}
+
+class ProgressionSuggestionComposeTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun progressionSuggestionAppearsBeforeStartAndDuringLogging() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val originalTarget = session.exercises.first()
+        model.selectSession(session.id)
+        model.updateSelectedExercise(
+            targetId = originalTarget.id,
+            sets = originalTarget.sets,
+            reps = originalTarget.reps,
+            weightKg = 60.0,
+            durationMinutes = originalTarget.durationMinutes,
+            distanceKm = originalTarget.distanceKm
+        )
+        val updatedSession = requireNotNull(model.selectedSession())
+        val target = updatedSession.exercises.first { it.id == originalTarget.id }
+        model.startWorkout(updatedSession.id)
+        repeat(target.sets) { index ->
+            model.updateWorkoutSet(
+                targetId = target.id,
+                setNumber = index + 1,
+                reps = requireNotNull(target.maximumReps),
+                weightKg = 60.0,
+                durationSeconds = null,
+                rpe = 8.0,
+                completed = true
+            )
+        }
+        model.finishWorkout()
+        model.dismissWorkoutSummary()
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        val programTag = "program-progression-${target.id}"
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag(programTag))
+        composeRule.onNodeWithTag(programTag)
+            .assertIsDisplayed()
+            .assertTextContains("Increase to 62.5 kg")
+
+        composeRule.onNodeWithTag("start-session-${updatedSession.id}").performClick()
+
+        val activeTag = "active-progression-${target.id}"
+        composeRule.onNodeWithTag(activeTag)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextContains("Increase to 62.5 kg")
     }
 }
