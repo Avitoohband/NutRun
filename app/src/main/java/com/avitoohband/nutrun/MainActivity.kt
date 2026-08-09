@@ -102,6 +102,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -1800,7 +1802,9 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
         items(state.walks.filter { it.state == WalkState.FINISHED.name }, key = { it.id }) { walk ->
             ActionCard(
                 title = "%.2f km".format(walk.distanceMeters / 1_000),
-                subtitle = "${formatWalkDate(walk.startedAtMillis)} | ${formatWalkDuration(walk.accumulatedDurationMillis)}",
+                subtitle = "${formatWalkDate(walk.startedAtMillis)} | " +
+                    "${formatWalkDuration(walk.accumulatedDurationMillis)} | " +
+                    formatWalkStepSummary(walk.steps),
                 icon = Icons.AutoMirrored.Filled.DirectionsRun,
                 onClick = { appViewModel.selectCompletedWalk(walk.id) },
                 testTag = "walk-history-card"
@@ -1818,7 +1822,13 @@ private fun sendWalkAction(context: Context, action: String, userId: String?) {
 
 @Composable
 private fun RouteMap(points: List<WalkPointEntity>, testTag: String? = null) {
-    val modifier = testTag?.let(Modifier::testTag) ?: Modifier
+    val modifier = (testTag?.let(Modifier::testTag) ?: Modifier).semantics {
+        contentDescription = if (points.size > 1) {
+            "Saved route with ${points.size} points"
+        } else {
+            "No saved route"
+        }
+    }
     Card(
         modifier.fillMaxWidth().height(240.dp),
         shape = RoundedCornerShape(8.dp)

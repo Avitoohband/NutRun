@@ -47,6 +47,12 @@ class WalkPresentationTest {
     }
 
     @Test
+    fun walkStepSummaryDistinguishesRecordedAndUnavailableSteps() {
+        assertEquals("4500 steps", formatWalkStepSummary(4_500L))
+        assertEquals("Steps unavailable", formatWalkStepSummary(null))
+    }
+
+    @Test
     fun averageWalkPaceUsesMinutesPerKilometer() {
         assertEquals(15.0, averageWalkPaceMinutesPerKm(walk)!!, 0.001)
         assertNull(averageWalkPaceMinutesPerKm(walk.copy(distanceMeters = 0.0)))

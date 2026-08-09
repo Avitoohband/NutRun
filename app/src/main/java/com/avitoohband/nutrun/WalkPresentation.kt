@@ -38,6 +38,9 @@ fun formatWalkDuration(durationMillis: Long): String {
     }
 }
 
+fun formatWalkStepSummary(steps: Long?): String =
+    steps?.let { "$it steps" } ?: "Steps unavailable"
+
 fun averageWalkPaceMinutesPerKm(walk: WalkSessionEntity): Double? =
     (walk.distanceMeters / 1_000.0).takeIf { it > 0.0 }
         ?.let { distanceKm -> walk.accumulatedDurationMillis / 60_000.0 / distanceKm }
