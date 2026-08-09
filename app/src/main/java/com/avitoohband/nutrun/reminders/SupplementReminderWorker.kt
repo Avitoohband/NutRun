@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -100,7 +101,46 @@ fun supplementDeliveryDecision(
         ?: SupplementDeliveryDecision.Reschedule
 }
 
-enum class SupplementNotificationDeliveryResult { Delivered, AlreadyDelivered, Retry }
+enum class SupplementNotificationDeliveryResult { Delivered, AlreadyDelivered, Retry, FinalizePending }
+
+enum class SupplementDeliveryClaim { Available, Acquired, Pending, Delivered }
+
+data class SupplementDeliveryClaimRequest(
+    val id: String,
+    val userId: String,
+    val reminderType: String,
+    val trainingDate: String
+)
+
+interface SupplementDeliveryStore {
+    suspend fun acquire(claim: SupplementDeliveryClaimRequest, nowMillis: Long): SupplementDeliveryClaim
+    suspend fun finalize(claimId: String, deliveredAtMillis: Long): Boolean
+    suspend fun release(claimId: String)
+}
+
+suspend fun claimedSupplementDelivery(
+    store: SupplementDeliveryStore,
+    claim: SupplementDeliveryClaimRequest,
+    nowMillis: Long,
+    postNotification: suspend () -> Unit
+): SupplementNotificationDeliveryResult = when (store.acquire(claim, nowMillis)) {
+    SupplementDeliveryClaim.Delivered,
+    SupplementDeliveryClaim.Pending -> SupplementNotificationDeliveryResult.AlreadyDelivered
+    SupplementDeliveryClaim.Available -> SupplementNotificationDeliveryResult.Retry
+    SupplementDeliveryClaim.Acquired -> try {
+        postNotification()
+        if (store.finalize(claim.id, nowMillis)) {
+            SupplementNotificationDeliveryResult.Delivered
+        } else {
+            SupplementNotificationDeliveryResult.FinalizePending
+        }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        store.release(claim.id)
+        SupplementNotificationDeliveryResult.Retry
+    }
+}
 
 private val supplementDeliveryLocks = Array(32) { Mutex() }
 
@@ -198,30 +238,22 @@ class SupplementReminderWorker(
 
             if (notificationsAllowed()) {
                 when (
-                    deliverSupplementNotification(
-                        deliveryId = supplementDeliveryId(userId, intendedDate, minute),
-                        alreadyDelivered = {
-                            dao.reminderDelivered(userId, reminderType, intendedDate.toString())
-                        },
-                        postNotification = {
-                            showNotification(dueSupplements, userId, intendedDate, minute)
-                        },
-                        recordDelivery = {
-                            dao.recordReminderDelivery(
-                                ReminderDeliveryEntity(
-                                    id = supplementDeliveryId(userId, intendedDate, minute),
-                                    userId = userId,
-                                    reminderType = reminderType,
-                                    trainingDate = intendedDate.toString(),
-                                    deliveredAtMillis = System.currentTimeMillis()
-                                )
-                            ) != -1L
-                        }
+                    claimedSupplementDelivery(
+                        store = RoomSupplementDeliveryStore(dao),
+                        claim = SupplementDeliveryClaimRequest(
+                            id = supplementDeliveryId(userId, intendedDate, minute),
+                            userId = userId,
+                            reminderType = reminderType,
+                            trainingDate = intendedDate.toString()
+                        ),
+                        nowMillis = System.currentTimeMillis(),
+                        postNotification = { showNotification(dueSupplements, userId, intendedDate, minute) }
                     )
                 ) {
                     SupplementNotificationDeliveryResult.Retry -> return Result.retry()
                     SupplementNotificationDeliveryResult.Delivered,
-                    SupplementNotificationDeliveryResult.AlreadyDelivered -> Unit
+                    SupplementNotificationDeliveryResult.AlreadyDelivered,
+                    SupplementNotificationDeliveryResult.FinalizePending -> Unit
                 }
             }
             scheduler.schedule(userId, settings)
@@ -284,23 +316,60 @@ class SupplementReminderWorker(
     }
 }
 
+interface ReminderWorkEnqueuer {
+    fun enqueue(name: String, policy: ExistingWorkPolicy, request: OneTimeWorkRequest)
+    fun cancel(name: String)
+}
+
+class WorkManagerReminderWorkEnqueuer(context: Context) : ReminderWorkEnqueuer {
+    private val manager = WorkManager.getInstance(context)
+
+    override fun enqueue(name: String, policy: ExistingWorkPolicy, request: OneTimeWorkRequest) {
+        manager.enqueueUniqueWork(name, policy, request)
+    }
+
+    override fun cancel(name: String) {
+        manager.cancelUniqueWork(name)
+    }
+}
+
+interface SupplementReminderSchedulerStore {
+    suspend fun authenticatedUserId(): String?
+    suspend fun supplements(userId: String): List<com.avitoohband.nutrun.Supplement>
+}
+
 @Singleton
-class SupplementReminderScheduler @Inject constructor(
-    @ApplicationContext private val context: Context
+class SupplementReminderScheduler(
+    private val store: SupplementReminderSchedulerStore,
+    private val enqueuer: ReminderWorkEnqueuer,
+    private val now: (ZoneId) -> ZonedDateTime
 ) {
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(
+        store = object : SupplementReminderSchedulerStore {
+            override suspend fun authenticatedUserId(): String? =
+                AppPreferences(context).currentSession().authenticatedUserId
+
+            override suspend fun supplements(userId: String): List<com.avitoohband.nutrun.Supplement> =
+                NutRunDatabase.getInstance(context).dao().observeTrainingState(userId).first()
+                    ?.let { decodeTrainingState(it.payloadJson, builtInExerciseCatalog()) }
+                    ?.supplements
+                    .orEmpty()
+        },
+        enqueuer = WorkManagerReminderWorkEnqueuer(context),
+        now = ZonedDateTime::now
+    )
+
     suspend fun schedule(userId: String, settings: SupplementReminderSettingsEntity) {
-        val authenticatedUserId = AppPreferences(context).currentSession().authenticatedUserId
+        val authenticatedUserId = store.authenticatedUserId()
         if (userId.isBlank() || !settings.enabled || authenticatedUserId != userId) {
             cancel(userId)
             return
         }
 
-        val supplements = NutRunDatabase.getInstance(context).dao().observeTrainingState(userId).first()
-            ?.let { decodeTrainingState(it.payloadJson, builtInExerciseCatalog()) }
-            ?.supplements
-            .orEmpty()
-        val now = ZonedDateTime.now(settings.zone())
-        val next = nextSupplementReminder(supplements, now)
+        val supplements = store.supplements(userId)
+        val current = now(settings.zone())
+        val next = nextSupplementReminder(supplements, current)
         if (next == null) {
             cancel(userId)
             return
@@ -312,7 +381,7 @@ class SupplementReminderScheduler @Inject constructor(
             cancel(userId)
             return
         }
-        val delay = Duration.between(now, next).toMillis().coerceAtLeast(0)
+        val delay = Duration.between(current, next).toMillis().coerceAtLeast(0)
         val request = OneTimeWorkRequestBuilder<SupplementReminderWorker>()
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
             .setInputData(
@@ -323,21 +392,46 @@ class SupplementReminderScheduler @Inject constructor(
                 )
             )
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            enqueue.uniqueWorkName,
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
+        enqueuer.enqueue(enqueue.uniqueWorkName, ExistingWorkPolicy.REPLACE, request)
     }
 
     fun cancel(userId: String) {
-        if (userId.isNotBlank()) WorkManager.getInstance(context).cancelUniqueWork(workName(userId))
+        if (userId.isNotBlank()) enqueuer.cancel(workName(userId))
     }
 
     companion object {
         fun workName(userId: String): String = supplementReminderWorkName(userId)
     }
 }
+
+private class RoomSupplementDeliveryStore(
+    private val dao: com.avitoohband.nutrun.data.NutRunDao
+) : SupplementDeliveryStore {
+    override suspend fun acquire(
+        claim: SupplementDeliveryClaimRequest,
+        nowMillis: Long
+    ): SupplementDeliveryClaim = dao.acquireSupplementDeliveryClaim(
+        ReminderDeliveryEntity(
+            id = claim.id,
+            userId = claim.userId,
+            reminderType = claim.reminderType,
+            trainingDate = claim.trainingDate,
+            deliveredAtMillis = 0,
+            state = ReminderDeliveryEntity.STATE_PENDING,
+            claimedAtMillis = nowMillis
+        ),
+        nowMillis - CLAIM_LEASE_MILLIS
+    ).let(SupplementDeliveryClaim::valueOf)
+
+    override suspend fun finalize(claimId: String, deliveredAtMillis: Long): Boolean =
+        dao.finalizeReminderDelivery(claimId, deliveredAtMillis) == 1
+
+    override suspend fun release(claimId: String) {
+        dao.releaseReminderDeliveryClaim(claimId)
+    }
+}
+
+private const val CLAIM_LEASE_MILLIS = 15 * 60_000L
 
 private fun supplementReminderWorkName(userId: String): String = "supplement-reminder:$userId"
 

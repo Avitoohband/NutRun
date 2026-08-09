@@ -1,19 +1,32 @@
 package com.avitoohband.nutrun
 
+import androidx.work.BackoffPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
 import com.avitoohband.nutrun.reminders.ReminderRescheduleOutcome
+import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
+import com.avitoohband.nutrun.reminders.ReminderSystem
+import com.avitoohband.nutrun.reminders.ReminderWorkEnqueuer
+import com.avitoohband.nutrun.reminders.SupplementDeliveryClaim
 import com.avitoohband.nutrun.reminders.SupplementDeliveryDecision
+import com.avitoohband.nutrun.reminders.SupplementDeliveryStore
 import com.avitoohband.nutrun.reminders.SupplementNotificationDeliveryResult
+import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
+import com.avitoohband.nutrun.reminders.SupplementReminderSchedulerStore
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduleDecision
+import com.avitoohband.nutrun.reminders.claimedSupplementDelivery
 import com.avitoohband.nutrun.reminders.deliverSupplementNotification
 import com.avitoohband.nutrun.reminders.isSupplementDeliveryDateValid
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystems
 import com.avitoohband.nutrun.reminders.supplementDeliveryId
 import com.avitoohband.nutrun.reminders.supplementDeliveryDecision
 import com.avitoohband.nutrun.reminders.supplementSchedulingDecision
+import com.avitoohband.nutrun.reminders.recoveryWorkResult
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -157,7 +170,7 @@ class SupplementReminderWorkerTest {
             supplements = { calls += "supplements" }
         )
 
-        assertEquals(ReminderRescheduleOutcome.Failed, outcome)
+        assertEquals(ReminderRescheduleOutcome(setOf(ReminderSystem.HYDRATION)), outcome)
         assertTrue(outcome.requiresRecovery)
         assertEquals(listOf("training", "supplements"), calls)
     }
@@ -173,6 +186,114 @@ class SupplementReminderWorkerTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun schedulerEnqueuesActualReplaceWorkRequestWithExpectedInputs() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = SupplementReminderScheduler(
+            store = FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))),
+            enqueuer = enqueuer,
+            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        )
+
+        scheduler.schedule("user", enabledSettings())
+
+        assertEquals(1, enqueuer.enqueued.size)
+        val work = enqueuer.enqueued.single()
+        assertEquals("supplement-reminder:user", work.name)
+        assertEquals(ExistingWorkPolicy.REPLACE, work.policy)
+        assertEquals("user", work.request.workSpec.input.getString("user_id"))
+        assertEquals("2026-08-10", work.request.workSpec.input.getString("date"))
+        assertEquals(480, work.request.workSpec.input.getInt("minute", -1))
+    }
+
+    @Test
+    fun actualSchedulerCancelsDisabledNoEligibleAndSignedOutWork() = runBlocking {
+        val scenarios = listOf(
+            FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))) to enabledSettings(false),
+            FakeSchedulerStore("user", emptyList()) to enabledSettings(),
+            FakeSchedulerStore(null, listOf(dailySupplement("Vitamin D", 480))) to enabledSettings()
+        )
+
+        scenarios.forEach { (store, settings) ->
+            val enqueuer = RecordingWorkEnqueuer()
+            SupplementReminderScheduler(
+                store = store,
+                enqueuer = enqueuer,
+                now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+            ).schedule("user", settings)
+            assertEquals(listOf("supplement-reminder:user"), enqueuer.cancelled)
+            assertTrue(enqueuer.enqueued.isEmpty())
+        }
+    }
+
+    @Test
+    fun claimedDeliveryReleasesPendingClaimAfterPostFailure() = runBlocking {
+        val store = FakeDeliveryStore()
+
+        val result = claimedSupplementDelivery(
+            store = store,
+            claim = claim(),
+            nowMillis = 1_000,
+            postNotification = { throw IllegalStateException("post failed") }
+        )
+
+        assertEquals(SupplementNotificationDeliveryResult.Retry, result)
+        assertEquals(1, store.releaseCalls)
+        assertEquals(SupplementDeliveryClaim.Acquired, store.acquire(claim(), 2_000))
+    }
+
+    @Test
+    fun claimedDeliveryDoesNotRepostWhenFinalizeFails() = runBlocking {
+        val store = FakeDeliveryStore(finalizeSucceeds = false)
+        var posts = 0
+
+        val result = claimedSupplementDelivery(store, claim(), 1_000) { posts += 1 }
+
+        assertEquals(SupplementNotificationDeliveryResult.FinalizePending, result)
+        assertEquals(1, posts)
+        assertEquals(SupplementDeliveryClaim.Pending, store.acquire(claim(), 1_001))
+    }
+
+    @Test
+    fun pendingClaimSuppressesConcurrentDeliveryAndExpiresForRetry() = runBlocking {
+        val store = FakeDeliveryStore()
+        assertEquals(SupplementDeliveryClaim.Acquired, store.acquire(claim(), 1_000))
+
+        assertEquals(SupplementDeliveryClaim.Pending, store.acquire(claim(), 1_001))
+        assertEquals(SupplementDeliveryClaim.Acquired, store.acquire(claim(), 1_000 + 15 * 60_000))
+    }
+
+    @Test
+    fun finalizedClaimSuppressesFutureDelivery() = runBlocking {
+        val store = FakeDeliveryStore()
+        assertEquals(SupplementNotificationDeliveryResult.Delivered, claimedSupplementDelivery(store, claim(), 1_000) {})
+
+        assertEquals(SupplementDeliveryClaim.Delivered, store.acquire(claim(), 2_000))
+    }
+
+    @Test
+    fun recoverySchedulerKeepsUniqueExponentialBackoffWork() {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+
+        scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+
+        val work = enqueuer.enqueued.single()
+        assertEquals("reminder-reschedule-recovery:user", work.name)
+        assertEquals(ExistingWorkPolicy.KEEP, work.policy)
+        assertEquals("SUPPLEMENTS", work.request.workSpec.input.getString("systems"))
+        assertEquals(BackoffPolicy.EXPONENTIAL, work.request.workSpec.backoffPolicy)
+        assertEquals(15_000L, work.request.workSpec.backoffDelayDuration)
+    }
+
+    @Test
+    fun recoveryExhaustionReturnsFailureAtTheNamedAttemptLimit() {
+        assertEquals(
+            com.avitoohband.nutrun.reminders.ReminderRecoveryResult.Failure,
+            recoveryWorkResult(attempt = 2, requiresRecovery = true)
+        )
     }
 
     private fun dailySupplement(
@@ -195,4 +316,81 @@ class SupplementReminderWorkerTest {
 
     private val date = LocalDate.of(2026, 8, 10)
     private val zone = ZoneId.of("Asia/Jerusalem")
+
+    private fun enabledSettings(enabled: Boolean = true) =
+        com.avitoohband.nutrun.data.SupplementReminderSettingsEntity(
+            userId = "user",
+            enabled = enabled,
+            timezoneId = zone.id
+        )
+
+    private fun claim() = com.avitoohband.nutrun.reminders.SupplementDeliveryClaimRequest(
+        id = "user:SUPPLEMENT:480:2026-08-10",
+        userId = "user",
+        reminderType = "SUPPLEMENT:480",
+        trainingDate = "2026-08-10"
+    )
+
+    private class FakeSchedulerStore(
+        private val userId: String?,
+        private val supplements: List<Supplement>
+    ) : SupplementReminderSchedulerStore {
+        override suspend fun authenticatedUserId(): String? = userId
+        override suspend fun supplements(userId: String): List<Supplement> = supplements
+    }
+
+    private class RecordingWorkEnqueuer : ReminderWorkEnqueuer {
+        data class Enqueued(
+            val name: String,
+            val policy: ExistingWorkPolicy,
+            val request: OneTimeWorkRequest
+        )
+
+        val enqueued = mutableListOf<Enqueued>()
+        val cancelled = mutableListOf<String>()
+
+        override fun enqueue(name: String, policy: ExistingWorkPolicy, request: OneTimeWorkRequest) {
+            enqueued += Enqueued(name, policy, request)
+        }
+
+        override fun cancel(name: String) {
+            cancelled += name
+        }
+    }
+
+    private class FakeDeliveryStore(
+        private val finalizeSucceeds: Boolean = true
+    ) : SupplementDeliveryStore {
+        private var state = SupplementDeliveryClaim.Available
+        private var claimedAtMillis = 0L
+        var releaseCalls = 0
+
+        override suspend fun acquire(
+            claim: com.avitoohband.nutrun.reminders.SupplementDeliveryClaimRequest,
+            nowMillis: Long
+        ): SupplementDeliveryClaim {
+            if (state == SupplementDeliveryClaim.Pending && nowMillis - claimedAtMillis >= 15 * 60_000) {
+                state = SupplementDeliveryClaim.Available
+            }
+            return when (state) {
+                SupplementDeliveryClaim.Available -> {
+                    state = SupplementDeliveryClaim.Pending
+                    claimedAtMillis = nowMillis
+                    SupplementDeliveryClaim.Acquired
+                }
+                else -> state
+            }
+        }
+
+        override suspend fun finalize(claimId: String, deliveredAtMillis: Long): Boolean {
+            if (!finalizeSucceeds) return false
+            state = SupplementDeliveryClaim.Delivered
+            return true
+        }
+
+        override suspend fun release(claimId: String) {
+            releaseCalls += 1
+            state = SupplementDeliveryClaim.Available
+        }
+    }
 }

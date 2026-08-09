@@ -180,6 +180,35 @@ class DatabaseMigrationTest {
         migrated.close()
     }
 
+    @Test
+    @Throws(IOException::class)
+    fun migrationFiveToSixPreservesDeliveredReminderRowsAsFinalized() {
+        helper.createDatabase(DATABASE_NAME_V6, 5).apply {
+            insert(
+                "reminder_delivery",
+                SQLiteDatabase.CONFLICT_REPLACE,
+                ContentValues().apply {
+                    put("id", "user:SUPPLEMENT:480:2026-08-10")
+                    put("userId", "user")
+                    put("reminderType", "SUPPLEMENT:480")
+                    put("trainingDate", "2026-08-10")
+                    put("deliveredAtMillis", 1_000L)
+                }
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME_V6,
+            6,
+            true,
+            NutRunDatabase.MIGRATION_5_6
+        )
+        assertQueryValue(migrated, "SELECT state FROM reminder_delivery", "DELIVERED")
+        assertQueryValue(migrated, "SELECT claimedAtMillis FROM reminder_delivery", 0)
+        migrated.close()
+    }
+
     private fun assertQueryValue(database: SupportSQLiteDatabase, query: String, expected: Any) {
         database.query(query).use { cursor ->
             cursor.moveToFirst()
@@ -195,5 +224,6 @@ class DatabaseMigrationTest {
         private const val DATABASE_NAME_V3 = "migration-test-v3"
         private const val DATABASE_NAME_V4 = "migration-test-v4"
         private const val DATABASE_NAME_V5 = "migration-test-v5"
+        private const val DATABASE_NAME_V6 = "migration-test-v6"
     }
 }

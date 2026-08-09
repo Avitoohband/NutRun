@@ -127,12 +127,44 @@ interface NutRunDao {
 
     @Query(
         "SELECT EXISTS(SELECT 1 FROM reminder_delivery WHERE userId = :userId " +
-            "AND reminderType = :type AND trainingDate = :trainingDate)"
+            "AND reminderType = :type AND trainingDate = :trainingDate AND state = 'DELIVERED')"
     )
     suspend fun reminderDelivered(userId: String, type: String, trainingDate: String): Boolean
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun recordReminderDelivery(delivery: ReminderDeliveryEntity): Long
+
+    @Query("SELECT * FROM reminder_delivery WHERE id = :id LIMIT 1")
+    suspend fun reminderDelivery(id: String): ReminderDeliveryEntity?
+
+    @Query(
+        "DELETE FROM reminder_delivery WHERE id = :id AND state = 'PENDING' " +
+            "AND claimedAtMillis <= :expiredBeforeMillis"
+    )
+    suspend fun deleteExpiredReminderDeliveryClaim(id: String, expiredBeforeMillis: Long): Int
+
+    @Query(
+        "UPDATE reminder_delivery SET state = 'DELIVERED', deliveredAtMillis = :deliveredAtMillis " +
+            "WHERE id = :id AND state = 'PENDING'"
+    )
+    suspend fun finalizeReminderDelivery(id: String, deliveredAtMillis: Long): Int
+
+    @Query("DELETE FROM reminder_delivery WHERE id = :id AND state = 'PENDING'")
+    suspend fun releaseReminderDeliveryClaim(id: String): Int
+
+    @Transaction
+    suspend fun acquireSupplementDeliveryClaim(
+        claim: ReminderDeliveryEntity,
+        expiredBeforeMillis: Long
+    ): String {
+        when (reminderDelivery(claim.id)?.state) {
+            ReminderDeliveryEntity.STATE_DELIVERED -> return "Delivered"
+            ReminderDeliveryEntity.STATE_PENDING -> {
+                deleteExpiredReminderDeliveryClaim(claim.id, expiredBeforeMillis)
+            }
+        }
+        return if (recordReminderDelivery(claim) != -1L) "Acquired" else "Pending"
+    }
 
     @Query("SELECT * FROM walk_sessions WHERE userId = :userId ORDER BY startedAtMillis DESC")
     fun observeWalks(userId: String): Flow<List<WalkSessionEntity>>

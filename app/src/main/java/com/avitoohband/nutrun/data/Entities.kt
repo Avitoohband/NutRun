@@ -118,8 +118,15 @@ data class ReminderDeliveryEntity(
     val userId: String,
     val reminderType: String,
     val trainingDate: String,
-    val deliveredAtMillis: Long
-)
+    val deliveredAtMillis: Long,
+    val state: String = STATE_DELIVERED,
+    val claimedAtMillis: Long = 0
+) {
+    companion object {
+        const val STATE_PENDING = "PENDING"
+        const val STATE_DELIVERED = "DELIVERED"
+    }
+}
 
 @Entity(tableName = "walk_sessions", indices = [Index("userId"), Index("startedAtMillis"), Index("state")])
 data class WalkSessionEntity(

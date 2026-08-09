@@ -7,7 +7,6 @@ import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.avitoohband.nutrun.data.AppPreferences
@@ -22,47 +21,60 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-enum class ReminderRescheduleOutcome(val requiresRecovery: Boolean) {
-    Complete(false),
-    Failed(true)
+enum class ReminderSystem { HYDRATION, TRAINING, SUPPLEMENTS }
+
+data class ReminderRescheduleOutcome(val failedSystems: Set<ReminderSystem>) {
+    val requiresRecovery: Boolean get() = failedSystems.isNotEmpty()
+
+    companion object {
+        val Complete = ReminderRescheduleOutcome(emptySet())
+        val Failed = ReminderRescheduleOutcome(ReminderSystem.entries.toSet())
+    }
 }
 
 suspend fun rescheduleReminderSystems(
     hydration: suspend () -> Unit,
     training: suspend () -> Unit,
-    supplements: suspend () -> Unit
+    supplements: suspend () -> Unit,
+    systems: Set<ReminderSystem> = ReminderSystem.entries.toSet()
 ): ReminderRescheduleOutcome {
-    var failed = false
-    listOf(hydration, training, supplements).forEach { reschedule ->
+    val failed = mutableSetOf<ReminderSystem>()
+    listOf(
+        ReminderSystem.HYDRATION to hydration,
+        ReminderSystem.TRAINING to training,
+        ReminderSystem.SUPPLEMENTS to supplements
+    ).filter { it.first in systems }.forEach { (system, reschedule) ->
         try {
             reschedule()
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            failed = true
+            failed += system
         }
     }
-    return if (failed) ReminderRescheduleOutcome.Failed else ReminderRescheduleOutcome.Complete
+    return ReminderRescheduleOutcome(failed)
 }
 
 class ReminderRescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (
-            intent.action != Intent.ACTION_TIMEZONE_CHANGED &&
-            intent.action != Intent.ACTION_BOOT_COMPLETED
-        ) return
+        if (intent.action != Intent.ACTION_TIMEZONE_CHANGED && intent.action != Intent.ACTION_BOOT_COMPLETED) {
+            return
+        }
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             var userId: String? = null
             try {
-                userId = AppPreferences(context).currentSession().authenticatedUserId
-                    ?: return@launch
+                userId = AppPreferences(context).currentSession().authenticatedUserId ?: return@launch
                 val outcome = rescheduleReminderSystemsForUser(context, userId)
-                if (outcome.requiresRecovery) ReminderRescheduleRecoveryScheduler(context).schedule(userId)
+                if (outcome.requiresRecovery) {
+                    ReminderRescheduleRecoveryScheduler(context).schedule(userId, outcome.failedSystems)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                userId?.let { ReminderRescheduleRecoveryScheduler(context).schedule(it) }
+                userId?.let {
+                    ReminderRescheduleRecoveryScheduler(context).schedule(it, ReminderSystem.entries.toSet())
+                }
             } finally {
                 pending.finish()
             }
@@ -72,7 +84,8 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
 
 private suspend fun rescheduleReminderSystemsForUser(
     context: Context,
-    userId: String
+    userId: String,
+    systems: Set<ReminderSystem> = ReminderSystem.entries.toSet()
 ): ReminderRescheduleOutcome {
     val dao = NutRunDatabase.getInstance(context).dao()
     return rescheduleReminderSystems(
@@ -96,7 +109,8 @@ private suspend fun rescheduleReminderSystemsForUser(
                 )
             dao.saveSupplementReminderSettings(supplements)
             SupplementReminderScheduler(context).schedule(userId, supplements)
-        }
+        },
+        systems = systems
     )
 }
 
@@ -110,33 +124,64 @@ class ReminderRescheduleRecoveryWorker(
             return Result.success()
         }
         return try {
-            if (rescheduleReminderSystemsForUser(applicationContext, userId).requiresRecovery) {
-                Result.retry()
-            } else {
-                Result.success()
+            val systems = inputData.getString(KEY_SYSTEMS)
+                ?.split(',')
+                ?.mapNotNull { runCatching { ReminderSystem.valueOf(it) }.getOrNull() }
+                ?.toSet()
+                .orEmpty()
+                .ifEmpty { ReminderSystem.entries.toSet() }
+            val outcome = rescheduleReminderSystemsForUser(applicationContext, userId, systems)
+            when (recoveryWorkResult(runAttemptCount, outcome.requiresRecovery)) {
+                ReminderRecoveryResult.Success -> Result.success()
+                ReminderRecoveryResult.Retry -> Result.retry()
+                ReminderRecoveryResult.Failure -> Result.failure()
             }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            Result.retry()
+            when (recoveryWorkResult(runAttemptCount, requiresRecovery = true)) {
+                ReminderRecoveryResult.Failure -> Result.failure()
+                else -> Result.retry()
+            }
         }
     }
 
     companion object {
         const val KEY_USER_ID = "user_id"
+        const val KEY_SYSTEMS = "systems"
     }
 }
 
-private class ReminderRescheduleRecoveryScheduler(private val context: Context) {
-    fun schedule(userId: String) {
-        if (userId.isBlank()) return
+enum class ReminderRecoveryResult { Success, Retry, Failure }
+
+const val MAX_REMINDER_RECOVERY_ATTEMPTS = 3
+
+fun recoveryWorkResult(attempt: Int, requiresRecovery: Boolean): ReminderRecoveryResult = when {
+    !requiresRecovery -> ReminderRecoveryResult.Success
+    attempt >= MAX_REMINDER_RECOVERY_ATTEMPTS - 1 -> ReminderRecoveryResult.Failure
+    else -> ReminderRecoveryResult.Retry
+}
+
+class ReminderRescheduleRecoveryScheduler(
+    private val enqueuer: ReminderWorkEnqueuer
+) {
+    constructor(context: Context) : this(WorkManagerReminderWorkEnqueuer(context))
+
+    fun schedule(userId: String, systems: Set<ReminderSystem>) {
+        if (userId.isBlank() || systems.isEmpty()) return
         val request = OneTimeWorkRequestBuilder<ReminderRescheduleRecoveryWorker>()
-            .setInputData(workDataOf(ReminderRescheduleRecoveryWorker.KEY_USER_ID to userId))
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+            .setInputData(
+                workDataOf(
+                    ReminderRescheduleRecoveryWorker.KEY_USER_ID to userId,
+                    ReminderRescheduleRecoveryWorker.KEY_SYSTEMS to
+                        systems.sortedBy(ReminderSystem::name).joinToString(",") { it.name }
+                )
+            )
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
+        enqueuer.enqueue(
             "reminder-reschedule-recovery:$userId",
-            ExistingWorkPolicy.REPLACE,
+            ExistingWorkPolicy.KEEP,
             request
         )
     }
