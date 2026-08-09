@@ -10,6 +10,67 @@ import org.junit.Test
 
 class TrainingViewModelTest {
     @Test
+    fun progressionSuggestionRecalculatesAfterFinishedWorkoutWithoutChangingTarget() {
+        val (model, session, target) = weightedTargetFixture()
+
+        assertNull(model.progressionSuggestion(target))
+
+        finishSuccessfulWorkout(model, session, target)
+
+        val suggestion = requireNotNull(model.progressionSuggestion(target))
+        assertEquals(ProgressionAction.INCREASE, suggestion.action)
+        assertEquals(60.0, suggestion.currentWeightKg, 0.001)
+        assertEquals(62.5, suggestion.suggestedWeightKg, 0.001)
+        assertEquals(60.0, sessionTarget(model, session, target).weightKg!!, 0.001)
+        assertTrue(model.activeSetLogs.isEmpty())
+        assertEquals(
+            listOf(target.id),
+            model.progressionSuggestions(session).map { (suggestedTarget, _) -> suggestedTarget.id }
+        )
+    }
+
+    @Test
+    fun progressionSuggestionRecalculatesAfterWorkoutEditAndDelete() {
+        val (model, session, target) = weightedTargetFixture()
+        finishSuccessfulWorkout(model, session, target)
+        val completedWorkout = model.workoutHistory.single()
+        val highRpeWorkout = completedWorkout.copy(
+            sets = completedWorkout.sets.map { set ->
+                if (set.targetId == target.id) set.copy(rpe = 9.0) else set
+            }
+        )
+
+        model.updateWorkoutRecord(highRpeWorkout)
+
+        val editedSuggestion = requireNotNull(model.progressionSuggestion(target))
+        assertEquals(ProgressionAction.KEEP, editedSuggestion.action)
+        assertEquals(60.0, editedSuggestion.suggestedWeightKg, 0.001)
+        assertEquals(60.0, sessionTarget(model, session, target).weightKg!!, 0.001)
+
+        model.deleteWorkoutRecord(highRpeWorkout.id)
+
+        assertNull(model.progressionSuggestion(target))
+        assertEquals(60.0, sessionTarget(model, session, target).weightKg!!, 0.001)
+    }
+
+    @Test
+    fun progressionSuggestionRecalculatesForUnitChangesWithoutChangingActiveLogs() {
+        val (model, session, target) = weightedTargetFixture()
+        finishSuccessfulWorkout(model, session, target)
+        model.startWorkout(session.id)
+        val prefilledLogs = model.activeSetLogs[target.id].orEmpty()
+
+        val metricSuggestion = requireNotNull(model.progressionSuggestion(target))
+        model.updateUsesMetricUnits(false)
+        val imperialSuggestion = requireNotNull(model.progressionSuggestion(target))
+
+        assertEquals(62.5, metricSuggestion.suggestedWeightKg, 0.001)
+        assertEquals(62.268, imperialSuggestion.suggestedWeightKg, 0.001)
+        assertEquals(prefilledLogs, model.activeSetLogs[target.id])
+        assertEquals(60.0, sessionTarget(model, session, target).weightKg!!, 0.001)
+    }
+
+    @Test
     fun duplicateExercisesAreRejectedAndRemovalIsSessionOnly() {
         val model = TrainingViewModel(null, null)
         model.selectSession("session-monday-push-biceps")
@@ -222,4 +283,51 @@ class TrainingViewModelTest {
         assertTrue(model.workoutHistory.isEmpty())
         assertNull(model.restTimerEndAtMillis)
     }
+
+    private fun weightedTargetFixture(): Triple<TrainingViewModel, TrainingSession, ExerciseTarget> {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val originalTarget = session.exercises.first()
+        model.selectSession(session.id)
+        model.updateSelectedExercise(
+            targetId = originalTarget.id,
+            sets = originalTarget.sets,
+            reps = originalTarget.reps,
+            weightKg = 60.0,
+            durationMinutes = originalTarget.durationMinutes,
+            distanceKm = originalTarget.distanceKm
+        )
+        val updatedSession = requireNotNull(model.selectedSession())
+        val target = updatedSession.exercises.first { it.id == originalTarget.id }
+        return Triple(model, updatedSession, target)
+    }
+
+    private fun finishSuccessfulWorkout(
+        model: TrainingViewModel,
+        session: TrainingSession,
+        target: ExerciseTarget
+    ) {
+        model.startWorkout(session.id)
+        repeat(target.sets) { index ->
+            model.updateWorkoutSet(
+                targetId = target.id,
+                setNumber = index + 1,
+                reps = requireNotNull(target.maximumReps),
+                weightKg = 60.0,
+                durationSeconds = null,
+                rpe = 8.0,
+                completed = true
+            )
+        }
+        model.finishWorkout()
+    }
+
+    private fun sessionTarget(
+        model: TrainingViewModel,
+        session: TrainingSession,
+        target: ExerciseTarget
+    ): ExerciseTarget = model.sessions
+        .first { it.id == session.id }
+        .exercises
+        .first { it.id == target.id }
 }

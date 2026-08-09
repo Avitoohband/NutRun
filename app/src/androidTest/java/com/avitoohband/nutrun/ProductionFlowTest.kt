@@ -1,10 +1,14 @@
 package com.avitoohband.nutrun
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -14,6 +18,16 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.espresso.Espresso.pressBack
+import com.avitoohband.nutrun.data.AppPreferences
+import com.avitoohband.nutrun.data.NutRunDatabase
+import com.avitoohband.nutrun.data.UserProfileEntity
+import com.avitoohband.nutrun.data.WalkPointEntity
+import com.avitoohband.nutrun.data.WalkSessionEntity
+import java.time.Instant
+import java.util.TimeZone
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
@@ -114,6 +128,77 @@ class ProductionFlowTest {
     }
 
     @Test
+    fun savedWalkRouteAndMetricsFlowFromHistorySelectionIntoDetails() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val preferences = AppPreferences(context)
+        val dao = NutRunDatabase.getInstance(context).dao()
+        val originalTimeZone = TimeZone.getDefault()
+
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+            runBlocking {
+                preferences.signOut()
+                dao.clearAccountData(WALK_HISTORY_TEST_USER_ID)
+                preferences.clearAccount(WALK_HISTORY_TEST_USER_ID)
+                dao.saveProfile(testWalkHistoryProfile())
+                dao.saveWalks(testWalkHistorySessions())
+                dao.saveWalkPoints(testWalkHistoryPoints())
+                preferences.signIn(
+                    userId = WALK_HISTORY_TEST_USER_ID,
+                    email = WALK_HISTORY_TEST_EMAIL,
+                    trialStartedAtMillis = WALK_HISTORY_START_MILLIS,
+                    subscriber = true
+                )
+            }
+
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag("bottom-nav-walk").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("bottom-nav-walk").performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag("walk-history-card").fetchSemanticsNodes().size == 2
+            }
+
+            composeRule.onAllNodesWithTag("walk-history-card")[0]
+                .assertTextContains("4500 steps")
+            composeRule.onAllNodesWithTag("walk-history-card")[1]
+                .assertTextContains("Steps unavailable")
+            composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
+
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule
+                    .onAllNodesWithContentDescription("Saved route with 3 points")
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }
+            composeRule.onNodeWithTag("walk-details-heading").assertIsDisplayed()
+            composeRule.onNodeWithTag("walk-details-route-map")
+                .assertContentDescriptionEquals("Saved route with 3 points")
+            composeRule.onNodeWithText("Your route will appear here").assertDoesNotExist()
+            composeRule.onNodeWithText("Sunday, August 9, 2026").assertIsDisplayed()
+            composeRule.onNodeWithText("7:30 AM - 8:15 AM").assertIsDisplayed()
+            composeRule.onNodeWithText("3.00").assertIsDisplayed()
+            composeRule.onNodeWithText("45:00").assertIsDisplayed()
+            composeRule.onNodeWithText("4500").assertIsDisplayed()
+            composeRule.onNodeWithText("15:00 /km").assertIsDisplayed()
+
+            composeRule.onNodeWithTag("walk-details-back").performClick()
+            composeRule.onNodeWithTag("walk-details-heading").assertDoesNotExist()
+            composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
+            composeRule.onNodeWithTag("walk-details-heading").assertIsDisplayed()
+            pressBack()
+            composeRule.onNodeWithTag("walk-details-heading").assertDoesNotExist()
+        } finally {
+            runBlocking {
+                preferences.signOut()
+                dao.clearAccountData(WALK_HISTORY_TEST_USER_ID)
+                preferences.clearAccount(WALK_HISTORY_TEST_USER_ID)
+            }
+            TimeZone.setDefault(originalTimeZone)
+        }
+    }
+
+    @Test
     fun consumedNutritionRequestDoesNotReopenAfterRecreation() {
         enterDemo()
         composeRule.activityRule.scenario.onActivity { activity ->
@@ -161,5 +246,145 @@ class ProductionFlowTest {
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun testWalkHistoryProfile() = UserProfileEntity(
+        id = "profile:$WALK_HISTORY_TEST_USER_ID",
+        userId = WALK_HISTORY_TEST_USER_ID,
+        email = WALK_HISTORY_TEST_EMAIL,
+        birthDate = "1990-01-01",
+        biologicalSex = "MALE",
+        heightCm = 180.0,
+        weightKg = 80.0,
+        activityLevel = "MODERATE",
+        goal = "MAINTAIN",
+        unitSystem = "METRIC",
+        calorieTarget = 2_400,
+        updatedAtMillis = WALK_HISTORY_START_MILLIS
+    )
+
+    private fun testWalkHistorySessions() = listOf(
+        WalkSessionEntity(
+            id = WALK_WITH_ROUTE_ID,
+            userId = WALK_HISTORY_TEST_USER_ID,
+            state = "FINISHED",
+            startedAtMillis = WALK_HISTORY_START_MILLIS,
+            endedAtMillis = WALK_HISTORY_END_MILLIS,
+            accumulatedDurationMillis = 45 * 60_000L,
+            resumedAtMillis = null,
+            distanceMeters = 3_000.0,
+            stepBaseline = null,
+            steps = 4_500L,
+            pendingSync = false
+        ),
+        WalkSessionEntity(
+            id = WALK_WITHOUT_STEPS_ID,
+            userId = WALK_HISTORY_TEST_USER_ID,
+            state = "FINISHED",
+            startedAtMillis = WALK_HISTORY_START_MILLIS - 60 * 60_000L,
+            endedAtMillis = WALK_HISTORY_START_MILLIS - 30 * 60_000L,
+            accumulatedDurationMillis = 30 * 60_000L,
+            resumedAtMillis = null,
+            distanceMeters = 2_000.0,
+            stepBaseline = null,
+            steps = null,
+            pendingSync = false
+        )
+    )
+
+    private fun testWalkHistoryPoints() = listOf(
+        WalkPointEntity(
+            id = "walk-point-1",
+            userId = WALK_HISTORY_TEST_USER_ID,
+            sessionId = WALK_WITH_ROUTE_ID,
+            latitude = 32.0853,
+            longitude = 34.7818,
+            accuracyMeters = 4f,
+            recordedAtMillis = WALK_HISTORY_START_MILLIS
+        ),
+        WalkPointEntity(
+            id = "walk-point-2",
+            userId = WALK_HISTORY_TEST_USER_ID,
+            sessionId = WALK_WITH_ROUTE_ID,
+            latitude = 32.0860,
+            longitude = 34.7830,
+            accuracyMeters = 4f,
+            recordedAtMillis = WALK_HISTORY_START_MILLIS + 60_000L
+        ),
+        WalkPointEntity(
+            id = "walk-point-3",
+            userId = WALK_HISTORY_TEST_USER_ID,
+            sessionId = WALK_WITH_ROUTE_ID,
+            latitude = 32.0870,
+            longitude = 34.7840,
+            accuracyMeters = 4f,
+            recordedAtMillis = WALK_HISTORY_START_MILLIS + 120_000L
+        )
+    )
+
+    private companion object {
+        const val WALK_HISTORY_TEST_USER_ID = "android-test-walk-history"
+        const val WALK_HISTORY_TEST_EMAIL = "walk-history@android.test"
+        const val WALK_WITH_ROUTE_ID = "android-test-walk-with-route"
+        const val WALK_WITHOUT_STEPS_ID = "android-test-walk-without-steps"
+        val WALK_HISTORY_START_MILLIS = Instant.parse("2026-08-09T07:30:00Z").toEpochMilli()
+        val WALK_HISTORY_END_MILLIS = Instant.parse("2026-08-09T08:15:00Z").toEpochMilli()
+    }
+}
+
+class ProgressionSuggestionComposeTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun progressionSuggestionAppearsBeforeStartAndDuringLogging() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val originalTarget = session.exercises.first()
+        model.selectSession(session.id)
+        model.updateSelectedExercise(
+            targetId = originalTarget.id,
+            sets = originalTarget.sets,
+            reps = originalTarget.reps,
+            weightKg = 60.0,
+            durationMinutes = originalTarget.durationMinutes,
+            distanceKm = originalTarget.distanceKm
+        )
+        val updatedSession = requireNotNull(model.selectedSession())
+        val target = updatedSession.exercises.first { it.id == originalTarget.id }
+        model.startWorkout(updatedSession.id)
+        repeat(target.sets) { index ->
+            model.updateWorkoutSet(
+                targetId = target.id,
+                setNumber = index + 1,
+                reps = requireNotNull(target.maximumReps),
+                weightKg = 60.0,
+                durationSeconds = null,
+                rpe = 8.0,
+                completed = true
+            )
+        }
+        model.finishWorkout()
+        model.dismissWorkoutSummary()
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        val programTag = "program-progression-${target.id}"
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag(programTag))
+        composeRule.onNodeWithTag(programTag)
+            .assertIsDisplayed()
+            .assertTextContains("Increase to 62.5 kg")
+
+        composeRule.onNodeWithTag("start-session-${updatedSession.id}").performClick()
+
+        val activeTag = "active-progression-${target.id}"
+        composeRule.onNodeWithTag(activeTag)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextContains("Increase to 62.5 kg")
     }
 }

@@ -278,6 +278,16 @@ class TrainingViewModel @Inject constructor(
             ?.filter { it.exerciseId == exerciseId && it.completed }
             .orEmpty()
 
+    fun progressionSuggestion(target: ExerciseTarget): ProgressionSuggestion? =
+        progressionSuggestion(target, workoutHistory, usesMetricUnits)
+
+    fun progressionSuggestions(
+        session: TrainingSession
+    ): List<Pair<ExerciseTarget, ProgressionSuggestion>> =
+        session.exercises.mapNotNull { target ->
+            progressionSuggestion(target)?.let { suggestion -> target to suggestion }
+        }
+
     fun updateDefaultRestTimerSeconds(seconds: Int) {
         defaultRestTimerSeconds = seconds.coerceIn(15, 600)
         persistTrainingState()

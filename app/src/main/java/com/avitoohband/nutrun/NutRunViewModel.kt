@@ -148,10 +148,14 @@ class NutRunViewModel @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutRunUiState())
 
-    val routePoints: StateFlow<List<WalkPointEntity>> = combine(
-        repository.activeWalk,
-        repository.walks
-    ) { active, walks -> active?.id ?: walks.firstOrNull()?.id }
+    val routePoints: StateFlow<List<WalkPointEntity>> = repository.activeWalk
+        .map(::activeRouteSessionId)
+        .flatMapLatest { id -> id?.let(repository::walkPoints) ?: flowOf(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _selectedWalkId = MutableStateFlow<String?>(null)
+    val selectedWalkId: StateFlow<String?> = _selectedWalkId
+    val selectedWalkRoutePoints: StateFlow<List<WalkPointEntity>> = selectedWalkId
         .flatMapLatest { id -> id?.let(repository::walkPoints) ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -456,12 +460,21 @@ class NutRunViewModel @Inject constructor(
     }
 
     fun signOut() {
+        clearSelectedWalk()
         viewModelScope.launch {
             val userId = state.value.session.authenticatedUserId
             repository.updateWalkState(com.avitoohband.nutrun.domain.WalkState.PAUSED)
             if (!isDemoAccount(userId)) authenticationGateway.signOut()
             preferences.signOut()
         }
+    }
+
+    fun selectCompletedWalk(id: String) {
+        _selectedWalkId.value = id
+    }
+
+    fun clearSelectedWalk() {
+        _selectedWalkId.value = null
     }
 
     fun deleteAccount() {
