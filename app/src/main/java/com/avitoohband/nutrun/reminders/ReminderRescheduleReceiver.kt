@@ -30,7 +30,7 @@ interface ReminderRecoveryStateStore {
         userId: String,
         attempted: Set<ReminderSystem>,
         stillFailing: Set<ReminderSystem>
-    )
+    ): Set<ReminderSystem>
 }
 
 private class PreferenceReminderRecoveryStateStore(
@@ -49,13 +49,11 @@ private class PreferenceReminderRecoveryStateStore(
         userId: String,
         attempted: Set<ReminderSystem>,
         stillFailing: Set<ReminderSystem>
-    ) {
-        preferences.completeReminderRecoveryAttempt(
+    ): Set<ReminderSystem> = preferences.completeReminderRecoveryAttempt(
             userId,
             attempted.map(ReminderSystem::name).toSet(),
             stillFailing.map(ReminderSystem::name).toSet()
-        )
-    }
+        ).mapNotNull { runCatching { ReminderSystem.valueOf(it) }.getOrNull() }.toSet()
 }
 
 data class ReminderRescheduleOutcome(val failedSystems: Set<ReminderSystem>) {
@@ -90,20 +88,34 @@ suspend fun rescheduleReminderSystems(
     return ReminderRescheduleOutcome(failed)
 }
 
-class ReminderRescheduleReceiver : BroadcastReceiver() {
+interface ReminderRescheduleReceiverRuntime {
+    fun launch(receiver: BroadcastReceiver, work: suspend () -> Unit)
+}
+
+private object AndroidReminderRescheduleReceiverRuntime : ReminderRescheduleReceiverRuntime {
+    override fun launch(receiver: BroadcastReceiver, work: suspend () -> Unit) {
+        val pending = receiver.goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                work()
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+}
+
+class ReminderRescheduleReceiver(
+    private val dispatcherFactory: (Context) -> ReminderRescheduleReceiverDispatcher =
+        { context -> reminderRescheduleReceiverDispatcher(context) },
+    private val runtime: ReminderRescheduleReceiverRuntime = AndroidReminderRescheduleReceiverRuntime
+) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_TIMEZONE_CHANGED && intent.action != Intent.ACTION_BOOT_COMPLETED) {
             return
         }
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                reminderRescheduleReceiverDispatcher(context).dispatch()
-            } catch (error: CancellationException) {
-                throw error
-            } finally {
-                pending.finish()
-            }
+        runtime.launch(this) {
+            dispatcherFactory(context).dispatch()
         }
     }
 }
@@ -248,8 +260,8 @@ suspend fun runReminderRecoveryAttempt(
 ): ReminderRescheduleOutcome {
     val systems = stateStore.current(userId).ifEmpty { ReminderSystem.entries.toSet() }
     val outcome = reschedule(systems)
-    stateStore.completeAttempt(userId, systems, outcome.failedSystems)
-    return outcome
+    val durableFailures = stateStore.completeAttempt(userId, systems, outcome.failedSystems)
+    return ReminderRescheduleOutcome(durableFailures)
 }
 
 enum class ReminderRecoveryResult { Success, Retry, Failure }

@@ -111,12 +111,14 @@ class AppPreferences @Inject constructor(
         userId: String,
         attempted: Set<String>,
         stillFailing: Set<String>
-    ) {
+    ): Set<String> {
+        var updated = emptySet<String>()
         context.dataStore.edit { values ->
-            val updated = (reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) - attempted) + stillFailing
+            updated = (reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) - attempted) + stillFailing
             if (updated.isEmpty()) values.remove(Keys.reminderRecoverySystems(userId))
             else values[Keys.reminderRecoverySystems(userId)] = updated.sorted().joinToString(",")
         }
+        return updated
     }
 
     suspend fun clearAccount(userId: String) {

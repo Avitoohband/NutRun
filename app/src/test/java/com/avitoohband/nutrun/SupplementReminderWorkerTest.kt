@@ -1,10 +1,15 @@
 package com.avitoohband.nutrun
 
+import android.content.BroadcastReceiver
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.work.BackoffPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
 import com.avitoohband.nutrun.reminders.ReminderRescheduleOutcome
 import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverDispatcher
+import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiver
+import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverRuntime
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
 import com.avitoohband.nutrun.reminders.ReminderRescheduleUserSchedulers
 import com.avitoohband.nutrun.reminders.ReminderRescheduleUserStore
@@ -374,6 +379,27 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
+    fun recoveryAttemptRetriesWhenConcurrentMergeSurvivesCompletion() = runBlocking {
+        val state = FakeRecoveryStateStore()
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
+        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+
+        val outcome = runReminderRecoveryAttempt("user", state) {
+            scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+            ReminderRescheduleOutcome.Complete
+        }
+
+        assertEquals(ReminderRescheduleOutcome(setOf(ReminderSystem.SUPPLEMENTS)), outcome)
+        assertEquals(2, enqueuer.enqueued.size)
+        assertTrue(enqueuer.enqueued.all { it.policy == ExistingWorkPolicy.KEEP })
+        assertEquals(
+            com.avitoohband.nutrun.reminders.ReminderRecoveryResult.Retry,
+            recoveryWorkResult(attempt = 0, requiresRecovery = outcome.requiresRecovery)
+        )
+    }
+
+    @Test
     fun receiverDispatcherRunsRealUserRescheduleAndHandsCurrentFailuresToRecovery() = runBlocking {
         val store = FakeReceiverStore()
         val schedulers = FakeReceiverSchedulers(failHydration = true)
@@ -390,6 +416,33 @@ class SupplementReminderWorkerTest {
 
         assertEquals(zone.id, store.savedSupplementSettings.single().timezoneId)
         assertEquals(listOf("supplements"), schedulers.calls.filter { it == "supplements" })
+        assertEquals(listOf("user" to setOf(ReminderSystem.HYDRATION)), recovered)
+    }
+
+    @Test
+    fun receiverOnReceiveRunsFactoryRescheduleAndRecoveryForTimezoneChange() {
+        val store = FakeReceiverStore()
+        val schedulers = FakeReceiverSchedulers(failHydration = true)
+        val recovered = mutableListOf<Pair<String, Set<ReminderSystem>>>()
+        val dispatcher = ReminderRescheduleReceiverDispatcher(
+            authenticatedUserId = { "user" },
+            reschedule = { userId, systems ->
+                rescheduleReminderSystemsForUser(userId, systems, store, schedulers, zone)
+            },
+            scheduleRecovery = { userId, failures -> recovered += userId to failures }
+        )
+        var factoryCalls = 0
+        val receiver = ReminderRescheduleReceiver(
+            dispatcherFactory = { factoryCalls += 1; dispatcher },
+            runtime = ImmediateReceiverRuntime
+        )
+
+        receiver.onReceive(ContextWrapper(null), TestIntent("unrelated"))
+        receiver.onReceive(ContextWrapper(null), TestIntent(Intent.ACTION_TIMEZONE_CHANGED))
+
+        assertEquals(1, factoryCalls)
+        assertEquals(zone.id, store.savedSupplementSettings.single().timezoneId)
+        assertTrue("supplements" in schedulers.calls)
         assertEquals(listOf("user" to setOf(ReminderSystem.HYDRATION)), recovered)
     }
 
@@ -518,8 +571,9 @@ class SupplementReminderWorkerTest {
             userId: String,
             attempted: Set<ReminderSystem>,
             stillFailing: Set<ReminderSystem>
-        ) {
+        ): Set<ReminderSystem> {
             values[userId] = (values[userId].orEmpty() - attempted) + stillFailing
+            return values[userId].orEmpty()
         }
     }
 
@@ -555,5 +609,15 @@ class SupplementReminderWorkerTest {
         ) {
             calls += "supplements"
         }
+    }
+
+    private object ImmediateReceiverRuntime : ReminderRescheduleReceiverRuntime {
+        override fun launch(receiver: BroadcastReceiver, work: suspend () -> Unit) {
+            runBlocking { work() }
+        }
+    }
+
+    private class TestIntent(private val action: String) : Intent() {
+        override fun getAction(): String = action
     }
 }
