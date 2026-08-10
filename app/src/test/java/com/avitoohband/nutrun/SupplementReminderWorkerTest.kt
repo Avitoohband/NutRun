@@ -6,12 +6,13 @@ import android.content.Intent
 import androidx.work.BackoffPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
+import androidx.work.workDataOf
+import com.avitoohband.nutrun.reminders.ReminderRecoveryResult
 import com.avitoohband.nutrun.reminders.ReminderRescheduleOutcome
 import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverDispatcher
 import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiver
 import com.avitoohband.nutrun.reminders.ReminderRescheduleReceiverRuntime
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
-import com.avitoohband.nutrun.reminders.ReminderRecoveryAction
 import com.avitoohband.nutrun.reminders.ReminderRescheduleUserSchedulers
 import com.avitoohband.nutrun.reminders.ReminderRescheduleUserStore
 import com.avitoohband.nutrun.reminders.ReminderSystem
@@ -28,12 +29,10 @@ import com.avitoohband.nutrun.reminders.deliverSupplementNotification
 import com.avitoohband.nutrun.reminders.isSupplementDeliveryDateValid
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystems
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsForUser
-import com.avitoohband.nutrun.reminders.runReminderRecoveryAttempt
 import com.avitoohband.nutrun.reminders.executeReminderRecoveryAttempt
 import com.avitoohband.nutrun.reminders.supplementDeliveryId
 import com.avitoohband.nutrun.reminders.supplementDeliveryDecision
 import com.avitoohband.nutrun.reminders.supplementSchedulingDecision
-import com.avitoohband.nutrun.reminders.recoveryWorkResult
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
@@ -304,154 +303,184 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
-    fun recoverySchedulerKeepsUniqueExponentialBackoffWork() = runBlocking {
+    fun recoverySchedulerFansOutSingularKeepWorkWithExactNamesAndBackoff() = runBlocking {
         val enqueuer = RecordingWorkEnqueuer()
-        val state = FakeRecoveryStateStore()
-        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
 
-        scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION, ReminderSystem.SUPPLEMENTS))
 
-        val work = enqueuer.enqueued.single()
-        assertEquals("reminder-reschedule-recovery:user", work.name)
-        assertEquals(ExistingWorkPolicy.KEEP, work.policy)
-        assertEquals("state", work.request.workSpec.input.getString("systems"))
-        assertEquals(BackoffPolicy.EXPONENTIAL, work.request.workSpec.backoffPolicy)
-        assertEquals(15_000L, work.request.workSpec.backoffDelayDuration)
-        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
-    }
-
-    @Test
-    fun recoveryStateMergesDisjointFailuresPerAccountAndDropsRecoveredSystems() = runBlocking {
-        val state = FakeRecoveryStateStore()
-        val enqueuer = RecordingWorkEnqueuer()
-        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
-        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
-        scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
-        scheduler.schedule("other", setOf(ReminderSystem.TRAINING))
-        state.completeAttempt(
-            "user",
-            attempted = setOf(ReminderSystem.HYDRATION),
-            stillFailing = emptySet(),
-            exhausted = false
-        )
-
-        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
-        assertEquals(setOf(ReminderSystem.TRAINING), state.current("other"))
         assertEquals(
             listOf(
-                "reminder-reschedule-recovery:user",
-                "reminder-reschedule-recovery:user",
-                "reminder-reschedule-recovery:other"
+                "reminder-reschedule-recovery:user:HYDRATION",
+                "reminder-reschedule-recovery:user:SUPPLEMENTS"
             ),
             enqueuer.enqueued.map { it.name }
         )
         assertTrue(enqueuer.enqueued.all { it.policy == ExistingWorkPolicy.KEEP })
+        assertEquals(listOf("user", "user"), enqueuer.enqueued.map { it.request.workSpec.input.getString("user_id") })
+        assertEquals(
+            listOf("HYDRATION", "SUPPLEMENTS"),
+            enqueuer.enqueued.map { it.request.workSpec.input.getString("system") }
+        )
+        assertTrue(enqueuer.enqueued.all { it.request.workSpec.input.getString("systems") == null })
+        assertTrue(enqueuer.enqueued.all { it.request.workSpec.backoffPolicy == BackoffPolicy.EXPONENTIAL })
+        assertTrue(enqueuer.enqueued.all { it.request.workSpec.backoffDelayDuration == 15_000L })
     }
 
     @Test
-    fun recoveryAttemptReadsMergedFailuresAndClearsOnlySystemsThatRecovered() = runBlocking {
-        val state = FakeRecoveryStateStore()
-        state.merge("user", setOf(ReminderSystem.HYDRATION))
-        state.merge("other", setOf(ReminderSystem.TRAINING))
-        val attempted = mutableListOf<Set<ReminderSystem>>()
+    fun recoveryWorkNamesIsolateAccountsAndSystems() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
 
-        runReminderRecoveryAttempt("user", state) { systems ->
-            attempted += systems
-            state.merge("user", setOf(ReminderSystem.SUPPLEMENTS))
-            ReminderRescheduleOutcome(emptySet())
-        }
-        runReminderRecoveryAttempt("user", state) { systems ->
-            attempted += systems
-            ReminderRescheduleOutcome(setOf(ReminderSystem.SUPPLEMENTS))
-        }
-        runReminderRecoveryAttempt("user", state) { systems ->
-            attempted += systems
-            ReminderRescheduleOutcome.Complete
-        }
+        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+        scheduler.schedule("user", setOf(ReminderSystem.TRAINING))
+        scheduler.schedule("other", setOf(ReminderSystem.HYDRATION))
 
         assertEquals(
             listOf(
-                setOf(ReminderSystem.HYDRATION),
-                setOf(ReminderSystem.SUPPLEMENTS),
-                setOf(ReminderSystem.SUPPLEMENTS)
+                "reminder-reschedule-recovery:user:HYDRATION",
+                "reminder-reschedule-recovery:user:TRAINING",
+                "reminder-reschedule-recovery:other:HYDRATION"
             ),
-            attempted
+            enqueuer.enqueued.map { it.name }
         )
-        assertTrue(state.current("user").isEmpty())
-        assertEquals(setOf(ReminderSystem.TRAINING), state.current("other"))
     }
 
     @Test
-    fun recoveryAttemptRetriesWhenConcurrentMergeSurvivesCompletion() = runBlocking {
-        val state = FakeRecoveryStateStore()
+    fun recoveryCancellationCoversOnlyTheAccountsThreeSystemNames() {
         val enqueuer = RecordingWorkEnqueuer()
-        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
-        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
 
-        val outcome = runReminderRecoveryAttempt("user", state) {
-            scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
-            ReminderRescheduleOutcome.Complete
-        }
+        scheduler.cancel("user")
+        scheduler.cancel("")
 
-        assertEquals(ReminderRescheduleOutcome(setOf(ReminderSystem.SUPPLEMENTS)), outcome)
-        assertEquals(2, enqueuer.enqueued.size)
-        assertTrue(enqueuer.enqueued.all { it.policy == ExistingWorkPolicy.KEEP })
         assertEquals(
-            com.avitoohband.nutrun.reminders.ReminderRecoveryResult.Retry,
-            recoveryWorkResult(attempt = 0, requiresRecovery = outcome.requiresRecovery)
+            listOf(
+                "reminder-reschedule-recovery:user:HYDRATION",
+                "reminder-reschedule-recovery:user:TRAINING",
+                "reminder-reschedule-recovery:user:SUPPLEMENTS"
+            ),
+            enqueuer.cancelled
         )
     }
 
     @Test
-    fun mergeAfterCompletionCaptureReplacesFinishingChainWithLiveContinuation() = runBlocking {
-        val state = FakeRecoveryStateStore()
-        val enqueuer = RecordingWorkEnqueuer()
-        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
-        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
-        state.afterComplete = { scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS)) }
+    fun recoveryAttemptRunsOnlyItsInputSystemAndSucceedsWhenRecovered() = runBlocking {
+        var rescheduledUser: String? = null
+        var rescheduledSystems: Set<ReminderSystem>? = null
 
-        val attempt = executeReminderRecoveryAttempt("user", state, attempt = 0) {
+        val result = executeReminderRecoveryAttempt(
+            inputData = workDataOf("user_id" to "user", "system" to "SUPPLEMENTS"),
+            attempt = 0,
+            authenticatedUserId = { "user" }
+        ) { userId, systems ->
+            rescheduledUser = userId
+            rescheduledSystems = systems
             ReminderRescheduleOutcome.Complete
         }
 
-        assertEquals(ReminderRecoveryAction.Success, attempt.action)
-        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
-        assertEquals(setOf("reminder-reschedule-recovery:user"), enqueuer.enqueued.map { it.name }.toSet())
-        assertEquals(ExistingWorkPolicy.REPLACE, enqueuer.enqueued.last().policy)
-        assertEquals("reminder-reschedule-recovery:user", enqueuer.enqueued.last().name)
+        assertEquals(ReminderRecoveryResult.Success, result)
+        assertEquals("user", rescheduledUser)
+        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), rescheduledSystems)
     }
 
     @Test
-    fun finalAttemptHandsOffOnlyNewUnattemptedFailures() = runBlocking {
-        val state = FakeRecoveryStateStore()
-        val enqueuer = RecordingWorkEnqueuer()
-        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer, state)
-        scheduler.schedule("user", setOf(ReminderSystem.HYDRATION))
+    fun recoveryAttemptsZeroOneAndTwoHaveBoundedFailureResults() = runBlocking {
+        val attemptedSystems = mutableListOf<Set<ReminderSystem>>()
 
-        val attempt = executeReminderRecoveryAttempt("user", state, attempt = 2) { systems ->
-            assertEquals(setOf(ReminderSystem.HYDRATION), systems)
-            scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
-            ReminderRescheduleOutcome(setOf(ReminderSystem.HYDRATION))
+        val results = listOf(0, 1, 2).map { attempt ->
+            executeReminderRecoveryAttempt(
+                inputData = workDataOf("user_id" to "user", "system" to "HYDRATION"),
+                attempt = attempt,
+                authenticatedUserId = { "user" }
+            ) { _, systems ->
+                attemptedSystems += systems
+                ReminderRescheduleOutcome(setOf(ReminderSystem.HYDRATION))
+            }
         }
 
-        val handoff = attempt.action as ReminderRecoveryAction.Handoff
-        assertEquals(ReminderRecoveryAction.Handoff(setOf(ReminderSystem.SUPPLEMENTS)), handoff)
-        scheduler.schedule("user", handoff.systems)
-        assertEquals(ExistingWorkPolicy.REPLACE, enqueuer.enqueued.last().policy)
-        assertEquals(setOf(ReminderSystem.SUPPLEMENTS), state.current("user"))
+        assertEquals(
+            listOf(ReminderRecoveryResult.Retry, ReminderRecoveryResult.Retry, ReminderRecoveryResult.Failure),
+            results
+        )
+        assertEquals(List(3) { setOf(ReminderSystem.HYDRATION) }, attemptedSystems)
     }
 
     @Test
-    fun finalAttemptStopsAlreadyExhaustedFailureWithoutContinuation() = runBlocking {
-        val state = FakeRecoveryStateStore()
-        state.merge("user", setOf(ReminderSystem.HYDRATION))
-
-        val attempt = executeReminderRecoveryAttempt("user", state, attempt = 2) {
-            ReminderRescheduleOutcome(setOf(ReminderSystem.HYDRATION))
+    fun recoveryExceptionsUseTheSameAttemptCap() = runBlocking {
+        val results = listOf(0, 1, 2).map { attempt ->
+            executeReminderRecoveryAttempt(
+                inputData = workDataOf("user_id" to "user", "system" to "TRAINING"),
+                attempt = attempt,
+                authenticatedUserId = { "user" }
+            ) { _, _ ->
+                throw IllegalStateException("scheduler unavailable")
+            }
         }
 
-        assertEquals(ReminderRecoveryAction.Failure, attempt.action)
-        assertTrue(state.current("user").isEmpty())
+        assertEquals(
+            listOf(ReminderRecoveryResult.Retry, ReminderRecoveryResult.Retry, ReminderRecoveryResult.Failure),
+            results
+        )
+    }
+
+    @Test
+    fun recoveryCancellationPropagates() {
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                executeReminderRecoveryAttempt(
+                    inputData = workDataOf("user_id" to "user", "system" to "TRAINING"),
+                    attempt = 0,
+                    authenticatedUserId = { "user" }
+                ) { _, _ ->
+                    throw CancellationException("cancelled")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun malformedAndLegacyPluralRecoveryInputFailBeforeAccountReadsOrRescheduling() = runBlocking {
+        var accountReads = 0
+        var rescheduleCalls = 0
+        val malformedInputs = listOf(
+            workDataOf("system" to "HYDRATION"),
+            workDataOf("user_id" to "", "system" to "HYDRATION"),
+            workDataOf("user_id" to "user", "system" to "UNKNOWN"),
+            workDataOf("user_id" to "user", "systems" to "HYDRATION")
+        )
+
+        val results = malformedInputs.map { inputData ->
+            executeReminderRecoveryAttempt(
+                inputData = inputData,
+                attempt = 0,
+                authenticatedUserId = { accountReads += 1; "user" }
+            ) { _, _ ->
+                rescheduleCalls += 1
+                ReminderRescheduleOutcome.Complete
+            }
+        }
+
+        assertEquals(List(4) { ReminderRecoveryResult.Failure }, results)
+        assertEquals(0, accountReads)
+        assertEquals(0, rescheduleCalls)
+    }
+
+    @Test
+    fun recoveryAccountMismatchSucceedsWithoutRescheduling() = runBlocking {
+        var rescheduleCalls = 0
+
+        val result = executeReminderRecoveryAttempt(
+            inputData = workDataOf("user_id" to "user", "system" to "SUPPLEMENTS"),
+            attempt = 0,
+            authenticatedUserId = { "other" }
+        ) { _, _ ->
+            rescheduleCalls += 1
+            ReminderRescheduleOutcome.Failed
+        }
+
+        assertEquals(ReminderRecoveryResult.Success, result)
+        assertEquals(0, rescheduleCalls)
     }
 
     @Test
@@ -499,14 +528,6 @@ class SupplementReminderWorkerTest {
         assertEquals(zone.id, store.savedSupplementSettings.single().timezoneId)
         assertTrue("supplements" in schedulers.calls)
         assertEquals(listOf("user" to setOf(ReminderSystem.HYDRATION)), recovered)
-    }
-
-    @Test
-    fun recoveryExhaustionReturnsFailureAtTheNamedAttemptLimit() {
-        assertEquals(
-            com.avitoohband.nutrun.reminders.ReminderRecoveryResult.Failure,
-            recoveryWorkResult(attempt = 2, requiresRecovery = true)
-        )
     }
 
     private fun dailySupplement(
@@ -613,38 +634,6 @@ class SupplementReminderWorkerTest {
             if (throwOnRelease) throw IllegalStateException()
             releaseCalls += 1
             state = SupplementDeliveryClaim.Available
-        }
-    }
-
-    private class FakeRecoveryStateStore : com.avitoohband.nutrun.reminders.ReminderRecoveryStateStore {
-        private val values = mutableMapOf<String, Set<ReminderSystem>>()
-        private val closing = mutableSetOf<String>()
-        var afterComplete: (suspend () -> Unit)? = null
-        override suspend fun current(userId: String): Set<ReminderSystem> = values[userId].orEmpty()
-        override suspend fun merge(userId: String, systems: Set<ReminderSystem>): ExistingWorkPolicy {
-            values[userId] = values[userId].orEmpty() + systems
-            return if (userId in closing) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
-        }
-        override suspend fun beginAttempt(userId: String) {
-            closing -= userId
-        }
-        override suspend fun completeAttempt(
-            userId: String,
-            attempted: Set<ReminderSystem>,
-            stillFailing: Set<ReminderSystem>,
-            exhausted: Boolean
-        ): com.avitoohband.nutrun.reminders.ReminderRecoveryCompletion {
-            val unresolved = (values[userId].orEmpty() - attempted) + stillFailing
-            val pending = if (exhausted) unresolved - attempted else unresolved
-            values[userId] = pending
-            if (pending.isEmpty() || exhausted) closing += userId
-            afterComplete?.invoke()
-            return com.avitoohband.nutrun.reminders.ReminderRecoveryCompletion(
-                pendingSystems = pending,
-                retryCurrentWork = !exhausted && pending.isNotEmpty(),
-                handoffSystems = if (exhausted) pending else emptySet(),
-                exhaustedFailure = exhausted && stillFailing.any { it in attempted }
-            )
         }
     }
 

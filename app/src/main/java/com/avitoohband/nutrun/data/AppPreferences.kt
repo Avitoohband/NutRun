@@ -94,60 +94,6 @@ class AppPreferences @Inject constructor(
         context.dataStore.edit { it[Keys.subscriber(userId)] = enabled }
     }
 
-    suspend fun reminderRecoverySystems(userId: String): Set<String> = context.dataStore.data.first()
-        .get(Keys.reminderRecoverySystems(userId))
-        ?.split(',')
-        ?.filter(String::isNotBlank)
-        ?.toSet()
-        .orEmpty()
-
-    suspend fun mergeReminderRecoverySystems(userId: String, systems: Set<String>): Boolean {
-        var replaceFinishingWork = false
-        context.dataStore.edit { values ->
-            replaceFinishingWork = values[Keys.reminderRecoveryClosing(userId)] == true
-            val merged = reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) + systems
-            values[Keys.reminderRecoverySystems(userId)] = merged.sorted().joinToString(",")
-        }
-        return replaceFinishingWork
-    }
-
-    suspend fun beginReminderRecoveryAttempt(userId: String) {
-        context.dataStore.edit { it[Keys.reminderRecoveryClosing(userId)] = false }
-    }
-
-    data class ReminderRecoveryCompletion(
-        val pendingSystems: Set<String>,
-        val retryCurrentWork: Boolean,
-        val handoffSystems: Set<String>,
-        val exhaustedFailure: Boolean
-    )
-
-    suspend fun completeReminderRecoveryAttempt(
-        userId: String,
-        attempted: Set<String>,
-        stillFailing: Set<String>,
-        exhausted: Boolean
-    ): ReminderRecoveryCompletion {
-        var completion = ReminderRecoveryCompletion(emptySet(), false, emptySet(), false)
-        context.dataStore.edit { values ->
-            val unresolved =
-                (reminderRecoverySystems(values[Keys.reminderRecoverySystems(userId)]) - attempted) + stillFailing
-            val pending = if (exhausted) unresolved - attempted else unresolved
-            val retryCurrentWork = !exhausted && pending.isNotEmpty()
-            val handoffSystems = if (exhausted) pending else emptySet()
-            completion = ReminderRecoveryCompletion(
-                pendingSystems = pending,
-                retryCurrentWork = retryCurrentWork,
-                handoffSystems = handoffSystems,
-                exhaustedFailure = exhausted && stillFailing.any { it in attempted }
-            )
-            if (pending.isEmpty()) values.remove(Keys.reminderRecoverySystems(userId))
-            else values[Keys.reminderRecoverySystems(userId)] = pending.sorted().joinToString(",")
-            values[Keys.reminderRecoveryClosing(userId)] = !retryCurrentWork
-        }
-        return completion
-    }
-
     suspend fun clearAccount(userId: String) {
         context.dataStore.edit { values ->
             values.remove(Keys.email(userId))
@@ -159,9 +105,4 @@ class AppPreferences @Inject constructor(
         }
     }
 
-    private fun reminderRecoverySystems(value: String?): Set<String> = value
-        ?.split(',')
-        ?.filter(String::isNotBlank)
-        ?.toSet()
-        .orEmpty()
 }
