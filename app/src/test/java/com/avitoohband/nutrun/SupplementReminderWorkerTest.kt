@@ -328,6 +328,27 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
+    fun repeatedRecoverySchedulingKeepsTheSameAccountSystemWorkName() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+
+        scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+        scheduler.schedule("user", setOf(ReminderSystem.SUPPLEMENTS))
+
+        assertEquals(
+            listOf(
+                "reminder-reschedule-recovery:user:SUPPLEMENTS",
+                "reminder-reschedule-recovery:user:SUPPLEMENTS"
+            ),
+            enqueuer.enqueued.map { it.name }
+        )
+        assertEquals(
+            listOf(ExistingWorkPolicy.KEEP, ExistingWorkPolicy.KEEP),
+            enqueuer.enqueued.map { it.policy }
+        )
+    }
+
+    @Test
     fun recoveryWorkNamesIsolateAccountsAndSystems() = runBlocking {
         val enqueuer = RecordingWorkEnqueuer()
         val scheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
