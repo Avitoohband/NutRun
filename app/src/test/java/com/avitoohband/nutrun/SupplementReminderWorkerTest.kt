@@ -525,7 +525,7 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
-    fun receiverOnReceiveRunsFactoryRescheduleAndRecoveryForTimezoneChange() {
+    fun receiverIgnoresUnrelatedActionsAndDispatchesBootAndTimezoneChanges() {
         val store = FakeReceiverStore()
         val schedulers = FakeReceiverSchedulers(failHydration = true)
         val recovered = mutableListOf<Pair<String, Set<ReminderSystem>>>()
@@ -543,12 +543,13 @@ class SupplementReminderWorkerTest {
         )
 
         receiver.onReceive(ContextWrapper(null), TestIntent("unrelated"))
+        receiver.onReceive(ContextWrapper(null), TestIntent(Intent.ACTION_BOOT_COMPLETED))
         receiver.onReceive(ContextWrapper(null), TestIntent(Intent.ACTION_TIMEZONE_CHANGED))
 
-        assertEquals(1, factoryCalls)
-        assertEquals(zone.id, store.savedSupplementSettings.single().timezoneId)
-        assertTrue("supplements" in schedulers.calls)
-        assertEquals(listOf("user" to setOf(ReminderSystem.HYDRATION)), recovered)
+        assertEquals(2, factoryCalls)
+        assertEquals(List(2) { zone.id }, store.savedSupplementSettings.map { it.timezoneId })
+        assertEquals(2, schedulers.calls.count { it == "supplements" })
+        assertEquals(List(2) { "user" to setOf(ReminderSystem.HYDRATION) }, recovered)
     }
 
     private fun dailySupplement(

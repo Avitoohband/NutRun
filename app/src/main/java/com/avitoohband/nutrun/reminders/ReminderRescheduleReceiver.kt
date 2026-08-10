@@ -76,10 +76,14 @@ private object AndroidReminderRescheduleReceiverRuntime : ReminderRescheduleRece
 class ReminderRescheduleReceiver(
     private val dispatcherFactory: (Context) -> ReminderRescheduleReceiverDispatcher =
         { context -> reminderRescheduleReceiverDispatcher(context) },
-    private val runtime: ReminderRescheduleReceiverRuntime = AndroidReminderRescheduleReceiverRuntime
+    private val runtime: ReminderRescheduleReceiverRuntime = AndroidReminderRescheduleReceiverRuntime,
+    private val acceptedActions: Set<String> = setOf(
+        Intent.ACTION_TIMEZONE_CHANGED,
+        Intent.ACTION_BOOT_COMPLETED
+    )
 ) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_TIMEZONE_CHANGED && intent.action != Intent.ACTION_BOOT_COMPLETED) {
+        if (intent.action !in acceptedActions) {
             return
         }
         runtime.launch(this) {
