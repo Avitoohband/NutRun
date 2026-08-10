@@ -34,6 +34,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -109,7 +110,13 @@ class ReminderRescheduleReceiverProductionTest {
         val workManager = WorkManager.getInstance(context)
         val runtime = ControlledReceiverRuntime()
         val workNames = touchedWorkNames(userId)
-        val currentZone = ZoneId.systemDefault().id
+        val currentZone = ZoneId.systemDefault()
+        val seededZone = alternativeZone(currentZone)
+        assertNotEquals(
+            "Fixture timezone must differ from system timezone",
+            currentZone.id,
+            seededZone.id
+        )
 
         try {
             cleanupFixture(workManager, workNames, dao, preferences, userId)
@@ -144,9 +151,10 @@ class ReminderRescheduleReceiverProductionTest {
                     id = "supplement-reminders:$userId",
                     userId = userId,
                     enabled = true,
-                    timezoneId = "UTC"
+                    timezoneId = seededZone.id
                 )
             )
+            assertEquals(seededZone.id, dao.supplementReminderSettings(userId)?.timezoneId)
 
             val receiver = ReminderRescheduleReceiver(runtime = runtime)
             receiver.onReceive(context, Intent(Intent.ACTION_TIMEZONE_CHANGED))
@@ -155,7 +163,13 @@ class ReminderRescheduleReceiverProductionTest {
             awaitWorkExists(workManager, "supplement-reminder:$userId")
             awaitWorkExists(workManager, "reminder-reschedule-recovery:$userId:TRAINING")
 
-            assertEquals(currentZone, dao.supplementReminderSettings(userId)?.timezoneId)
+            val persistedZone = dao.supplementReminderSettings(userId)?.timezoneId
+            assertNotEquals(
+                "Receiver must replace the seeded supplement timezone",
+                seededZone.id,
+                persistedZone
+            )
+            assertEquals(currentZone.id, persistedZone)
             assertTrue(workInfos(workManager, "supplement-reminder:$userId").isNotEmpty())
             assertTrue(
                 workInfos(workManager, "reminder-reschedule-recovery:$userId:TRAINING").isNotEmpty()
@@ -185,6 +199,10 @@ class ReminderRescheduleReceiverProductionTest {
             work()
         }
     }
+
+    private fun alternativeZone(currentZone: ZoneId): ZoneId =
+        listOf(ZoneId.of("UTC"), ZoneId.of("Pacific/Auckland"))
+            .first { it.id != currentZone.id }
 
     private fun validSupplementPayload() = encodeTrainingState(
         supplements = listOf(
