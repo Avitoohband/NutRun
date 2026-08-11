@@ -2,16 +2,28 @@ package com.avitoohband.nutrun
 
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
+import com.avitoohband.nutrun.data.FoodLogEntity
+import com.avitoohband.nutrun.data.FoodTemplateEntity
+import com.avitoohband.nutrun.data.HydrationPlanEntity
 import com.avitoohband.nutrun.data.SessionPreferences
 import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
+import com.avitoohband.nutrun.data.WalkPointEntity
+import com.avitoohband.nutrun.data.WalkSessionEntity
+import com.avitoohband.nutrun.data.WaterLogEntity
+import com.avitoohband.nutrun.data.WeightEntryEntity
+import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
 import com.avitoohband.nutrun.reminders.ReminderWorkEnqueuer
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.SupplementReminderSchedulerStore
+import java.time.LocalDate
 import java.time.ZonedDateTime
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -19,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,6 +46,8 @@ class NutRunViewModelReminderTest {
 
         assertEquals("account-a", model.state.value.session.authenticatedUserId)
         assertTrue(runtime.settingsReads > 0)
+        assertEquals(listOf("account-a"), runtime.hydrationSchedules.map { it.userId })
+        assertEquals(listOf("account-a"), runtime.trainingSchedules.map { it.first })
         assertEquals(listOf("supplement-reminder:account-a"), runtime.work.enqueued)
         runtime.work.clear()
 
@@ -97,6 +112,20 @@ class NutRunViewModelReminderTest {
         assertTrue(runtime.savedSettings.isEmpty())
     }
 
+    @Test
+    fun signOutPropagatesCancellationFromSessionClear() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val cancellation = CancellationException("cancelled")
+        runtime.signOutPreferencesFailure = cancellation
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        val completionCause = CompletableDeferred<Throwable?>()
+
+        val signOut = model.signOut()
+        signOut.invokeOnCompletion(completionCause::complete)
+
+        assertSame(cancellation, completionCause.await())
+    }
+
     private class ReminderRuntime(initialAccount: String? = null) :
         NutRunViewModelReminderRuntime,
         SupplementReminderSchedulingStore,
@@ -106,17 +135,31 @@ class NutRunViewModelReminderTest {
             "account-b" to testSettings(enabled = false)
         )
         override val session = MutableStateFlow(SessionPreferences(authenticatedUserId = initialAccount))
+        override val profile = MutableStateFlow<UserProfile?>(null)
+        override val hydrationPlan = MutableStateFlow(HydrationPlanEntity())
+        override val weights = MutableStateFlow<List<WeightEntryEntity>>(emptyList())
+        override val walks = MutableStateFlow<List<WalkSessionEntity>>(emptyList())
+        override val activeWalk = MutableStateFlow<WalkSessionEntity?>(null)
+        override val trainingReminderSettings = MutableStateFlow(TrainingReminderSettingsEntity())
         override val supplementReminderSettings = MutableStateFlow(settingsFor(initialAccount))
+        override val recentFoods = MutableStateFlow<List<FoodLogEntity>>(emptyList())
+        override val foodTemplates = MutableStateFlow<List<FoodTemplateEntity>>(emptyList())
+        private val food = MutableStateFlow<List<FoodLogEntity>>(emptyList())
+        private val water = MutableStateFlow<List<WaterLogEntity>>(emptyList())
+        private val walkPoints = MutableStateFlow<List<WalkPointEntity>>(emptyList())
         val work = RecordingWork()
         val events = mutableListOf<String>()
         val savedSettings = mutableListOf<Pair<String, SupplementReminderSettingsEntity>>()
+        val hydrationSchedules = mutableListOf<HydrationPlanEntity>()
+        val trainingSchedules = mutableListOf<Pair<String, TrainingReminderSettingsEntity>>()
         var settingsReads = 0
         var saveGate: CompletableDeferred<Unit>? = null
         val saveStarted = CompletableDeferred<Unit>()
         var clearGate: CompletableDeferred<Unit>? = null
         val clearStarted = CompletableDeferred<Unit>()
+        var signOutPreferencesFailure: CancellationException? = null
 
-        override val schedulingCoordinator by lazy {
+        val schedulingCoordinator by lazy {
             SupplementReminderSchedulingCoordinator(
                 store = this,
                 supplementReminderScheduler = SupplementReminderScheduler(
@@ -128,6 +171,12 @@ class NutRunViewModelReminderTest {
             )
         }
 
+        override fun food(date: LocalDate): Flow<List<FoodLogEntity>> = food
+
+        override fun water(date: LocalDate): Flow<List<WaterLogEntity>> = water
+
+        override fun walkPoints(sessionId: String): Flow<List<WalkPointEntity>> = walkPoints
+
         fun selectAccount(accountId: String) {
             supplementReminderSettings.value = settingsFor(accountId)
             session.value = SessionPreferences(authenticatedUserId = accountId)
@@ -138,6 +187,20 @@ class NutRunViewModelReminderTest {
             settings[accountId] = testSettings(enabled)
             supplementReminderSettings.value = settingsFor(accountId)
         }
+
+        override fun scheduleHydration(plan: HydrationPlanEntity) {
+            hydrationSchedules += plan
+        }
+
+        override fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) {
+            trainingSchedules += userId to settings
+        }
+
+        override suspend fun rescheduleSupplementReminders(userId: String) {
+            schedulingCoordinator.reschedule(userId)
+        }
+
+        override suspend fun currentSession(): SessionPreferences = session.value
 
         fun settingsFor(accountId: String?): SupplementReminderSettingsEntity =
             accountId?.let(settings::get) ?: SupplementReminderSettingsEntity()
@@ -168,9 +231,17 @@ class NutRunViewModelReminderTest {
             events += "preferences-start"
             clearStarted.complete(Unit)
             clearGate?.await()
+            signOutPreferencesFailure?.let { throw it }
             session.value = SessionPreferences()
             supplementReminderSettings.value = SupplementReminderSettingsEntity()
             events += "preferences-cleared"
+        }
+
+        override suspend fun signOutReminders(
+            userId: String,
+            clearSession: suspend () -> Unit
+        ) {
+            schedulingCoordinator.signOut(userId, clearSession)
         }
 
         override suspend fun currentUserId(): String? = session.value.authenticatedUserId
