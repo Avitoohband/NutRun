@@ -22,17 +22,30 @@ import org.junit.Test
 
 class TrainingViewModelTest {
     @Test
-    fun reminderBulkSaveWaitsForTheCurrentAccountsTrainingRestore() = runBlocking {
+    fun reminderBulkSaveReportsReadinessAndAppliesOnlyAfterAccountRestore() = runBlocking {
         val runtime = FakeTrainingViewModelRuntime(session = SessionPreferences(authenticatedUserId = "account-a"))
         val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        val defaults = model.supplements.toList()
 
-        model.updateSupplementReminders(mapOf("supplement-1" to SupplementReminderConfig(true, 600)))
+        val blocked = model.updateSupplementReminders(
+            mapOf("supplement-1" to SupplementReminderConfig(true, 600))
+        )
 
+        assertEquals(SupplementReminderUpdateResult.NOT_READY, blocked)
+        assertFalse(model.supplementReminderUpdatesReady)
+        assertEquals(defaults, model.supplements.toList())
         assertTrue(runtime.savedPayloads.isEmpty())
         runtime.trainingStates.emit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
 
         assertEquals("Stored", model.supplements.single().name)
-        assertTrue(runtime.savedPayloads.isEmpty())
+        assertTrue(model.supplementReminderUpdatesReady)
+        val applied = model.updateSupplementReminders(
+            mapOf("stored-supplement" to SupplementReminderConfig(true, 600))
+        )
+        assertEquals(SupplementReminderUpdateResult.APPLIED, applied)
+        assertTrue(model.supplements.single().reminderEnabled)
+        assertEquals(600, model.supplements.single().reminderMinute)
+        assertEquals(1, runtime.savedPayloads.size)
     }
 
     @Test

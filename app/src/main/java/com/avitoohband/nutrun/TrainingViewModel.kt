@@ -35,6 +35,11 @@ data class SupplementReminderConfig(
     val minute: Int
 )
 
+enum class SupplementReminderUpdateResult {
+    APPLIED,
+    NOT_READY
+}
+
 internal interface TrainingViewModelRuntime {
     val session: Flow<SessionPreferences>
     fun trainingState(userId: String): Flow<TrainingStateEntity?>
@@ -135,6 +140,8 @@ class TrainingViewModel private constructor(
     private var restoredPayload: String? = null
     private var restoredUserId: String? = null
 
+    var supplementReminderUpdatesReady by mutableStateOf(runtime == null)
+        private set
     var isAuthenticated by mutableStateOf(false)
         private set
     var notificationPermissionGranted by mutableStateOf(false)
@@ -178,6 +185,7 @@ class TrainingViewModel private constructor(
                     currentUserId = session.authenticatedUserId
                     restoredPayload = null
                     restoredUserId = null
+                    supplementReminderUpdatesReady = false
                     resetTrainingState()
                     session.authenticatedUserId?.let { userId ->
                         runtime.trainingState(userId).collectLatest { state ->
@@ -187,7 +195,10 @@ class TrainingViewModel private constructor(
                                     restoredPayload = it
                                     restoreTrainingState(it)
                                 }
-                            if (currentUserId == userId) restoredUserId = userId
+                            if (currentUserId == userId) {
+                                restoredUserId = userId
+                                supplementReminderUpdatesReady = true
+                            }
                         }
                     }
                 }
@@ -300,8 +311,13 @@ class TrainingViewModel private constructor(
         persistTrainingState(rescheduleSupplementReminders = true)
     }
 
-    fun updateSupplementReminders(configurations: Map<String, SupplementReminderConfig>) {
+    fun updateSupplementReminders(
+        configurations: Map<String, SupplementReminderConfig>
+    ): SupplementReminderUpdateResult {
         configurations.values.forEach { requireValidReminderMinute(it.minute) }
+        if (runtime != null && !supplementReminderUpdatesReady) {
+            return SupplementReminderUpdateResult.NOT_READY
+        }
         supplements.indices.forEach { index ->
             configurations[supplements[index].id]?.let { config ->
                 supplements[index] = supplements[index].copy(
@@ -311,6 +327,7 @@ class TrainingViewModel private constructor(
             }
         }
         persistTrainingState(rescheduleSupplementReminders = true)
+        return SupplementReminderUpdateResult.APPLIED
     }
 
     fun addSession(name: String, weekday: DayOfWeek) {

@@ -13,6 +13,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -24,6 +25,40 @@ data class SupplementReminderDraft(
     val enabled: Boolean,
     val time: String
 )
+
+internal val SupplementReminderDraftsSaver =
+    Saver<Map<String, SupplementReminderDraft>, ArrayList<String>>(
+        save = { drafts ->
+            ArrayList<String>(drafts.size * 3).apply {
+                drafts.forEach { (id, draft) ->
+                    add(id)
+                    add(if (draft.enabled) "1" else "0")
+                    add(draft.time)
+                }
+            }
+        },
+        restore = { values ->
+            values.chunked(3)
+                .filter { it.size == 3 }
+                .associate { (id, enabled, time) ->
+                    id to SupplementReminderDraft(enabled == "1", time)
+                }
+        }
+    )
+
+internal fun reconcileSupplementReminderDrafts(
+    drafts: Map<String, SupplementReminderDraft>,
+    supplements: List<Supplement>
+): Map<String, SupplementReminderDraft> =
+    supplements.associate { supplement ->
+        supplement.id to (
+            drafts[supplement.id]
+                ?: SupplementReminderDraft(
+                    enabled = supplement.reminderEnabled,
+                    time = formatReminderMinute(supplement.reminderMinute)
+                )
+            )
+    }
 
 @Composable
 fun SupplementReminderSettingsCard(
