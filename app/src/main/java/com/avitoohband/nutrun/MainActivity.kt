@@ -24,6 +24,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -168,6 +171,7 @@ class MainActivity : ComponentActivity() {
                         navigationRequest = null
                         intent.removeExtra(EXTRA_DESTINATION)
                         intent.removeExtra(EXTRA_WATER_SECTION)
+                        intent.removeExtra(EXTRA_SUPPLEMENTS_SECTION)
                     }
                 }
             )
@@ -183,20 +187,23 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_DESTINATION = "destination"
         const val EXTRA_WATER_SECTION = "water_section"
+        const val EXTRA_SUPPLEMENTS_SECTION = "supplements_section"
     }
 }
 
 data class NavigationRequest(
     val id: Long = System.nanoTime(),
     val destination: String,
-    val focusWater: Boolean = false
+    val focusWater: Boolean = false,
+    val focusSupplements: Boolean = false
 )
 
 private fun Intent.toNavigationRequest(): NavigationRequest? =
     getStringExtra(MainActivity.EXTRA_DESTINATION)?.let {
         NavigationRequest(
             destination = it,
-            focusWater = getBooleanExtra(MainActivity.EXTRA_WATER_SECTION, false)
+            focusWater = getBooleanExtra(MainActivity.EXTRA_WATER_SECTION, false),
+            focusSupplements = getBooleanExtra(MainActivity.EXTRA_SUPPLEMENTS_SECTION, false)
         )
     }
 
@@ -487,6 +494,7 @@ private fun MainApp(
 ) {
     val navController = rememberNavController()
     var waterFocusRequest by rememberSaveable { mutableStateOf(0) }
+    var supplementsFocusRequest by rememberSaveable { mutableStateOf(0) }
     fun navigateTo(destination: String, focusWater: Boolean = false) {
         if (focusWater) waterFocusRequest += 1
         navController.navigate(destination) {
@@ -499,6 +507,7 @@ private fun MainApp(
             ?: return@LaunchedEffect
         navController.currentBackStackEntryFlow.first()
         if (request.focusWater) waterFocusRequest += 1
+        if (request.focusSupplements) supplementsFocusRequest += 1
         navController.navigate(request.destination) {
             launchSingleTop = true
         }
@@ -581,7 +590,8 @@ private fun MainApp(
                     training,
                     onTrainingClick = { navigateTo("training") },
                     onWaterClick = { navigateTo("nutrition", focusWater = true) },
-                    onManageSupplements = { navController.navigate("supplements") }
+                    onManageSupplements = { navController.navigate("supplements") },
+                    supplementsFocusRequest = supplementsFocusRequest
                 )
             }
             composable("training") { TrainingScreen(training) }
@@ -617,34 +627,61 @@ private fun MainApp(
                 NotificationSettingsScreen(
                     app,
                     state,
-                    onBack = { navController.popBackStack() }
+                    training,
+                    onBack = { navController.popBackStack() },
+                    onManageSupplements = { navController.navigate("supplements") }
                 )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TodayScreen(
     state: NutRunUiState,
     training: TrainingViewModel,
     onTrainingClick: () -> Unit,
     onWaterClick: () -> Unit,
-    onManageSupplements: () -> Unit
+    onManageSupplements: () -> Unit,
+    supplementsFocusRequest: Int = 0
 ) {
     val profile = state.profile ?: return
+    val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
+    fun requestNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    val listState = rememberLazyListState()
+    val supplementsHeadingRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(supplementsFocusRequest) {
+        if (supplementsFocusRequest > 0) {
+            listState.animateScrollToItem(6)
+            supplementsHeadingRequester.bringIntoView()
+        }
+    }
     var addSupplement by remember { mutableStateOf(false) }
     if (addSupplement) {
         AddSupplementDialog(
             onDismiss = { addSupplement = false },
-            onAdd = { name, dose, schedule ->
-                training.addSupplement(name, dose, schedule)
+            onAdd = { name, dose, schedule, reminderEnabled, reminderMinute ->
+                training.addSupplement(name, dose, schedule, reminderEnabled, reminderMinute)
+                if (reminderEnabled) requestNotificationPermission()
                 addSupplement = false
             }
         )
     }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        state = listState,
         contentPadding = PaddingValues(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -705,7 +742,13 @@ private fun TodayScreen(
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SectionHeading("Supplements", Modifier.weight(1f))
+                SectionHeading(
+                    "Supplements",
+                    Modifier
+                        .weight(1f)
+                        .bringIntoViewRequester(supplementsHeadingRequester)
+                        .testTag("today-supplements-heading")
+                )
                 TextButton(
                     onClick = onManageSupplements,
                     modifier = Modifier.testTag("manage-supplements")
@@ -758,6 +801,19 @@ private fun SupplementsScreen(
     training: TrainingViewModel,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
+    fun requestNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     var addSupplement by remember { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<Supplement?>(null) }
     var editingSupplement by remember { mutableStateOf<Supplement?>(null) }
@@ -765,8 +821,9 @@ private fun SupplementsScreen(
     if (addSupplement) {
         AddSupplementDialog(
             onDismiss = { addSupplement = false },
-            onAdd = { name, dose, schedule ->
-                training.addSupplement(name, dose, schedule)
+            onAdd = { name, dose, schedule, reminderEnabled, reminderMinute ->
+                training.addSupplement(name, dose, schedule, reminderEnabled, reminderMinute)
+                if (reminderEnabled) requestNotificationPermission()
                 addSupplement = false
             }
         )
@@ -775,8 +832,16 @@ private fun SupplementsScreen(
         AddSupplementDialog(
             existing = supplement,
             onDismiss = { editingSupplement = null },
-            onAdd = { name, dose, schedule ->
-                training.updateSupplement(supplement.id, name, dose, schedule)
+            onAdd = { name, dose, schedule, reminderEnabled, reminderMinute ->
+                training.updateSupplement(
+                    supplement.id,
+                    name,
+                    dose,
+                    schedule,
+                    reminderEnabled,
+                    reminderMinute
+                )
+                if (reminderEnabled) requestNotificationPermission()
                 editingSupplement = null
             }
         )
@@ -2864,7 +2929,9 @@ private fun EditHealthDetailsScreen(
 private fun NotificationSettingsScreen(
     app: NutRunViewModel,
     state: NutRunUiState,
-    onBack: () -> Unit
+    trainingModel: TrainingViewModel,
+    onBack: () -> Unit,
+    onManageSupplements: () -> Unit
 ) {
     val context = LocalContext.current
     var waterEnabled by rememberSaveable(state.hydrationPlan.remindersEnabled) {
@@ -2883,6 +2950,24 @@ private fun NotificationSettingsScreen(
     var trainingEnabled by rememberSaveable(training.enabled) { mutableStateOf(training.enabled) }
     var previousTime by rememberSaveable(training.previousDayMinute) { mutableStateOf(formatMinute(training.previousDayMinute)) }
     var sameTime by rememberSaveable(training.sameDayMinute) { mutableStateOf(formatMinute(training.sameDayMinute)) }
+    val supplementSettings = state.supplementReminderSettings
+    var supplementMasterEnabled by rememberSaveable(supplementSettings.enabled) {
+        mutableStateOf(supplementSettings.enabled)
+    }
+    val supplements = trainingModel.supplements.toList()
+    val supplementDraftSource = supplements.map { supplement ->
+        Triple(supplement.id, supplement.reminderEnabled, supplement.reminderMinute)
+    }
+    var supplementDrafts by remember(supplementDraftSource) {
+        mutableStateOf(
+            supplements.associate { supplement ->
+                supplement.id to SupplementReminderDraft(
+                    enabled = supplement.reminderEnabled,
+                    time = formatReminderMinute(supplement.reminderMinute)
+                )
+            }
+        )
+    }
     var permissionGranted by remember {
         mutableStateOf(
             android.os.Build.VERSION.SDK_INT < 33 ||
@@ -2903,9 +2988,17 @@ private fun NotificationSettingsScreen(
     val endMinute = parseMinute(wakingEnd)
     val previousMinute = parseMinute(previousTime)
     val sameMinute = parseMinute(sameTime)
+    val supplementMinutes = supplements.associate { supplement ->
+        val draft = supplementDrafts[supplement.id]
+            ?: SupplementReminderDraft(
+                supplement.reminderEnabled,
+                formatReminderMinute(supplement.reminderMinute)
+            )
+        supplement.id to parseReminderMinute(draft.time)
+    }
     val valid = intervalValue != null && intervalValue >= 15 &&
         startMinute != null && endMinute != null && endMinute > startMinute &&
-        previousMinute != null && sameMinute != null
+        previousMinute != null && sameMinute != null && supplementMinutes.values.all { it != null }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(16.dp),
@@ -2947,7 +3040,20 @@ private fun NotificationSettingsScreen(
                 }
             }
         }
-        if (!permissionGranted && (waterEnabled || trainingEnabled)) {
+        item {
+            SupplementReminderSettingsCard(
+                masterEnabled = supplementMasterEnabled,
+                onMasterEnabledChange = { supplementMasterEnabled = it },
+                supplements = supplements,
+                drafts = supplementDrafts,
+                onDraftsChange = { supplementDrafts = it },
+                onPermissionRequest = ::requestPermission,
+                onManageSupplements = onManageSupplements
+            )
+        }
+        val supplementPermissionRequired = supplementMasterEnabled ||
+            supplementDrafts.values.any(SupplementReminderDraft::enabled)
+        if (!permissionGranted && (waterEnabled || trainingEnabled || supplementPermissionRequired)) {
             item {
                 Card(
                     shape = RoundedCornerShape(8.dp),
@@ -2986,6 +3092,25 @@ private fun NotificationSettingsScreen(
                             timezoneId = java.time.ZoneId.systemDefault().id
                         )
                     )
+                    app.saveSupplementReminderSettings(
+                        supplementSettings.copy(
+                            enabled = supplementMasterEnabled,
+                            timezoneId = java.time.ZoneId.systemDefault().id
+                        )
+                    )
+                    trainingModel.updateSupplementReminders(
+                        supplements.associate { supplement ->
+                            val draft = supplementDrafts[supplement.id]
+                                ?: SupplementReminderDraft(
+                                    supplement.reminderEnabled,
+                                    formatReminderMinute(supplement.reminderMinute)
+                                )
+                            supplement.id to SupplementReminderConfig(
+                                enabled = draft.enabled,
+                                minute = supplementMinutes.getValue(supplement.id)!!
+                            )
+                        }
+                    )
                     onBack()
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -3004,11 +3129,18 @@ private fun parseMinute(value: String): Int? = runCatching {
 @Composable
 private fun AddSupplementDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, String, SupplementSchedule) -> Unit,
+    onAdd: (String, String, SupplementSchedule, Boolean, Int) -> Unit,
     existing: Supplement? = null
 ) {
     var name by remember(existing?.id) { mutableStateOf(existing?.name.orEmpty()) }
     var dose by remember(existing?.id) { mutableStateOf(existing?.dose.orEmpty()) }
+    var reminderEnabled by remember(existing?.id) {
+        mutableStateOf(existing?.reminderEnabled ?: true)
+    }
+    var reminderTime by remember(existing?.id) {
+        mutableStateOf(formatReminderMinute(existing?.reminderMinute ?: 8 * 60))
+    }
+    val reminderMinute = parseReminderMinute(reminderTime)
     var selectedDays by remember(existing?.id) {
         mutableStateOf(
             existing?.schedule?.selectedWeekdays()
@@ -3019,9 +3151,24 @@ private fun AddSupplementDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "Add supplement" else "Edit supplement") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
-                OutlinedTextField(dose, { dose = it }, label = { Text("Dose and unit") }, singleLine = true)
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    name,
+                    { name = it },
+                    Modifier.fillMaxWidth().testTag("supplement-dialog-name"),
+                    label = { Text("Name") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    dose,
+                    { dose = it },
+                    Modifier.fillMaxWidth().testTag("supplement-dialog-dose"),
+                    label = { Text("Dose and unit") },
+                    singleLine = true
+                )
                 Text("Take on", fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -3087,6 +3234,24 @@ private fun AddSupplementDialog(
                         fontSize = 12.sp
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Reminder", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    Switch(
+                        checked = reminderEnabled,
+                        onCheckedChange = { reminderEnabled = it },
+                        modifier = Modifier.testTag("supplement-dialog-reminder-enabled")
+                    )
+                }
+                ReminderTimeInput(
+                    value = reminderTime,
+                    onValueChange = { reminderTime = it },
+                    label = "Reminder time",
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "supplement-dialog-reminder-time"
+                )
             }
         },
         confirmButton = {
@@ -3099,10 +3264,14 @@ private fun AddSupplementDialog(
                             type = RecurrenceType.WEEKDAYS,
                             startDate = LocalDate.now(),
                             weekdays = selectedDays
-                        )
+                        ),
+                        reminderEnabled,
+                        reminderMinute!!
                     )
                 },
-                enabled = name.isNotBlank() && dose.isNotBlank() && selectedDays.isNotEmpty()
+                enabled = name.isNotBlank() && dose.isNotBlank() &&
+                    selectedDays.isNotEmpty() && reminderMinute != null,
+                modifier = Modifier.testTag("supplement-dialog-save")
             ) { Text(if (existing == null) "Add" else "Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
