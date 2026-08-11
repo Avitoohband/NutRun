@@ -226,14 +226,7 @@ class NutRunViewModel @Inject constructor(
                         userId,
                         snapshot.training.copy(userId = userId, timezoneId = java.time.ZoneId.systemDefault().id)
                     )
-                    supplementReminderSchedulingCoordinator.reschedule(
-                        userId,
-                        snapshot.supplements.copy(
-                            id = "supplement-reminders:$userId",
-                            userId = userId,
-                            timezoneId = java.time.ZoneId.systemDefault().id
-                        )
-                    )
+                    supplementReminderSchedulingCoordinator.reschedule(userId)
                 }
             }
         }
@@ -508,11 +501,7 @@ class NutRunViewModel @Inject constructor(
             val userId = preferences.currentSession().authenticatedUserId
             repository.updateWalkState(com.avitoohband.nutrun.domain.WalkState.PAUSED)
             userId?.let {
-                cancelReminderWorkBeforeSignOut(
-                    userId = it,
-                    supplementReminderScheduler = supplementReminderScheduler,
-                    recoveryScheduler = reminderRescheduleRecoveryScheduler
-                )
+                supplementReminderSchedulingCoordinator.cancel(it)
             }
             if (!isDemoAccount(userId)) authenticationGateway.signOut()
             preferences.signOut()
@@ -583,21 +572,72 @@ suspend fun rescheduleSupplementReminderWork(
     }
 }
 
+internal interface SupplementReminderSchedulingStore {
+    suspend fun currentUserId(): String?
+    suspend fun supplementReminderSettings(userId: String): SupplementReminderSettingsEntity?
+}
+
+private class ProductionSupplementReminderSchedulingStore(
+    private val repository: NutRunRepository,
+    private val preferences: AppPreferences
+) : SupplementReminderSchedulingStore {
+    override suspend fun currentUserId(): String? = preferences.currentSession().authenticatedUserId
+
+    override suspend fun supplementReminderSettings(userId: String): SupplementReminderSettingsEntity? =
+        if (currentUserId() == userId) repository.currentSupplementReminderSettings() else null
+}
+
 @Singleton
-class SupplementReminderSchedulingCoordinator @Inject constructor(
+class SupplementReminderSchedulingCoordinator private constructor(
+    private val store: SupplementReminderSchedulingStore,
     private val supplementReminderScheduler: SupplementReminderScheduler,
-    private val recoveryScheduler: ReminderRescheduleRecoveryScheduler
+    private val recoveryScheduler: ReminderRescheduleRecoveryScheduler,
+    @Suppress("UNUSED_PARAMETER") private val coordinatorConstructor: Boolean
 ) {
+    @Inject
+    constructor(
+        repository: NutRunRepository,
+        preferences: AppPreferences,
+        supplementReminderScheduler: SupplementReminderScheduler,
+        recoveryScheduler: ReminderRescheduleRecoveryScheduler
+    ) : this(
+        ProductionSupplementReminderSchedulingStore(repository, preferences),
+        supplementReminderScheduler,
+        recoveryScheduler,
+        true
+    )
+
+    internal constructor(
+        store: SupplementReminderSchedulingStore,
+        supplementReminderScheduler: SupplementReminderScheduler,
+        recoveryScheduler: ReminderRescheduleRecoveryScheduler
+    ) : this(store, supplementReminderScheduler, recoveryScheduler, true)
+
     private val mutex = Mutex()
 
-    suspend fun reschedule(userId: String, settings: SupplementReminderSettingsEntity) {
+    suspend fun reschedule(userId: String) {
         mutex.withLock {
+            if (store.currentUserId() != userId) return
+            val settings = store.supplementReminderSettings(userId)
+                ?: SupplementReminderSettingsEntity(userId = userId)
+            if (store.currentUserId() != userId) return
             rescheduleSupplementReminderWork(
                 userId,
-                settings,
+                settings.copy(
+                    id = "supplement-reminders:$userId",
+                    userId = userId,
+                    timezoneId = java.time.ZoneId.systemDefault().id
+                ),
                 supplementReminderScheduler,
                 recoveryScheduler
             )
+        }
+    }
+
+    suspend fun cancel(userId: String) {
+        mutex.withLock {
+            supplementReminderScheduler.cancel(userId)
+            recoveryScheduler.cancel(userId)
         }
     }
 }

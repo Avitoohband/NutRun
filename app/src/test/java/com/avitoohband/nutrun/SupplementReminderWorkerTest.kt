@@ -324,6 +324,7 @@ class SupplementReminderWorkerTest {
     fun serializedCoordinatorRoutesSupplementSchedulingThroughOneOwner() = runBlocking {
         val enqueuer = RecordingWorkEnqueuer()
         val coordinator = SupplementReminderSchedulingCoordinator(
+            store = FakeSupplementReminderSchedulingStore("user", enabledSettings()),
             supplementReminderScheduler = SupplementReminderScheduler(
                 store = FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))),
                 enqueuer = enqueuer,
@@ -332,7 +333,7 @@ class SupplementReminderWorkerTest {
             recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
         )
 
-        coordinator.reschedule("user", enabledSettings())
+        coordinator.reschedule("user")
 
         assertEquals(listOf("supplement-reminder:user"), enqueuer.enqueued.map { it.name })
     }
@@ -719,6 +720,15 @@ class SupplementReminderWorkerTest {
             if (throwOnSupplements) throw IllegalStateException("scheduler unavailable")
             return supplements
         }
+    }
+
+    private class FakeSupplementReminderSchedulingStore(
+        private var userId: String?,
+        private var settings: com.avitoohband.nutrun.data.SupplementReminderSettingsEntity?
+    ) : SupplementReminderSchedulingStore {
+        override suspend fun currentUserId(): String? = userId
+
+        override suspend fun supplementReminderSettings(userId: String) = settings
     }
 
     private class RecordingWorkEnqueuer : ReminderWorkEnqueuer {

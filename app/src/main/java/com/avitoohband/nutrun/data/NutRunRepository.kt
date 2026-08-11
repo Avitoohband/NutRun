@@ -392,6 +392,7 @@ class NutRunRepository @Inject constructor(
         settings: SupplementReminderSettingsEntity
     ) {
         require(userId.isNotBlank())
+        require(userId == requireUserId())
         dao.saveSupplementReminderSettings(
             settings.copy(
                 id = "supplement-reminders:$userId",

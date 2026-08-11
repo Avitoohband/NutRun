@@ -79,7 +79,7 @@ private class ProductionTrainingViewModelRuntime(
     }
 
     override suspend fun scheduleSupplement(userId: String, settings: SupplementReminderSettingsEntity) {
-        supplementReminderSchedulingCoordinator?.reschedule(userId, settings)
+        supplementReminderSchedulingCoordinator?.reschedule(userId)
             ?: supplementReminderScheduler?.let { scheduler ->
                 rescheduleSupplementReminderWork(
                     userId,
