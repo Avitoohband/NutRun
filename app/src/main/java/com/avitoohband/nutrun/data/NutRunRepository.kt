@@ -384,10 +384,18 @@ class NutRunRepository @Inject constructor(
 
     suspend fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity) {
         val accountId = requireUserId()
+        saveSupplementReminderSettings(accountId, settings)
+    }
+
+    suspend fun saveSupplementReminderSettings(
+        userId: String,
+        settings: SupplementReminderSettingsEntity
+    ) {
+        require(userId.isNotBlank())
         dao.saveSupplementReminderSettings(
             settings.copy(
-                id = "supplement-reminders:$accountId",
-                userId = accountId,
+                id = "supplement-reminders:$userId",
+                userId = userId,
                 timezoneId = ZoneId.systemDefault().id
             )
         )

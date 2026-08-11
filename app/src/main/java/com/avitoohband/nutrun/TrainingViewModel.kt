@@ -11,7 +11,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunRepository
+import com.avitoohband.nutrun.data.SessionPreferences
 import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingStateEntity
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
@@ -20,8 +23,11 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class SupplementReminderConfig(
@@ -29,18 +35,105 @@ data class SupplementReminderConfig(
     val minute: Int
 )
 
+internal interface TrainingViewModelRuntime {
+    val session: Flow<SessionPreferences>
+    fun trainingState(userId: String): Flow<TrainingStateEntity?>
+    suspend fun currentUserId(): String?
+    suspend fun saveTrainingState(userId: String, payload: String)
+    suspend fun currentTrainingReminderSettings(userId: String): TrainingReminderSettingsEntity?
+    suspend fun currentSupplementReminderSettings(userId: String): SupplementReminderSettingsEntity?
+    fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity)
+    suspend fun scheduleSupplement(userId: String, settings: SupplementReminderSettingsEntity)
+}
+
+private class ProductionTrainingViewModelRuntime(
+    private val repository: NutRunRepository,
+    private val preferences: AppPreferences,
+    private val trainingReminderScheduler: TrainingReminderScheduler?,
+    private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler?,
+    private val supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator?,
+    private val supplementReminderScheduler: SupplementReminderScheduler?
+) : TrainingViewModelRuntime {
+    override val session: Flow<SessionPreferences> = preferences.session
+
+    override fun trainingState(userId: String): Flow<TrainingStateEntity?> = repository.trainingState(userId)
+
+    override suspend fun currentUserId(): String? = preferences.currentSession().authenticatedUserId
+
+    override suspend fun saveTrainingState(userId: String, payload: String) {
+        repository.saveTrainingState(userId, payload)
+    }
+
+    override suspend fun currentTrainingReminderSettings(
+        userId: String
+    ): TrainingReminderSettingsEntity? =
+        if (currentUserId() == userId) repository.currentTrainingReminderSettings() else null
+
+    override suspend fun currentSupplementReminderSettings(
+        userId: String
+    ): SupplementReminderSettingsEntity? =
+        if (currentUserId() == userId) repository.currentSupplementReminderSettings() else null
+
+    override fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) {
+        trainingReminderScheduler?.schedule(userId, settings)
+    }
+
+    override suspend fun scheduleSupplement(userId: String, settings: SupplementReminderSettingsEntity) {
+        supplementReminderSchedulingCoordinator?.reschedule(userId, settings)
+            ?: supplementReminderScheduler?.let { scheduler ->
+                rescheduleSupplementReminderWork(
+                    userId,
+                    settings,
+                    scheduler,
+                    reminderRescheduleRecoveryScheduler
+                )
+            }
+    }
+}
+
 @HiltViewModel
-class TrainingViewModel @Inject constructor(
-    private val repository: NutRunRepository?,
-    private val preferences: AppPreferences?,
-    private val trainingReminderScheduler: TrainingReminderScheduler? = null,
-    private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler? = null,
-    private val supplementReminderScheduler: SupplementReminderScheduler? = null
+class TrainingViewModel private constructor(
+    private val runtime: TrainingViewModelRuntime?,
+    private val coroutineScope: CoroutineScope?,
+    @Suppress("UNUSED_PARAMETER") private val runtimeConstructor: Boolean
 ) : ViewModel() {
+    @Inject
+    constructor(
+        repository: NutRunRepository?,
+        preferences: AppPreferences?,
+        trainingReminderScheduler: TrainingReminderScheduler? = null,
+        reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler? = null,
+        supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator? = null,
+        supplementReminderScheduler: SupplementReminderScheduler? = null
+    ) : this(
+        runtime = if (repository != null && preferences != null) {
+            ProductionTrainingViewModelRuntime(
+                repository,
+                preferences,
+                trainingReminderScheduler,
+                reminderRescheduleRecoveryScheduler,
+                supplementReminderSchedulingCoordinator,
+                supplementReminderScheduler
+            )
+        } else {
+            null
+        },
+        coroutineScope = null,
+        runtimeConstructor = true
+    )
+
+    internal constructor(
+        runtime: TrainingViewModelRuntime,
+        coroutineScope: CoroutineScope
+    ) : this(runtime, coroutineScope, true)
+
+    private val modelScope: CoroutineScope get() = coroutineScope ?: viewModelScope
     private fun id(prefix: String) = "$prefix-${UUID.randomUUID()}"
     private var currentUserId: String? = null
     private var persistJob: Job? = null
+    private var supplementReschedulePending = false
     private var restoredPayload: String? = null
+    private var restoredUserId: String? = null
 
     var isAuthenticated by mutableStateOf(false)
         private set
@@ -77,20 +170,24 @@ class TrainingViewModel @Inject constructor(
     val activeSetLogs = mutableStateMapOf<String, List<WorkoutSetLog>>()
 
     init {
-        if (repository != null && preferences != null) {
-            viewModelScope.launch {
-                preferences.session.collectLatest { session ->
+        runtime?.let { runtime ->
+            modelScope.launch {
+                runtime.session.collectLatest { session ->
+                    persistJob?.cancel()
+                    supplementReschedulePending = false
                     currentUserId = session.authenticatedUserId
                     restoredPayload = null
+                    restoredUserId = null
                     resetTrainingState()
                     session.authenticatedUserId?.let { userId ->
-                        repository.trainingState(userId).collectLatest { state ->
+                        runtime.trainingState(userId).collectLatest { state ->
                             state?.payloadJson
                                 ?.takeIf { it != restoredPayload }
                                 ?.let {
                                     restoredPayload = it
                                     restoreTrainingState(it)
                                 }
+                            if (currentUserId == userId) restoredUserId = userId
                         }
                     }
                 }
@@ -564,7 +661,8 @@ class TrainingViewModel @Inject constructor(
 
     private fun persistTrainingState(rescheduleSupplementReminders: Boolean = false) {
         val userId = currentUserId ?: return
-        val targetRepository = repository ?: return
+        val targetRuntime = runtime ?: return
+        if (restoredUserId != userId) return
         val payload = encodeTrainingState(
             supplements = supplements,
             sessions = sessions,
@@ -583,31 +681,28 @@ class TrainingViewModel @Inject constructor(
             usesMetricUnits = usesMetricUnits
         )
         restoredPayload = payload
+        supplementReschedulePending = supplementReschedulePending || rescheduleSupplementReminders
         persistJob?.cancel()
-        persistJob = viewModelScope.launch {
-            targetRepository.saveTrainingState(userId, payload)
-            targetRepository.currentTrainingReminderSettings()?.let { settings ->
-                trainingReminderScheduler?.schedule(userId, settings)
+        persistJob = modelScope.launch {
+            targetRuntime.saveTrainingState(userId, payload)
+            if (targetRuntime.currentUserId() != userId) return@launch
+            targetRuntime.currentTrainingReminderSettings(userId)?.let { settings ->
+                targetRuntime.scheduleTraining(userId, settings)
             }
-            if (rescheduleSupplementReminders) {
-                rescheduleSupplementReminders(userId, targetRepository)
+            if (supplementReschedulePending) {
+                rescheduleSupplementReminders(userId, targetRuntime)
+                supplementReschedulePending = false
             }
         }
     }
 
     private suspend fun rescheduleSupplementReminders(
         userId: String,
-        targetRepository: NutRunRepository
+        targetRuntime: TrainingViewModelRuntime
     ) {
-        val scheduler = supplementReminderScheduler ?: return
-        val settings = targetRepository.currentSupplementReminderSettings()
+        val settings = targetRuntime.currentSupplementReminderSettings(userId)
             ?: SupplementReminderSettingsEntity(userId = userId)
-        rescheduleSupplementReminderWork(
-            userId,
-            settings,
-            scheduler,
-            reminderRescheduleRecoveryScheduler
-        )
+        if (targetRuntime.currentUserId() == userId) targetRuntime.scheduleSupplement(userId, settings)
     }
 
     private fun requireValidReminderMinute(minute: Int) {

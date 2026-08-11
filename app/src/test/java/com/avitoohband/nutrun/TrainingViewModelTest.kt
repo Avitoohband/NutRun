@@ -1,6 +1,17 @@
 package com.avitoohband.nutrun
 
 import java.time.LocalDate
+import com.avitoohband.nutrun.data.SessionPreferences
+import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingStateEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -10,6 +21,35 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class TrainingViewModelTest {
+    @Test
+    fun reminderBulkSaveWaitsForTheCurrentAccountsTrainingRestore() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(session = SessionPreferences(authenticatedUserId = "account-a"))
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+
+        model.updateSupplementReminders(mapOf("supplement-1" to SupplementReminderConfig(true, 600)))
+
+        assertTrue(runtime.savedPayloads.isEmpty())
+        runtime.trainingStates.emit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
+
+        assertEquals("Stored", model.supplements.single().name)
+        assertTrue(runtime.savedPayloads.isEmpty())
+    }
+
+    @Test
+    fun coalescedTrainingPersistenceRetainsSupplementRescheduleIntent() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(session = SessionPreferences(authenticatedUserId = "account-a"))
+        runtime.trainingStates.tryEmit(null)
+        runtime.saveGate = CompletableDeferred()
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+
+        model.addSupplement("Magnesium", "200 mg", SupplementSchedule(RecurrenceType.DAILY))
+        model.addSession("New session", java.time.DayOfWeek.TUESDAY)
+        runtime.saveGate!!.complete(Unit)
+
+        assertEquals(1, runtime.supplementSchedules.size)
+        assertEquals("account-a", runtime.supplementSchedules.single().first)
+        assertEquals(1, runtime.savedPayloads.size)
+    }
     @Test
     fun bulkReminderTogglePreservesTimes() {
         val model = TrainingViewModel(null, null)
@@ -442,4 +482,57 @@ class TrainingViewModelTest {
         enabled = reminderEnabled,
         minute = reminderMinute
     )
+
+    private fun trainingPayload(supplementName: String): String = encodeTrainingState(
+        supplements = listOf(
+            Supplement(
+                id = "stored-supplement",
+                name = supplementName,
+                dose = "100 mg",
+                schedule = SupplementSchedule(RecurrenceType.DAILY)
+            )
+        ),
+        sessions = emptyList(),
+        history = emptyList(),
+        selectedSessionId = null,
+        activeWorkoutSessionId = null,
+        isWorkoutPaused = false,
+        completedExerciseIds = emptyMap(),
+        suggestionDecision = SuggestionDecision.PENDING,
+        suggestedWeightKg = 42.5
+    )
+
+    private class FakeTrainingViewModelRuntime(
+        session: SessionPreferences
+    ) : TrainingViewModelRuntime {
+        private val sessionState = MutableStateFlow(session)
+        override val session: Flow<SessionPreferences> = sessionState
+        val trainingStates = MutableSharedFlow<TrainingStateEntity?>(replay = 1)
+        val savedPayloads = mutableListOf<String>()
+        val supplementSchedules = mutableListOf<Pair<String, SupplementReminderSettingsEntity>>()
+        var saveGate: CompletableDeferred<Unit>? = null
+
+        override fun trainingState(userId: String): Flow<TrainingStateEntity?> = trainingStates
+
+        override suspend fun currentUserId(): String? = sessionState.value.authenticatedUserId
+
+        override suspend fun saveTrainingState(userId: String, payload: String) {
+            saveGate?.await()
+            savedPayloads += payload
+        }
+
+        override suspend fun currentTrainingReminderSettings(userId: String) = null
+
+        override suspend fun currentSupplementReminderSettings(userId: String) =
+            SupplementReminderSettingsEntity(userId = userId)
+
+        override fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) = Unit
+
+        override suspend fun scheduleSupplement(
+            userId: String,
+            settings: SupplementReminderSettingsEntity
+        ) {
+            supplementSchedules += userId to settings
+        }
+    }
 }

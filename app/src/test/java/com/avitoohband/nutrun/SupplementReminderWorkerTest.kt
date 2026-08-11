@@ -321,6 +321,23 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
+    fun serializedCoordinatorRoutesSupplementSchedulingThroughOneOwner() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val coordinator = SupplementReminderSchedulingCoordinator(
+            supplementReminderScheduler = SupplementReminderScheduler(
+                store = FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))),
+                enqueuer = enqueuer,
+                now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+            ),
+            recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+        )
+
+        coordinator.reschedule("user", enabledSettings())
+
+        assertEquals(listOf("supplement-reminder:user"), enqueuer.enqueued.map { it.name })
+    }
+
+    @Test
     fun signOutCancellationTargetsOnlyTheSignedInAccountsSupplementAndRecoveryWork() {
         val enqueuer = RecordingWorkEnqueuer()
         val supplementScheduler = SupplementReminderScheduler(

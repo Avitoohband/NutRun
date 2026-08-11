@@ -36,6 +36,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.util.concurrent.CancellationException
 import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -104,6 +105,13 @@ data class HealthConnectUiState(
     val lastSyncMessage: String? = null
 )
 
+private data class ReminderSettingsSnapshot(
+    val userId: String?,
+    val hydration: HydrationPlanEntity,
+    val training: TrainingReminderSettingsEntity,
+    val supplements: SupplementReminderSettingsEntity
+)
+
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class NutRunViewModel @Inject constructor(
@@ -114,6 +122,7 @@ class NutRunViewModel @Inject constructor(
     private val trainingReminderScheduler: TrainingReminderScheduler,
     private val supplementReminderScheduler: SupplementReminderScheduler,
     private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler,
+    private val supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator,
     private val billingManager: BillingManager,
     private val authenticationGateway: AuthenticationGateway,
     private val healthConnectManager: NutRunHealthConnectManager
@@ -203,17 +212,27 @@ class NutRunViewModel @Inject constructor(
         }
         viewModelScope.launch {
             state.map {
-                Triple(
+                ReminderSettingsSnapshot(
                     it.session.authenticatedUserId,
                     it.hydrationPlan,
-                    it.trainingReminderSettings
+                    it.trainingReminderSettings,
+                    it.supplementReminderSettings
                 )
-            }.distinctUntilChanged().collect { (userId, hydration, training) ->
+            }.distinctUntilChanged().collect { snapshot ->
+                val userId = snapshot.userId
                 if (userId != null) {
-                    hydrationScheduler.schedule(hydration.copy(userId = userId))
+                    hydrationScheduler.schedule(snapshot.hydration.copy(userId = userId))
                     trainingReminderScheduler.schedule(
                         userId,
-                        training.copy(userId = userId, timezoneId = java.time.ZoneId.systemDefault().id)
+                        snapshot.training.copy(userId = userId, timezoneId = java.time.ZoneId.systemDefault().id)
+                    )
+                    supplementReminderSchedulingCoordinator.reschedule(
+                        userId,
+                        snapshot.supplements.copy(
+                            id = "supplement-reminders:$userId",
+                            userId = userId,
+                            timezoneId = java.time.ZoneId.systemDefault().id
+                        )
                     )
                 }
             }
@@ -449,19 +468,9 @@ class NutRunViewModel @Inject constructor(
     fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity) {
         viewModelScope.launch {
             try {
-                repository.saveSupplementReminderSettings(settings)
                 val userId = preferences.currentSession().authenticatedUserId ?: return@launch
-                val scopedSettings = settings.copy(
-                    id = "supplement-reminders:$userId",
-                    userId = userId,
-                    timezoneId = java.time.ZoneId.systemDefault().id
-                )
-                rescheduleSupplementReminderWork(
-                    userId = userId,
-                    settings = scopedSettings,
-                    supplementReminderScheduler = supplementReminderScheduler,
-                    recoveryScheduler = reminderRescheduleRecoveryScheduler
-                )
+                repository.saveSupplementReminderSettings(userId, settings)
+                if (preferences.currentSession().authenticatedUserId != userId) return@launch
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -570,6 +579,25 @@ suspend fun rescheduleSupplementReminderWork(
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
+        }
+    }
+}
+
+@Singleton
+class SupplementReminderSchedulingCoordinator @Inject constructor(
+    private val supplementReminderScheduler: SupplementReminderScheduler,
+    private val recoveryScheduler: ReminderRescheduleRecoveryScheduler
+) {
+    private val mutex = Mutex()
+
+    suspend fun reschedule(userId: String, settings: SupplementReminderSettingsEntity) {
+        mutex.withLock {
+            rescheduleSupplementReminderWork(
+                userId,
+                settings,
+                supplementReminderScheduler,
+                recoveryScheduler
+            )
         }
     }
 }
