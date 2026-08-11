@@ -71,6 +71,7 @@ data class HydrationGoalCelebration(
 
 data class NutRunUiState(
     val session: SessionPreferences = SessionPreferences(),
+    val sessionResolved: Boolean = false,
     val profile: UserProfile? = null,
     val food: List<FoodLogEntity> = emptyList(),
     val recentFoods: List<FoodLogEntity> = emptyList(),
@@ -196,16 +197,14 @@ private class ProductionNutRunViewModelReminderRuntime(
     override suspend fun currentSession(): SessionPreferences = preferences.currentSession()
 
     override suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity) {
-        require(currentSession().authenticatedUserId == userId)
-        repository.saveHydrationPlan(plan)
+        repository.saveHydrationPlan(userId, plan)
     }
 
     override suspend fun saveTrainingReminderSettings(
         userId: String,
         settings: TrainingReminderSettingsEntity
     ) {
-        require(currentSession().authenticatedUserId == userId)
-        repository.saveTrainingReminderSettings(settings)
+        repository.saveTrainingReminderSettings(userId, settings)
     }
 
     override suspend fun saveSupplementReminderSettings(
@@ -279,6 +278,7 @@ class NutRunViewModel internal constructor(
         @Suppress("UNCHECKED_CAST")
         NutRunUiState(
             session = values[0] as SessionPreferences,
+            sessionResolved = true,
             profile = values[1] as UserProfile?,
             food = values[2] as List<FoodLogEntity>,
             water = values[3] as List<WaterLogEntity>,
@@ -652,39 +652,44 @@ class NutRunViewModel internal constructor(
         training: TrainingReminderSettingsEntity,
         supplements: SupplementReminderSettingsEntity
     ): NotificationSettingsSaveResult {
-        accountChanged(accountId, NotificationSettingsSaveStage.HYDRATION)?.let { return it }
-        saveNotificationStage(accountId, NotificationSettingsSaveStage.HYDRATION) {
+        val completedStages = mutableSetOf(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS)
+        accountChanged(accountId, NotificationSettingsSaveStage.HYDRATION, completedStages)
+            ?.let { return it }
+        saveNotificationStage(accountId, NotificationSettingsSaveStage.HYDRATION, completedStages) {
             reminderRuntime.saveHydrationPlan(accountId, hydration)
         }?.let { return it }
 
-        accountChanged(accountId, NotificationSettingsSaveStage.TRAINING)?.let { return it }
-        saveNotificationStage(accountId, NotificationSettingsSaveStage.TRAINING) {
+        accountChanged(accountId, NotificationSettingsSaveStage.TRAINING, completedStages)
+            ?.let { return it }
+        saveNotificationStage(accountId, NotificationSettingsSaveStage.TRAINING, completedStages) {
             reminderRuntime.saveTrainingReminderSettings(accountId, training)
         }?.let { return it }
 
-        accountChanged(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER)?.let {
-            return it
-        }
-        saveNotificationStage(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER) {
+        accountChanged(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER, completedStages)
+            ?.let { return it }
+        saveNotificationStage(
+            accountId,
+            NotificationSettingsSaveStage.SUPPLEMENT_MASTER,
+            completedStages
+        ) {
             reminderRuntime.saveSupplementReminderSettings(accountId, supplements)
         }?.let { return it }
 
-        accountChanged(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER)?.let {
-            return it
-        }
         return NotificationSettingsSaveResult.Success(accountId)
     }
 
     private suspend fun saveNotificationStage(
         accountId: String,
         stage: NotificationSettingsSaveStage,
+        completedStages: MutableSet<NotificationSettingsSaveStage>,
         save: suspend () -> Unit
     ): NotificationSettingsSaveResult? = try {
         save()
-        accountChanged(accountId, stage)
+        completedStages += stage
+        accountChanged(accountId, stage, completedStages)
     } catch (error: Exception) {
         if (error is CancellationException && !currentCoroutineContext().isActive) throw error
-        accountChanged(accountId, stage) ?: NotificationSettingsSaveResult.Failed(
+        accountChanged(accountId, stage, completedStages) ?: NotificationSettingsSaveResult.Failed(
             expectedAccountId = accountId,
             stage = stage,
             message = error.message ?: "Persistence failed."
@@ -693,7 +698,8 @@ class NutRunViewModel internal constructor(
 
     private suspend fun accountChanged(
         expectedAccountId: String,
-        stage: NotificationSettingsSaveStage
+        stage: NotificationSettingsSaveStage,
+        completedStages: Set<NotificationSettingsSaveStage>
     ): NotificationSettingsSaveResult.AccountChanged? {
         val actualAccountId = reminderRuntime.currentSession().authenticatedUserId
         return if (actualAccountId == expectedAccountId) {
@@ -702,10 +708,14 @@ class NutRunViewModel internal constructor(
             NotificationSettingsSaveResult.AccountChanged(
                 expectedAccountId = expectedAccountId,
                 actualAccountId = actualAccountId,
-                stage = stage
+                stage = stage,
+                completedStages = completedStages.toSet()
             )
         }
     }
+
+    internal suspend fun currentAuthenticatedAccountId(): String? =
+        reminderRuntime.currentSession().authenticatedUserId
 
     fun setDarkMode(enabled: Boolean) {
         viewModelScope.launch { preferences.setDarkMode(enabled) }

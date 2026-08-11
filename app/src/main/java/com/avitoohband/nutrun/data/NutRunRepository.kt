@@ -24,6 +24,16 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import org.json.JSONArray
 
+internal suspend fun <T> withExpectedRepositoryAccount(
+    expectedAccountId: String,
+    currentAccountId: suspend () -> String?,
+    write: suspend (String) -> T
+): T {
+    require(expectedAccountId.isNotBlank())
+    require(expectedAccountId == currentAccountId())
+    return write(expectedAccountId)
+}
+
 @Singleton
 @OptIn(ExperimentalCoroutinesApi::class)
 class NutRunRepository @Inject constructor(
@@ -359,24 +369,35 @@ class NutRunRepository @Inject constructor(
     suspend fun currentHydrationPlan(): HydrationPlanEntity? =
         dao.hydrationPlan(requireUserId())
 
-    suspend fun saveHydrationPlan(plan: HydrationPlanEntity) {
+    suspend fun saveHydrationPlan(plan: HydrationPlanEntity) =
+        saveHydrationPlan(requireUserId(), plan)
+
+    suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity) {
         require(plan.goalMl in 250..10_000)
         require(plan.servingMl in 50..2_000)
         require(plan.intervalMinutes >= 15)
         require(plan.wakingEndMinute > plan.wakingStartMinute)
-        val accountId = requireUserId()
-        val scoped = plan.copy(id = "hydration:$accountId", userId = accountId)
-        dao.saveHydrationPlan(scoped)
-        queue(accountId, "hydrationPlan", scoped.id, "UPSERT", scoped.toJson())
+        withExpectedRepositoryAccount(userId, { requireUserId() }) { accountId ->
+            val scoped = plan.copy(id = "hydration:$accountId", userId = accountId)
+            dao.saveHydrationPlan(scoped)
+            queue(accountId, "hydrationPlan", scoped.id, "UPSERT", scoped.toJson())
+        }
     }
 
-    suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity) {
+    suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity) =
+        saveTrainingReminderSettings(requireUserId(), settings)
+
+    suspend fun saveTrainingReminderSettings(
+        userId: String,
+        settings: TrainingReminderSettingsEntity
+    ) {
         require(settings.previousDayMinute in 0 until 24 * 60)
         require(settings.sameDayMinute in 0 until 24 * 60)
-        val accountId = requireUserId()
-        dao.saveTrainingReminderSettings(
-            settings.copy(id = "training-reminders:$accountId", userId = accountId)
-        )
+        withExpectedRepositoryAccount(userId, { requireUserId() }) { accountId ->
+            dao.saveTrainingReminderSettings(
+                settings.copy(id = "training-reminders:$accountId", userId = accountId)
+            )
+        }
     }
 
     suspend fun currentTrainingReminderSettings(): TrainingReminderSettingsEntity? =

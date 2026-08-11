@@ -59,6 +59,15 @@ internal val SupplementReminderDraftStateSaver =
         }
     )
 
+internal fun resolveSupplementReminderDraftOwner(
+    state: SupplementReminderDraftState,
+    sessionResolved: Boolean,
+    accountId: String?
+): SupplementReminderDraftState {
+    if (!sessionResolved || state.accountId == accountId) return state
+    return SupplementReminderDraftState(accountId = accountId)
+}
+
 internal fun resolveSupplementReminderDraftState(
     state: SupplementReminderDraftState,
     screenAccountId: String?,

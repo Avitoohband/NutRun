@@ -672,6 +672,7 @@ class SupplementReminderSettingsCardComposeTest {
                     valid = true,
                     accountReady = model.supplementReminderReadyAccountId == "account-a",
                     persist = { NotificationSettingsSaveResult.Success("account-a") },
+                    currentAccountId = { "account-a" },
                     onSuccess = {}
                 )
             }
@@ -696,6 +697,7 @@ class SupplementReminderSettingsCardComposeTest {
                     valid = true,
                     accountReady = true,
                     persist = { completion.await() },
+                    currentAccountId = { "account-a" },
                     onSuccess = { navigated = true }
                 )
             }
@@ -734,6 +736,7 @@ class SupplementReminderSettingsCardComposeTest {
                 valid = true,
                 accountReady = true,
                 persist = { completion.await() },
+                currentAccountId = { "account-a" },
                 onSuccess = { navigated = true }
             )
         }
@@ -743,6 +746,34 @@ class SupplementReminderSettingsCardComposeTest {
         completion.complete(NotificationSettingsSaveResult.Success("account-a"))
         composeRule.waitUntil(timeoutMillis = 5_000) { navigated }
         composeRule.runOnIdle { assertTrue(navigated) }
+    }
+
+    @Test
+    fun notificationSaveKeepsScreenOpenWhenAccountChangesAfterFinalStage() {
+        var currentAccountId: String? = "account-a"
+        var navigated = false
+        composeRule.setContent {
+            NotificationSettingsSaveButton(
+                valid = true,
+                accountReady = true,
+                persist = {
+                    currentAccountId = "account-b"
+                    NotificationSettingsSaveResult.Success("account-a")
+                },
+                currentAccountId = { currentAccountId },
+                onSuccess = { navigated = true }
+            )
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("notification-settings-save-error")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("notification-settings-save-error")
+            .assertTextContains("active account changed", substring = true)
+        composeRule.runOnIdle { assertFalse(navigated) }
     }
 
     @Test

@@ -143,7 +143,15 @@ class NutRunViewModelReminderTest {
         val changed = result as NotificationSettingsSaveResult.AccountChanged
         assertEquals("account-a", changed.expectedAccountId)
         assertEquals("account-b", changed.actualAccountId)
-        assertTrue(runtime.settingsWrites.isEmpty())
+        assertEquals(
+            setOf(
+                NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                NotificationSettingsSaveStage.HYDRATION
+            ),
+            changed.completedStages
+        )
+        assertEquals(listOf("hydration:account-a"), runtime.settingsWrites)
+        assertTrue(runtime.settingsWrites.none { it.endsWith("account-b") })
     }
 
     @Test
@@ -278,10 +286,10 @@ class NutRunViewModelReminderTest {
             accountId?.let(settings::get) ?: SupplementReminderSettingsEntity()
 
         override suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity) {
+            require(session.value.authenticatedUserId == userId)
             hydrationSaveStarted.complete(Unit)
             hydrationSaveGate?.await()
             failSettingsSaveIfRequested(NotificationSettingsSaveStage.HYDRATION)
-            require(session.value.authenticatedUserId == userId)
             settingsWrites += "hydration:$userId"
         }
 

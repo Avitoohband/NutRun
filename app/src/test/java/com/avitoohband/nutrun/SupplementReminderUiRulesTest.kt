@@ -127,6 +127,39 @@ class SupplementReminderUiRulesTest {
     }
 
     @Test
+    fun restoredAccountDraftSurvivesUnresolvedNullThenAAndClearsOnlyForConfirmedB() {
+        val restored = SupplementReminderDraftState(
+            accountId = "account-a",
+            drafts = mapOf(
+                "shared-id" to SupplementReminderDraft(enabled = true, time = "22:10")
+            ),
+            dirtyIds = setOf("shared-id")
+        )
+
+        val unresolved = resolveSupplementReminderDraftOwner(
+            state = restored,
+            sessionResolved = false,
+            accountId = null
+        )
+        val confirmedA = resolveSupplementReminderDraftOwner(
+            state = unresolved,
+            sessionResolved = true,
+            accountId = "account-a"
+        )
+        val confirmedB = resolveSupplementReminderDraftOwner(
+            state = confirmedA,
+            sessionResolved = true,
+            accountId = "account-b"
+        )
+
+        assertEquals(restored, unresolved)
+        assertEquals(restored, confirmedA)
+        assertEquals("account-b", confirmedB.accountId)
+        assertTrue(confirmedB.drafts.isEmpty())
+        assertTrue(confirmedB.dirtyIds.isEmpty())
+    }
+
+    @Test
     fun sameReadyAccountRetainsOnlyDirtyIdsDuringMembershipReconciliation() {
         val clean = supplement("clean", enabled = true, minute = 600)
         val dirty = supplement("dirty", enabled = false, minute = 480)

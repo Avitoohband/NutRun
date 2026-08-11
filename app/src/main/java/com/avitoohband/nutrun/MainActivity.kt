@@ -3010,9 +3010,14 @@ private fun NotificationSettingsScreen(
     val supplementSource = supplements.map { supplement ->
         Triple(supplement.id, supplement.reminderEnabled, supplement.reminderMinute)
     }
-    LaunchedEffect(accountId) {
-        if (supplementDraftState.accountId != accountId) {
-            supplementDraftState = SupplementReminderDraftState(accountId = accountId)
+    LaunchedEffect(state.sessionResolved, accountId) {
+        val resolvedOwner = resolveSupplementReminderDraftOwner(
+            state = supplementDraftState,
+            sessionResolved = state.sessionResolved,
+            accountId = accountId
+        )
+        if (resolvedOwner != supplementDraftState) {
+            supplementDraftState = resolvedOwner
         }
     }
     LaunchedEffect(accountId, readyAccountId, supplementSource) {
@@ -3179,6 +3184,7 @@ private fun NotificationSettingsScreen(
                         }
                     )
                 },
+                currentAccountId = app::currentAuthenticatedAccountId,
                 onSuccess = onBack,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -3203,6 +3209,7 @@ internal fun NotificationSettingsSaveButton(
     valid: Boolean,
     accountReady: Boolean,
     persist: suspend () -> NotificationSettingsSaveResult,
+    currentAccountId: suspend () -> String?,
     onSuccess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -3217,8 +3224,13 @@ internal fun NotificationSettingsSaveButton(
                 scope.launch {
                     saving = true
                     error = null
-                    val result = persist()
+                    val persisted = persist()
+                    val latestAccountId = currentAccountId()
                     withContext(Dispatchers.Main.immediate) {
+                        val result = validateNotificationSettingsSaveAccount(
+                            persisted,
+                            latestAccountId
+                        )
                         saving = false
                         if (result.allowsNavigation) {
                             onSuccess()

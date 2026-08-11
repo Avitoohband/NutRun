@@ -75,4 +75,22 @@ class NotificationSettingsSaveTest {
             ).allowsNavigation
         )
     }
+
+    @Test
+    fun accountChangeMessageReportsCompletedAndUnstartedStages() {
+        val result = NotificationSettingsSaveResult.AccountChanged(
+            expectedAccountId = "account-a",
+            actualAccountId = "account-b",
+            stage = NotificationSettingsSaveStage.TRAINING,
+            completedStages = setOf(
+                NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                NotificationSettingsSaveStage.HYDRATION
+            )
+        )
+
+        val message = result.errorMessage().orEmpty()
+
+        assertTrue(message.contains("Supplement and hydration settings were saved"))
+        assertTrue(message.contains("Training and master settings were not started"))
+    }
 }
