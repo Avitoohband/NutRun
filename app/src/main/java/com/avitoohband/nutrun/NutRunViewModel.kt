@@ -12,6 +12,7 @@ import com.avitoohband.nutrun.data.FoodLogEntity
 import com.avitoohband.nutrun.data.FoodTemplateEntity
 import com.avitoohband.nutrun.data.FoodSearchService
 import com.avitoohband.nutrun.data.HydrationPlanEntity
+import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.NutRunRepository
 import com.avitoohband.nutrun.data.SessionPreferences
@@ -27,9 +28,13 @@ import com.avitoohband.nutrun.domain.calculateHealthEstimate
 import com.avitoohband.nutrun.domain.crossedHydrationGoal
 import com.avitoohband.nutrun.health.NutRunHealthConnectManager
 import com.avitoohband.nutrun.reminders.HydrationScheduler
+import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
+import com.avitoohband.nutrun.reminders.ReminderSystem
+import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
+import java.util.concurrent.CancellationException
 import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -66,6 +71,7 @@ data class NutRunUiState(
     val water: List<WaterLogEntity> = emptyList(),
     val hydrationPlan: HydrationPlanEntity = HydrationPlanEntity(),
     val trainingReminderSettings: TrainingReminderSettingsEntity = TrainingReminderSettingsEntity(),
+    val supplementReminderSettings: SupplementReminderSettingsEntity = SupplementReminderSettingsEntity(),
     val weights: List<WeightEntryEntity> = emptyList(),
     val walks: List<WalkSessionEntity> = emptyList(),
     val activeWalk: WalkSessionEntity? = null
@@ -106,6 +112,8 @@ class NutRunViewModel @Inject constructor(
     private val foodSearchService: FoodSearchService,
     private val hydrationScheduler: HydrationScheduler,
     private val trainingReminderScheduler: TrainingReminderScheduler,
+    private val supplementReminderScheduler: SupplementReminderScheduler,
+    private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler,
     private val billingManager: BillingManager,
     private val authenticationGateway: AuthenticationGateway,
     private val healthConnectManager: NutRunHealthConnectManager
@@ -129,6 +137,7 @@ class NutRunViewModel @Inject constructor(
         repository.walks,
         repository.activeWalk,
         repository.trainingReminderSettings,
+        repository.supplementReminderSettings,
         repository.recentFoods,
         repository.foodTemplates
     ) { values ->
@@ -143,8 +152,9 @@ class NutRunViewModel @Inject constructor(
             walks = values[6] as List<WalkSessionEntity>,
             activeWalk = values[7] as WalkSessionEntity?,
             trainingReminderSettings = values[8] as TrainingReminderSettingsEntity,
-            recentFoods = values[9] as List<FoodLogEntity>,
-            foodTemplates = values[10] as List<FoodTemplateEntity>
+            supplementReminderSettings = values[9] as SupplementReminderSettingsEntity,
+            recentFoods = values[10] as List<FoodLogEntity>,
+            foodTemplates = values[11] as List<FoodTemplateEntity>
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutRunUiState())
 
@@ -436,6 +446,30 @@ class NutRunViewModel @Inject constructor(
         }
     }
 
+    fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity) {
+        viewModelScope.launch {
+            try {
+                repository.saveSupplementReminderSettings(settings)
+                val userId = preferences.currentSession().authenticatedUserId ?: return@launch
+                val scopedSettings = settings.copy(
+                    id = "supplement-reminders:$userId",
+                    userId = userId,
+                    timezoneId = java.time.ZoneId.systemDefault().id
+                )
+                rescheduleSupplementReminderWork(
+                    userId = userId,
+                    settings = scopedSettings,
+                    supplementReminderScheduler = supplementReminderScheduler,
+                    recoveryScheduler = reminderRescheduleRecoveryScheduler
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                message.value = error.message ?: "Could not save reminder settings."
+            }
+        }
+    }
+
     fun setDarkMode(enabled: Boolean) {
         viewModelScope.launch { preferences.setDarkMode(enabled) }
     }
@@ -462,8 +496,15 @@ class NutRunViewModel @Inject constructor(
     fun signOut() {
         clearSelectedWalk()
         viewModelScope.launch {
-            val userId = state.value.session.authenticatedUserId
+            val userId = preferences.currentSession().authenticatedUserId
             repository.updateWalkState(com.avitoohband.nutrun.domain.WalkState.PAUSED)
+            userId?.let {
+                cancelReminderWorkBeforeSignOut(
+                    userId = it,
+                    supplementReminderScheduler = supplementReminderScheduler,
+                    recoveryScheduler = reminderRescheduleRecoveryScheduler
+                )
+            }
             if (!isDemoAccount(userId)) authenticationGateway.signOut()
             preferences.signOut()
         }
@@ -497,5 +538,38 @@ class NutRunViewModel @Inject constructor(
 
     fun clearMessage() {
         message.value = null
+    }
+}
+
+fun cancelReminderWorkBeforeSignOut(
+    userId: String,
+    supplementReminderScheduler: SupplementReminderScheduler,
+    recoveryScheduler: ReminderRescheduleRecoveryScheduler
+) {
+    supplementReminderScheduler.cancel(userId)
+    recoveryScheduler.cancel(userId)
+}
+
+suspend fun rescheduleSupplementReminderWork(
+    userId: String,
+    settings: SupplementReminderSettingsEntity,
+    supplementReminderScheduler: SupplementReminderScheduler,
+    recoveryScheduler: ReminderRescheduleRecoveryScheduler?
+) {
+    try {
+        if (settings.enabled) {
+            supplementReminderScheduler.schedule(userId, settings)
+        } else {
+            supplementReminderScheduler.cancel(userId)
+        }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        try {
+            recoveryScheduler?.schedule(userId, setOf(ReminderSystem.SUPPLEMENTS))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+        }
     }
 }

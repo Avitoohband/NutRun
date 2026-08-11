@@ -240,6 +240,111 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
+    fun enabledSupplementSettingsScheduleDeliveryWork() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = SupplementReminderScheduler(
+            store = FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))),
+            enqueuer = enqueuer,
+            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        )
+
+        rescheduleSupplementReminderWork(
+            userId = "user",
+            settings = enabledSettings(),
+            supplementReminderScheduler = scheduler,
+            recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+        )
+
+        assertEquals(listOf("supplement-reminder:user"), enqueuer.enqueued.map { it.name })
+        assertTrue(enqueuer.cancelled.isEmpty())
+    }
+
+    @Test
+    fun supplementSchedulingStillWorksWithoutARecoveryScheduler() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = SupplementReminderScheduler(
+            store = FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))),
+            enqueuer = enqueuer,
+            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        )
+
+        rescheduleSupplementReminderWork(
+            userId = "user",
+            settings = enabledSettings(),
+            supplementReminderScheduler = scheduler,
+            recoveryScheduler = null
+        )
+
+        assertEquals(listOf("supplement-reminder:user"), enqueuer.enqueued.map { it.name })
+    }
+
+    @Test
+    fun disabledSupplementSettingsCancelDeliveryWork() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = SupplementReminderScheduler(
+            store = FakeSchedulerStore("user", emptyList()),
+            enqueuer = enqueuer,
+            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        )
+
+        rescheduleSupplementReminderWork(
+            userId = "user",
+            settings = enabledSettings(enabled = false),
+            supplementReminderScheduler = scheduler,
+            recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+        )
+
+        assertEquals(listOf("supplement-reminder:user"), enqueuer.cancelled)
+        assertTrue(enqueuer.enqueued.isEmpty())
+    }
+
+    @Test
+    fun supplementSchedulingFailureQueuesOnlySupplementRecovery() = runBlocking {
+        val enqueuer = RecordingWorkEnqueuer()
+        val scheduler = SupplementReminderScheduler(
+            store = FakeSchedulerStore("user", emptyList(), throwOnSupplements = true),
+            enqueuer = enqueuer,
+            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        )
+
+        rescheduleSupplementReminderWork(
+            userId = "user",
+            settings = enabledSettings(),
+            supplementReminderScheduler = scheduler,
+            recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+        )
+
+        assertEquals(
+            listOf("reminder-reschedule-recovery:user:SUPPLEMENTS"),
+            enqueuer.enqueued.map { it.name }
+        )
+    }
+
+    @Test
+    fun signOutCancellationTargetsOnlyTheSignedInAccountsSupplementAndRecoveryWork() {
+        val enqueuer = RecordingWorkEnqueuer()
+        val supplementScheduler = SupplementReminderScheduler(
+            store = FakeSchedulerStore("user", emptyList()),
+            enqueuer = enqueuer,
+            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        )
+        val recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
+
+        cancelReminderWorkBeforeSignOut("user", supplementScheduler, recoveryScheduler)
+
+        assertEquals(
+            listOf(
+                "supplement-reminder:user",
+                "reminder-reschedule-recovery:user:HYDRATION",
+                "reminder-reschedule-recovery:user:TRAINING",
+                "reminder-reschedule-recovery:user:SUPPLEMENTS"
+            ),
+            enqueuer.cancelled
+        )
+        assertTrue(enqueuer.cancelled.none { it.contains("other") })
+    }
+
+    @Test
     fun claimedDeliveryReleasesPendingClaimAfterPostFailure() = runBlocking {
         val store = FakeDeliveryStore()
 
@@ -589,10 +694,14 @@ class SupplementReminderWorkerTest {
 
     private class FakeSchedulerStore(
         private val userId: String?,
-        private val supplements: List<Supplement>
+        private val supplements: List<Supplement>,
+        private val throwOnSupplements: Boolean = false
     ) : SupplementReminderSchedulerStore {
         override suspend fun authenticatedUserId(): String? = userId
-        override suspend fun supplements(userId: String): List<Supplement> = supplements
+        override suspend fun supplements(userId: String): List<Supplement> {
+            if (throwOnSupplements) throw IllegalStateException("scheduler unavailable")
+            return supplements
+        }
     }
 
     private class RecordingWorkEnqueuer : ReminderWorkEnqueuer {

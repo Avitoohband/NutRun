@@ -10,6 +10,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.HydrationPlanEntity
 import com.avitoohband.nutrun.data.NutRunDatabase
@@ -18,6 +19,7 @@ import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import java.time.ZoneId
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -255,7 +257,8 @@ fun recoveryWorkResult(attempt: Int, requiresRecovery: Boolean): ReminderRecover
 class ReminderRescheduleRecoveryScheduler(
     private val enqueuer: ReminderWorkEnqueuer
 ) {
-    constructor(context: Context) : this(WorkManagerReminderWorkEnqueuer(context))
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(WorkManagerReminderWorkEnqueuer(context))
 
     suspend fun schedule(userId: String, systems: Set<ReminderSystem>) {
         if (userId.isBlank() || systems.isEmpty()) return

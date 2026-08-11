@@ -6,9 +6,104 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class TrainingViewModelTest {
+    @Test
+    fun bulkReminderTogglePreservesTimes() {
+        val model = TrainingViewModel(null, null)
+        val times = model.supplements.associate { it.id to it.reminderMinute }
+
+        model.setAllSupplementReminders(true)
+
+        assertTrue(model.supplements.all(Supplement::reminderEnabled))
+        assertEquals(times, model.supplements.associate { it.id to it.reminderMinute })
+    }
+
+    @Test
+    fun newlyAddedSupplementDefaultsToEnabledAtEight() {
+        val model = TrainingViewModel(null, null)
+
+        model.addSupplement(
+            name = "Magnesium",
+            dose = "200 mg",
+            schedule = SupplementSchedule(RecurrenceType.WEEKDAYS, weekdays = setOf(java.time.DayOfWeek.MONDAY))
+        )
+
+        val added = model.supplements.last()
+        assertTrue(added.reminderEnabled)
+        assertEquals(480, added.reminderMinute)
+    }
+
+    @Test
+    fun individualReminderMutationUpdatesOnlyTheSelectedSupplement() {
+        val model = TrainingViewModel(null, null)
+        val target = model.supplements.first()
+        val untouched = model.supplements.last()
+
+        model.updateSupplementReminder(target.id, enabled = true, minute = 725)
+
+        assertTrue(model.supplements.first { it.id == target.id }.reminderEnabled)
+        assertEquals(725, model.supplements.first { it.id == target.id }.reminderMinute)
+        assertEquals(untouched, model.supplements.first { it.id == untouched.id })
+    }
+
+    @Test
+    fun bulkReminderConfigurationsUpdateEachMatchingSupplement() {
+        val model = TrainingViewModel(null, null)
+        val first = model.supplements.first()
+        val last = model.supplements.last()
+
+        model.updateSupplementReminders(
+            mapOf(
+                first.id to SupplementReminderConfig(enabled = true, minute = 600),
+                last.id to SupplementReminderConfig(enabled = false, minute = 1_320)
+            )
+        )
+
+        assertEquals(
+            SupplementReminderConfig(enabled = true, minute = 600),
+            model.supplements.first { it.id == first.id }.reminderConfig()
+        )
+        assertEquals(
+            SupplementReminderConfig(enabled = false, minute = 1_320),
+            model.supplements.first { it.id == last.id }.reminderConfig()
+        )
+    }
+
+    @Test
+    fun editingSupplementUpdatesItsReminderConfiguration() {
+        val model = TrainingViewModel(null, null)
+        val target = model.supplements.first()
+
+        model.updateSupplement(
+            id = target.id,
+            name = "Updated",
+            dose = "400 mg",
+            schedule = target.schedule,
+            reminderEnabled = true,
+            reminderMinute = 1_000
+        )
+
+        val updated = model.supplements.first { it.id == target.id }
+        assertEquals("Updated", updated.name)
+        assertTrue(updated.reminderEnabled)
+        assertEquals(1_000, updated.reminderMinute)
+    }
+
+    @Test
+    fun reminderMutationsRejectMinutesOutsideTheDay() {
+        val model = TrainingViewModel(null, null)
+        val target = model.supplements.first()
+
+        try {
+            model.updateSupplementReminder(target.id, enabled = true, minute = 1_440)
+            fail("Expected an invalid reminder minute to be rejected")
+        } catch (_: IllegalArgumentException) {
+        }
+    }
+
     @Test
     fun emptyTrainingSessionCannotStart() {
         val model = TrainingViewModel(null, null)
@@ -342,4 +437,9 @@ class TrainingViewModelTest {
         .first { it.id == session.id }
         .exercises
         .first { it.id == target.id }
+
+    private fun Supplement.reminderConfig() = SupplementReminderConfig(
+        enabled = reminderEnabled,
+        minute = reminderMinute
+    )
 }

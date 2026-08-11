@@ -11,6 +11,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunRepository
+import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
+import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.DayOfWeek
@@ -21,11 +24,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+data class SupplementReminderConfig(
+    val enabled: Boolean,
+    val minute: Int
+)
+
 @HiltViewModel
 class TrainingViewModel @Inject constructor(
     private val repository: NutRunRepository?,
     private val preferences: AppPreferences?,
-    private val trainingReminderScheduler: TrainingReminderScheduler? = null
+    private val trainingReminderScheduler: TrainingReminderScheduler? = null,
+    private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler? = null,
+    private val supplementReminderScheduler: SupplementReminderScheduler? = null
 ) : ViewModel() {
     private fun id(prefix: String) = "$prefix-${UUID.randomUUID()}"
     private var currentUserId: String? = null
@@ -108,18 +118,32 @@ class TrainingViewModel @Inject constructor(
             supplements[index] = supplements[index].copy(
                 completedOn = if (checked) LocalDate.now() else null
             )
+            persistTrainingState(rescheduleSupplementReminders = true)
         }
-        persistTrainingState()
     }
 
-    fun addSupplement(name: String, dose: String, schedule: SupplementSchedule) {
-        supplements += Supplement(id("supplement"), name.trim(), dose.trim(), schedule)
-        persistTrainingState()
+    fun addSupplement(
+        name: String,
+        dose: String,
+        schedule: SupplementSchedule,
+        reminderEnabled: Boolean = true,
+        reminderMinute: Int = 480
+    ) {
+        requireValidReminderMinute(reminderMinute)
+        supplements += Supplement(
+            id = id("supplement"),
+            name = name.trim(),
+            dose = dose.trim(),
+            schedule = schedule,
+            reminderEnabled = reminderEnabled,
+            reminderMinute = reminderMinute
+        )
+        persistTrainingState(rescheduleSupplementReminders = true)
     }
 
     fun removeSupplement(id: String) {
         if (supplements.removeAll { it.id == id }) {
-            persistTrainingState()
+            persistTrainingState(rescheduleSupplementReminders = true)
         }
     }
 
@@ -129,14 +153,67 @@ class TrainingViewModel @Inject constructor(
         dose: String,
         schedule: SupplementSchedule
     ) {
+        val existing = supplements.firstOrNull { it.id == id } ?: return
+        updateSupplement(
+            id = id,
+            name = name,
+            dose = dose,
+            schedule = schedule,
+            reminderEnabled = existing.reminderEnabled,
+            reminderMinute = existing.reminderMinute
+        )
+    }
+
+    fun updateSupplement(
+        id: String,
+        name: String,
+        dose: String,
+        schedule: SupplementSchedule,
+        reminderEnabled: Boolean,
+        reminderMinute: Int
+    ) {
+        requireValidReminderMinute(reminderMinute)
         val index = supplements.indexOfFirst { it.id == id }
         if (index < 0) return
         supplements[index] = supplements[index].copy(
             name = name.trim(),
             dose = dose.trim(),
-            schedule = schedule
+            schedule = schedule,
+            reminderEnabled = reminderEnabled,
+            reminderMinute = reminderMinute
         )
-        persistTrainingState()
+        persistTrainingState(rescheduleSupplementReminders = true)
+    }
+
+    fun updateSupplementReminder(id: String, enabled: Boolean, minute: Int) {
+        requireValidReminderMinute(minute)
+        val index = supplements.indexOfFirst { it.id == id }
+        if (index < 0) return
+        supplements[index] = supplements[index].copy(
+            reminderEnabled = enabled,
+            reminderMinute = minute
+        )
+        persistTrainingState(rescheduleSupplementReminders = true)
+    }
+
+    fun setAllSupplementReminders(enabled: Boolean) {
+        supplements.indices.forEach { index ->
+            supplements[index] = supplements[index].copy(reminderEnabled = enabled)
+        }
+        persistTrainingState(rescheduleSupplementReminders = true)
+    }
+
+    fun updateSupplementReminders(configurations: Map<String, SupplementReminderConfig>) {
+        configurations.values.forEach { requireValidReminderMinute(it.minute) }
+        supplements.indices.forEach { index ->
+            configurations[supplements[index].id]?.let { config ->
+                supplements[index] = supplements[index].copy(
+                    reminderEnabled = config.enabled,
+                    reminderMinute = config.minute
+                )
+            }
+        }
+        persistTrainingState(rescheduleSupplementReminders = true)
     }
 
     fun addSession(name: String, weekday: DayOfWeek) {
@@ -485,7 +562,7 @@ class TrainingViewModel @Inject constructor(
         trialState = trialState.copy(isForcedFreePlan = true)
     }
 
-    private fun persistTrainingState() {
+    private fun persistTrainingState(rescheduleSupplementReminders: Boolean = false) {
         val userId = currentUserId ?: return
         val targetRepository = repository ?: return
         val payload = encodeTrainingState(
@@ -512,7 +589,29 @@ class TrainingViewModel @Inject constructor(
             targetRepository.currentTrainingReminderSettings()?.let { settings ->
                 trainingReminderScheduler?.schedule(userId, settings)
             }
+            if (rescheduleSupplementReminders) {
+                rescheduleSupplementReminders(userId, targetRepository)
+            }
         }
+    }
+
+    private suspend fun rescheduleSupplementReminders(
+        userId: String,
+        targetRepository: NutRunRepository
+    ) {
+        val scheduler = supplementReminderScheduler ?: return
+        val settings = targetRepository.currentSupplementReminderSettings()
+            ?: SupplementReminderSettingsEntity(userId = userId)
+        rescheduleSupplementReminderWork(
+            userId,
+            settings,
+            scheduler,
+            reminderRescheduleRecoveryScheduler
+        )
+    }
+
+    private fun requireValidReminderMinute(minute: Int) {
+        require(minute in 0 until 24 * 60)
     }
 
     private fun restoreTrainingState(payload: String) {
