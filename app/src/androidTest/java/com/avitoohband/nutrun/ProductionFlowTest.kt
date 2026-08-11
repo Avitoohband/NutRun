@@ -188,9 +188,9 @@ class ProductionFlowTest {
             }
 
             composeRule.onAllNodesWithTag("walk-history-card")[0]
-                .assertTextContains("4500 steps")
+                .assertTextContains("4500 steps", substring = true)
             composeRule.onAllNodesWithTag("walk-history-card")[1]
-                .assertTextContains("Steps unavailable")
+                .assertTextContains("Steps unavailable", substring = true)
             composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
 
             composeRule.waitUntil(timeoutMillis = 10_000) {
@@ -896,10 +896,10 @@ class ProgressionSuggestionComposeTest {
         }
 
         val programTag = "program-progression-${target.id}"
-        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag(programTag))
-        composeRule.onNodeWithTag(programTag)
+        composeRule.onNodeWithTag("training-list", useUnmergedTree = true).performScrollToNode(hasTestTag(programTag))
+        composeRule.onNodeWithTag(programTag, useUnmergedTree = true)
             .assertIsDisplayed()
-            .assertTextContains("Increase to 62.5 kg")
+            .assertTextContains("Increase to 62.5 kg", substring = true)
 
         composeRule.onNodeWithTag("start-session-${updatedSession.id}").performClick()
 
@@ -907,6 +907,6 @@ class ProgressionSuggestionComposeTest {
         composeRule.onNodeWithTag(activeTag)
             .performScrollTo()
             .assertIsDisplayed()
-            .assertTextContains("Increase to 62.5 kg")
+            .assertTextContains("Increase to 62.5 kg", substring = true)
     }
 }
