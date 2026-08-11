@@ -8,6 +8,7 @@ import com.avitoohband.nutrun.data.TrainingStateEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -158,6 +159,112 @@ class TrainingViewModelTest {
     }
 
     @Test
+    fun durableReminderSaveRepeatsAnIncompleteRepositoryOperationAfterRoomFeedback() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity("account-a", trainingPayload("Stored"), 1L)
+        )
+        val ordinaryRepositoryGate = CompletableDeferred<Unit>()
+        val roomEmissionCompleted = CompletableDeferred<Unit>()
+        runtime.prepareSave(
+            gate = ordinaryRepositoryGate,
+            emitToTrainingStatesBeforeCompletion = true,
+            roomEmissionCompleted = roomEmissionCompleted
+        )
+        val durableRepositoryGate = CompletableDeferred<Unit>()
+        val durableRepositoryStarted = runtime.prepareSave(durableRepositoryGate)
+        val scheduleGate = CompletableDeferred<Unit>()
+        runtime.scheduleGate = scheduleGate
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        val configurations = mapOf(
+            "stored-supplement" to SupplementReminderConfig(true, 600)
+        )
+
+        model.updateSupplementReminder("stored-supplement", true, 600)
+        roomEmissionCompleted.await()
+        val durableSave = async(start = CoroutineStart.UNDISPATCHED) {
+            model.persistSupplementReminders("account-a", configurations)
+        }
+
+        withTimeout(5_000) {
+            while (!durableSave.isCompleted && !durableRepositoryStarted.isCompleted) yield()
+        }
+        assertTrue(durableRepositoryStarted.isCompleted)
+        assertFalse(durableSave.isCompleted)
+        assertTrue(runtime.savedPayloads.isEmpty())
+
+        durableRepositoryGate.complete(Unit)
+        withTimeout(5_000) {
+            while (!durableSave.isCompleted && !runtime.scheduleStarted.isCompleted) yield()
+        }
+        assertTrue(runtime.scheduleStarted.isCompleted)
+        assertFalse(durableSave.isCompleted)
+
+        scheduleGate.complete(Unit)
+        assertEquals(NotificationSettingsSaveResult.Success("account-a"), durableSave.await())
+        assertEquals(2, runtime.attemptedPayloads.size)
+        assertEquals(1, runtime.savedPayloads.size)
+        assertEquals(1, runtime.supplementSchedules.size)
+        ordinaryRepositoryGate.complete(Unit)
+        Unit
+    }
+
+    @Test
+    fun durableReminderSaveTakesOverReschedulingWithoutRepeatingCompletedRepositoryWork() =
+        runBlocking {
+            val runtime = FakeTrainingViewModelRuntime(
+                session = SessionPreferences(authenticatedUserId = "account-a")
+            )
+            runtime.trainingStates.tryEmit(
+                TrainingStateEntity("account-a", trainingPayload("Stored"), 1L)
+            )
+            val ordinaryRepositoryGate = CompletableDeferred<Unit>()
+            val roomEmissionCompleted = CompletableDeferred<Unit>()
+            runtime.prepareSave(
+                gate = ordinaryRepositoryGate,
+                nonCancellable = true,
+                emitToTrainingStatesBeforeCompletion = true,
+                roomEmissionCompleted = roomEmissionCompleted
+            )
+            val duplicateRepositoryStarted = runtime.prepareSave()
+            val scheduleGate = CompletableDeferred<Unit>()
+            runtime.scheduleGate = scheduleGate
+            val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+            val configurations = mapOf(
+                "stored-supplement" to SupplementReminderConfig(true, 600)
+            )
+
+            model.updateSupplementReminder("stored-supplement", true, 600)
+            roomEmissionCompleted.await()
+            val durableSave = async(start = CoroutineStart.UNDISPATCHED) {
+                model.persistSupplementReminders("account-a", configurations)
+            }
+
+            assertFalse(durableSave.isCompleted)
+            ordinaryRepositoryGate.complete(Unit)
+            withTimeout(5_000) {
+                while (
+                    !durableSave.isCompleted &&
+                    !runtime.scheduleStarted.isCompleted &&
+                    !duplicateRepositoryStarted.isCompleted
+                ) {
+                    yield()
+                }
+            }
+            assertFalse(duplicateRepositoryStarted.isCompleted)
+            assertTrue(runtime.scheduleStarted.isCompleted)
+            assertFalse(durableSave.isCompleted)
+
+            scheduleGate.complete(Unit)
+            assertEquals(NotificationSettingsSaveResult.Success("account-a"), durableSave.await())
+            assertEquals(1, runtime.attemptedPayloads.size)
+            assertEquals(1, runtime.savedPayloads.size)
+            assertEquals(1, runtime.supplementSchedules.size)
+        }
+
+    @Test
     fun newerMutationWaitsForReminderSaveAndPersistsAFreshCombinedSnapshot() = runBlocking {
         val runtime = FakeTrainingViewModelRuntime(
             session = SessionPreferences(authenticatedUserId = "account-a")
@@ -210,6 +317,7 @@ class TrainingViewModelTest {
         val configurations = mapOf(
             "stored-supplement" to SupplementReminderConfig(true, 600)
         )
+        runtime.prepareSave(emitToTrainingStatesBeforeCompletion = true)
 
         assertEquals(
             NotificationSettingsSaveResult.Success("account-a"),
@@ -222,6 +330,39 @@ class TrainingViewModelTest {
 
         assertEquals(1, runtime.savedPayloads.size)
         assertEquals(1, runtime.supplementSchedules.size)
+    }
+
+    @Test
+    fun completedReminderOperationIsIsolatedByAccount() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity("account-a", trainingPayload("Stored"), 1L)
+        )
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        val configurations = mapOf(
+            "stored-supplement" to SupplementReminderConfig(true, 600)
+        )
+
+        assertEquals(
+            NotificationSettingsSaveResult.Success("account-a"),
+            model.persistSupplementReminders("account-a", configurations)
+        )
+        runtime.selectAccount("account-b")
+        runtime.trainingStates.emit(
+            TrainingStateEntity("account-b", trainingPayload("Stored"), 2L)
+        )
+        withTimeout(5_000) {
+            while (model.supplementReminderReadyAccountId != "account-b") yield()
+        }
+
+        assertEquals(
+            NotificationSettingsSaveResult.Success("account-b"),
+            model.persistSupplementReminders("account-b", configurations)
+        )
+        assertEquals(2, runtime.savedPayloads.size)
+        assertEquals(listOf("account-a", "account-b"), runtime.supplementSchedules.map { it.first })
     }
 
     @Test
@@ -697,20 +838,31 @@ class TrainingViewModelTest {
         private val sessionState = MutableStateFlow(session)
         override val session: Flow<SessionPreferences> = sessionState
         val trainingStates = MutableSharedFlow<TrainingStateEntity?>(replay = 1)
+        val attemptedPayloads = mutableListOf<String>()
         val savedPayloads = mutableListOf<String>()
         val supplementSchedules = mutableListOf<Pair<String, SupplementReminderSettingsEntity>>()
         var saveGate: CompletableDeferred<Unit>? = null
         val saveStarted = CompletableDeferred<Unit>()
+        var scheduleGate: CompletableDeferred<Unit>? = null
+        val scheduleStarted = CompletableDeferred<Unit>()
         private val saveControls = mutableListOf<SaveControl>()
         private var saveCallCount = 0
         var saveFailure: Throwable? = null
 
         fun prepareSave(
             gate: CompletableDeferred<Unit>? = null,
-            nonCancellable: Boolean = false
+            nonCancellable: Boolean = false,
+            emitToTrainingStatesBeforeCompletion: Boolean = false,
+            roomEmissionCompleted: CompletableDeferred<Unit>? = null
         ): CompletableDeferred<Unit> {
             val started = CompletableDeferred<Unit>()
-            saveControls += SaveControl(gate, nonCancellable, started)
+            saveControls += SaveControl(
+                gate = gate,
+                nonCancellable = nonCancellable,
+                started = started,
+                emitToTrainingStatesBeforeCompletion = emitToTrainingStatesBeforeCompletion,
+                roomEmissionCompleted = roomEmissionCompleted
+            )
             return started
         }
 
@@ -723,6 +875,11 @@ class TrainingViewModelTest {
             val control = saveControls.getOrNull(saveCallCount++)
             saveStarted.complete(Unit)
             control?.started?.complete(Unit)
+            attemptedPayloads += payload
+            if (control?.emitToTrainingStatesBeforeCompletion == true) {
+                trainingStates.emit(TrainingStateEntity(userId, payload, 1L))
+                control.roomEmissionCompleted?.complete(Unit)
+            }
             val gate = control?.gate ?: saveGate
             if (gate != null) {
                 if (control?.nonCancellable == true) {
@@ -750,13 +907,17 @@ class TrainingViewModelTest {
             userId: String,
             settings: SupplementReminderSettingsEntity
         ) {
+            scheduleStarted.complete(Unit)
+            scheduleGate?.await()
             supplementSchedules += userId to settings
         }
 
         private data class SaveControl(
             val gate: CompletableDeferred<Unit>?,
             val nonCancellable: Boolean,
-            val started: CompletableDeferred<Unit>
+            val started: CompletableDeferred<Unit>,
+            val emitToTrainingStatesBeforeCompletion: Boolean,
+            val roomEmissionCompleted: CompletableDeferred<Unit>?
         )
     }
 }

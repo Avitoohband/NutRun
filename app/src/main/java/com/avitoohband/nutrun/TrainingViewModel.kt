@@ -40,6 +40,13 @@ data class SupplementReminderConfig(
     val minute: Int
 )
 
+private data class TrainingPersistenceOperation(
+    val accountId: String,
+    val payload: String,
+    val repositoryCompleted: Boolean = false,
+    val supplementRescheduleCompleted: Boolean = false
+)
+
 internal interface TrainingViewModelRuntime {
     val session: Flow<SessionPreferences>
     fun trainingState(userId: String): Flow<TrainingStateEntity?>
@@ -141,8 +148,7 @@ class TrainingViewModel private constructor(
     private var supplementReschedulePending = false
     private var restoredPayload: String? = null
     private var restoredUserId: String? = null
-    private var lastPersistedAccountId: String? = null
-    private var lastPersistedPayload: String? = null
+    private var persistenceOperation: TrainingPersistenceOperation? = null
 
     var supplementReminderReadyAccountId by mutableStateOf<String?>(null)
         private set
@@ -192,8 +198,7 @@ class TrainingViewModel private constructor(
                     currentUserId = session.authenticatedUserId
                     restoredPayload = null
                     restoredUserId = null
-                    lastPersistedAccountId = null
-                    lastPersistedPayload = null
+                    persistenceOperation = null
                     supplementReminderReadyAccountId = null
                     supplementReminderUpdatesReady = false
                     resetTrainingState()
@@ -204,8 +209,6 @@ class TrainingViewModel private constructor(
                                     restoredPayload = it
                                     restoreTrainingState(it)
                                 }
-                                lastPersistedAccountId = userId
-                                lastPersistedPayload = it
                             }
                             if (currentUserId == userId) {
                                 restoredUserId = userId
@@ -360,69 +363,79 @@ class TrainingViewModel private constructor(
         persistenceGeneration += 1
         val durableGeneration = persistenceGeneration
         persistJob?.cancel()
-        var scheduleAfterWrite = false
-        val result = try {
+        var repositoryCompleted = false
+        return try {
             persistenceMutex.withLock {
                 val lockedAccountId = targetRuntime.currentUserId()
-                when {
-                    lockedAccountId != accountId || currentUserId != accountId ->
-                        NotificationSettingsSaveResult.AccountChanged(
-                            accountId,
-                            lockedAccountId,
-                            NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS
-                        )
-                    restoredUserId != accountId ||
-                        supplementReminderReadyAccountId != accountId ->
-                        NotificationSettingsSaveResult.NotReady(accountId)
-                    else -> {
-                        val updatedSupplements = supplements.map { supplement ->
-                            configurations[supplement.id]?.let { config ->
-                                supplement.copy(
-                                    reminderEnabled = config.enabled,
-                                    reminderMinute = config.minute
-                                )
-                            } ?: supplement
-                        }
-                        val payload = currentTrainingPayload(updatedSupplements)
-                        if (
-                            lastPersistedAccountId == accountId &&
-                            lastPersistedPayload == payload
-                        ) {
-                            applySupplementReminderConfigurations(configurations)
-                            restoredPayload = payload
-                            NotificationSettingsSaveResult.Success(accountId)
-                        } else {
-                            val previousRestoredPayload = restoredPayload
-                            restoredPayload = payload
-                            try {
-                                targetRuntime.saveTrainingState(accountId, payload)
-                            } catch (error: Exception) {
-                                if (restoredPayload == payload) {
-                                    restoredPayload = previousRestoredPayload
-                                }
-                                throw error
-                            }
-                            val actualAccountId = targetRuntime.currentUserId()
-                            if (actualAccountId != accountId || currentUserId != accountId) {
-                                NotificationSettingsSaveResult.AccountChanged(
-                                    accountId,
-                                    actualAccountId,
-                                    NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
-                                    setOf(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS)
-                                )
-                            } else {
-                                lastPersistedAccountId = accountId
-                                lastPersistedPayload = payload
-                                applySupplementReminderConfigurations(configurations)
-                                if (persistenceGeneration == durableGeneration) {
-                                    supplementReschedulePending = false
-                                }
-                                scheduleAfterWrite = true
-                                NotificationSettingsSaveResult.Success(accountId)
-                            }
-                        }
-                    }
+                if (lockedAccountId != accountId || currentUserId != accountId) {
+                    return@withLock NotificationSettingsSaveResult.AccountChanged(
+                        accountId,
+                        lockedAccountId,
+                        NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS
+                    )
                 }
+                if (
+                    restoredUserId != accountId ||
+                    supplementReminderReadyAccountId != accountId
+                ) {
+                    return@withLock NotificationSettingsSaveResult.NotReady(accountId)
+                }
+
+                val updatedSupplements = supplements.map { supplement ->
+                    configurations[supplement.id]?.let { config ->
+                        supplement.copy(
+                            reminderEnabled = config.enabled,
+                            reminderMinute = config.minute
+                        )
+                    } ?: supplement
+                }
+                val payload = currentTrainingPayload(updatedSupplements)
+                var operation = persistenceOperationFor(accountId, payload)
+                if (!operation.repositoryCompleted) {
+                    val previousRestoredPayload = restoredPayload
+                    restoredPayload = payload
+                    try {
+                        targetRuntime.saveTrainingState(accountId, payload)
+                    } catch (error: Exception) {
+                        if (restoredPayload == payload) {
+                            restoredPayload = previousRestoredPayload
+                        }
+                        throw error
+                    }
+                    operation = operation.copy(repositoryCompleted = true)
+                    retainPersistenceOperation(operation)
+                }
+                repositoryCompleted = operation.repositoryCompleted
+
+                val persistedAccountId = targetRuntime.currentUserId()
+                if (persistedAccountId != accountId || currentUserId != accountId) {
+                    return@withLock NotificationSettingsSaveResult.AccountChanged(
+                        accountId,
+                        persistedAccountId,
+                        NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                        setOf(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS)
+                    )
+                }
+
+                applySupplementReminderConfigurations(configurations)
+                if (!operation.supplementRescheduleCompleted) {
+                    rescheduleSupplementReminders(accountId, targetRuntime)
+                    val scheduledAccountId = targetRuntime.currentUserId()
+                    if (scheduledAccountId != accountId || currentUserId != accountId) {
+                        return@withLock NotificationSettingsSaveResult.AccountChanged(
+                            accountId,
+                            scheduledAccountId,
+                            NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                            setOf(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS)
+                        )
+                    }
+                    operation = operation.copy(supplementRescheduleCompleted = true)
+                    retainPersistenceOperation(operation)
+                }
+                if (persistenceGeneration == durableGeneration) {
+                    supplementReschedulePending = false
+                }
+                NotificationSettingsSaveResult.Success(accountId)
             }
         } catch (error: Exception) {
             if (error is CancellationException && !currentCoroutineContext().isActive) throw error
@@ -431,7 +444,12 @@ class TrainingViewModel private constructor(
                 NotificationSettingsSaveResult.AccountChanged(
                     accountId,
                     actualAccountId,
-                    NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS
+                    NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                    if (repositoryCompleted) {
+                        setOf(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS)
+                    } else {
+                        emptySet()
+                    }
                 )
             } else {
                 NotificationSettingsSaveResult.Failed(
@@ -441,10 +459,6 @@ class TrainingViewModel private constructor(
                 )
             }
         }
-        if (result is NotificationSettingsSaveResult.Success && scheduleAfterWrite) {
-            runCatching { rescheduleSupplementReminders(accountId, targetRuntime) }
-        }
-        return result
     }
 
     private fun applySupplementReminderConfigurations(
@@ -457,6 +471,28 @@ class TrainingViewModel private constructor(
                     reminderMinute = config.minute
                 )
             }
+        }
+    }
+
+    private fun persistenceOperationFor(
+        accountId: String,
+        payload: String
+    ): TrainingPersistenceOperation {
+        val current = persistenceOperation
+        if (current?.accountId == accountId && current.payload == payload) return current
+        return TrainingPersistenceOperation(accountId, payload).also {
+            persistenceOperation = it
+        }
+    }
+
+    private fun retainPersistenceOperation(operation: TrainingPersistenceOperation) {
+        val current = persistenceOperation
+        if (
+            currentUserId == operation.accountId &&
+            current?.accountId == operation.accountId &&
+            current.payload == operation.payload
+        ) {
+            persistenceOperation = operation
         }
     }
 
@@ -815,8 +851,6 @@ class TrainingViewModel private constructor(
         val generation = persistenceGeneration
         persistJob?.cancel()
         persistJob = modelScope.launch {
-            var persisted = false
-            var shouldRescheduleSupplements = false
             persistenceMutex.withLock {
                 if (
                     generation != persistenceGeneration ||
@@ -826,13 +860,18 @@ class TrainingViewModel private constructor(
                     return@withLock
                 }
                 val payload = currentTrainingPayload(supplements)
-                val previousRestoredPayload = restoredPayload
-                restoredPayload = payload
-                try {
-                    targetRuntime.saveTrainingState(userId, payload)
-                } catch (error: Exception) {
-                    if (restoredPayload == payload) restoredPayload = previousRestoredPayload
-                    throw error
+                var operation = persistenceOperationFor(userId, payload)
+                if (!operation.repositoryCompleted) {
+                    val previousRestoredPayload = restoredPayload
+                    restoredPayload = payload
+                    try {
+                        targetRuntime.saveTrainingState(userId, payload)
+                    } catch (error: Exception) {
+                        if (restoredPayload == payload) restoredPayload = previousRestoredPayload
+                        throw error
+                    }
+                    operation = operation.copy(repositoryCompleted = true)
+                    retainPersistenceOperation(operation)
                 }
                 if (generation != persistenceGeneration) return@withLock
                 if (
@@ -841,18 +880,27 @@ class TrainingViewModel private constructor(
                 ) {
                     return@withLock
                 }
-                lastPersistedAccountId = userId
-                lastPersistedPayload = payload
-                persisted = true
-                shouldRescheduleSupplements = supplementReschedulePending
-                if (shouldRescheduleSupplements) supplementReschedulePending = false
-            }
-            if (!persisted || generation != persistenceGeneration) return@launch
-            targetRuntime.currentTrainingReminderSettings(userId)?.let { settings ->
-                targetRuntime.scheduleTraining(userId, settings)
-            }
-            if (shouldRescheduleSupplements && generation == persistenceGeneration) {
-                rescheduleSupplementReminders(userId, targetRuntime)
+
+                targetRuntime.currentTrainingReminderSettings(userId)?.let { settings ->
+                    targetRuntime.scheduleTraining(userId, settings)
+                }
+                if (supplementReschedulePending) {
+                    if (!operation.supplementRescheduleCompleted) {
+                        rescheduleSupplementReminders(userId, targetRuntime)
+                        if (
+                            generation != persistenceGeneration ||
+                            targetRuntime.currentUserId() != userId ||
+                            currentUserId != userId
+                        ) {
+                            return@withLock
+                        }
+                        operation = operation.copy(supplementRescheduleCompleted = true)
+                        retainPersistenceOperation(operation)
+                    }
+                    if (generation == persistenceGeneration) {
+                        supplementReschedulePending = false
+                    }
+                }
             }
         }
     }
