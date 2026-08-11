@@ -41,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.sync.Mutex
@@ -137,6 +139,11 @@ internal interface NutRunViewModelReminderRuntime {
     suspend fun rescheduleSupplementReminders(userId: String)
     suspend fun currentSession(): SessionPreferences
 
+    suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity)
+    suspend fun saveTrainingReminderSettings(
+        userId: String,
+        settings: TrainingReminderSettingsEntity
+    )
     suspend fun saveSupplementReminderSettings(
         userId: String,
         settings: SupplementReminderSettingsEntity
@@ -187,6 +194,19 @@ private class ProductionNutRunViewModelReminderRuntime(
     }
 
     override suspend fun currentSession(): SessionPreferences = preferences.currentSession()
+
+    override suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity) {
+        require(currentSession().authenticatedUserId == userId)
+        repository.saveHydrationPlan(plan)
+    }
+
+    override suspend fun saveTrainingReminderSettings(
+        userId: String,
+        settings: TrainingReminderSettingsEntity
+    ) {
+        require(currentSession().authenticatedUserId == userId)
+        repository.saveTrainingReminderSettings(settings)
+    }
 
     override suspend fun saveSupplementReminderSettings(
         userId: String,
@@ -623,6 +643,67 @@ class NutRunViewModel internal constructor(
             } catch (error: Exception) {
                 message.value = error.message ?: "Could not save reminder settings."
             }
+        }
+    }
+
+    suspend fun persistNotificationSettings(
+        accountId: String,
+        hydration: HydrationPlanEntity,
+        training: TrainingReminderSettingsEntity,
+        supplements: SupplementReminderSettingsEntity
+    ): NotificationSettingsSaveResult {
+        accountChanged(accountId, NotificationSettingsSaveStage.HYDRATION)?.let { return it }
+        saveNotificationStage(accountId, NotificationSettingsSaveStage.HYDRATION) {
+            reminderRuntime.saveHydrationPlan(accountId, hydration)
+        }?.let { return it }
+
+        accountChanged(accountId, NotificationSettingsSaveStage.TRAINING)?.let { return it }
+        saveNotificationStage(accountId, NotificationSettingsSaveStage.TRAINING) {
+            reminderRuntime.saveTrainingReminderSettings(accountId, training)
+        }?.let { return it }
+
+        accountChanged(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER)?.let {
+            return it
+        }
+        saveNotificationStage(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER) {
+            reminderRuntime.saveSupplementReminderSettings(accountId, supplements)
+        }?.let { return it }
+
+        accountChanged(accountId, NotificationSettingsSaveStage.SUPPLEMENT_MASTER)?.let {
+            return it
+        }
+        return NotificationSettingsSaveResult.Success(accountId)
+    }
+
+    private suspend fun saveNotificationStage(
+        accountId: String,
+        stage: NotificationSettingsSaveStage,
+        save: suspend () -> Unit
+    ): NotificationSettingsSaveResult? = try {
+        save()
+        accountChanged(accountId, stage)
+    } catch (error: Exception) {
+        if (error is CancellationException && !currentCoroutineContext().isActive) throw error
+        accountChanged(accountId, stage) ?: NotificationSettingsSaveResult.Failed(
+            expectedAccountId = accountId,
+            stage = stage,
+            message = error.message ?: "Persistence failed."
+        )
+    }
+
+    private suspend fun accountChanged(
+        expectedAccountId: String,
+        stage: NotificationSettingsSaveStage
+    ): NotificationSettingsSaveResult.AccountChanged? {
+        val actualAccountId = reminderRuntime.currentSession().authenticatedUserId
+        return if (actualAccountId == expectedAccountId) {
+            null
+        } else {
+            NotificationSettingsSaveResult.AccountChanged(
+                expectedAccountId = expectedAccountId,
+                actualAccountId = actualAccountId,
+                stage = stage
+            )
         }
     }
 

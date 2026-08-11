@@ -23,6 +23,7 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -76,6 +77,73 @@ class NutRunViewModelReminderTest {
         assertTrue(runtime.work.cancelled.isEmpty())
         assertTrue(runtime.settingsFor("account-a").enabled)
         assertFalse(runtime.settingsFor("account-b").enabled)
+    }
+
+    @Test
+    fun remainingSettingsPersistInDocumentedOrderForTheExpectedAccount() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        runtime.settingsWrites.clear()
+
+        val result = model.persistNotificationSettings(
+            accountId = "account-a",
+            hydration = testHydrationPlan(),
+            training = testTrainingSettings(),
+            supplements = testSettings()
+        )
+
+        assertEquals(NotificationSettingsSaveResult.Success("account-a"), result)
+        assertEquals(
+            listOf("hydration:account-a", "training:account-a", "master:account-a"),
+            runtime.settingsWrites
+        )
+    }
+
+    @Test
+    fun remainingSettingsStopAfterFailureAndReportThePartialStage() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        runtime.settingsWrites.clear()
+        runtime.settingsFailureStage = NotificationSettingsSaveStage.TRAINING
+
+        val result = model.persistNotificationSettings(
+            accountId = "account-a",
+            hydration = testHydrationPlan(),
+            training = testTrainingSettings(),
+            supplements = testSettings()
+        )
+
+        assertTrue(result is NotificationSettingsSaveResult.Failed)
+        val failed = result as NotificationSettingsSaveResult.Failed
+        assertEquals(NotificationSettingsSaveStage.TRAINING, failed.stage)
+        assertEquals(listOf("hydration:account-a"), runtime.settingsWrites)
+    }
+
+    @Test
+    fun remainingSettingsDetectAccountSwitchBeforeStartingLaterWrites() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        runtime.settingsWrites.clear()
+        runtime.hydrationSaveGate = CompletableDeferred()
+
+        val save = async {
+            model.persistNotificationSettings(
+                accountId = "account-a",
+                hydration = testHydrationPlan(),
+                training = testTrainingSettings(),
+                supplements = testSettings()
+            )
+        }
+        runtime.hydrationSaveStarted.await()
+        runtime.selectAccount("account-b")
+        runtime.hydrationSaveGate!!.complete(Unit)
+
+        val result = save.await()
+        assertTrue(result is NotificationSettingsSaveResult.AccountChanged)
+        val changed = result as NotificationSettingsSaveResult.AccountChanged
+        assertEquals("account-a", changed.expectedAccountId)
+        assertEquals("account-b", changed.actualAccountId)
+        assertTrue(runtime.settingsWrites.isEmpty())
     }
 
     @Test
@@ -152,6 +220,10 @@ class NutRunViewModelReminderTest {
         val savedSettings = mutableListOf<Pair<String, SupplementReminderSettingsEntity>>()
         val hydrationSchedules = mutableListOf<HydrationPlanEntity>()
         val trainingSchedules = mutableListOf<Pair<String, TrainingReminderSettingsEntity>>()
+        val settingsWrites = mutableListOf<String>()
+        var settingsFailureStage: NotificationSettingsSaveStage? = null
+        var hydrationSaveGate: CompletableDeferred<Unit>? = null
+        val hydrationSaveStarted = CompletableDeferred<Unit>()
         var settingsReads = 0
         var saveGate: CompletableDeferred<Unit>? = null
         val saveStarted = CompletableDeferred<Unit>()
@@ -205,15 +277,40 @@ class NutRunViewModelReminderTest {
         fun settingsFor(accountId: String?): SupplementReminderSettingsEntity =
             accountId?.let(settings::get) ?: SupplementReminderSettingsEntity()
 
+        override suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity) {
+            hydrationSaveStarted.complete(Unit)
+            hydrationSaveGate?.await()
+            failSettingsSaveIfRequested(NotificationSettingsSaveStage.HYDRATION)
+            require(session.value.authenticatedUserId == userId)
+            settingsWrites += "hydration:$userId"
+        }
+
+        override suspend fun saveTrainingReminderSettings(
+            userId: String,
+            settings: TrainingReminderSettingsEntity
+        ) {
+            failSettingsSaveIfRequested(NotificationSettingsSaveStage.TRAINING)
+            require(session.value.authenticatedUserId == userId)
+            settingsWrites += "training:$userId"
+        }
+
+        private fun failSettingsSaveIfRequested(stage: NotificationSettingsSaveStage) {
+            if (settingsFailureStage == stage) error("$stage failed")
+        }
+
         override suspend fun saveSupplementReminderSettings(
             userId: String,
             settings: SupplementReminderSettingsEntity
         ) {
+            if (settingsFailureStage == NotificationSettingsSaveStage.SUPPLEMENT_MASTER) {
+                error("master failed")
+            }
             saveStarted.complete(Unit)
             saveGate?.await()
             require(session.value.authenticatedUserId == userId)
             this.settings[userId] = settings
             savedSettings += userId to settings
+            settingsWrites += "master:$userId"
             if (session.value.authenticatedUserId == userId) {
                 supplementReminderSettings.value = settings
             }
@@ -291,6 +388,16 @@ private fun testSettings(enabled: Boolean = true) = SupplementReminderSettingsEn
     enabled = enabled,
     timezoneId = "UTC"
 )
+
+private fun testHydrationPlan() = HydrationPlanEntity(
+    goalMl = 2_000,
+    servingMl = 250,
+    intervalMinutes = 60,
+    wakingStartMinute = 8 * 60,
+    wakingEndMinute = 22 * 60
+)
+
+private fun testTrainingSettings() = TrainingReminderSettingsEntity()
 
 private fun reminderTestScope(): CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)

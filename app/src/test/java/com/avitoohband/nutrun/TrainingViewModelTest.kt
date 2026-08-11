@@ -6,12 +6,15 @@ import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingStateEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -22,30 +25,92 @@ import org.junit.Test
 
 class TrainingViewModelTest {
     @Test
-    fun reminderBulkSaveReportsReadinessAndAppliesOnlyAfterAccountRestore() = runBlocking {
+    fun durableReminderSaveWaitsForRepositoryBeforeMutatingOrReportingSuccess() = runBlocking {
         val runtime = FakeTrainingViewModelRuntime(session = SessionPreferences(authenticatedUserId = "account-a"))
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
         val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
-        val defaults = model.supplements.toList()
+        runtime.saveGate = CompletableDeferred()
 
-        val blocked = model.updateSupplementReminders(
-            mapOf("supplement-1" to SupplementReminderConfig(true, 600))
-        )
+        val save = async {
+            model.persistSupplementReminders(
+                accountId = "account-a",
+                configurations = mapOf(
+                    "stored-supplement" to SupplementReminderConfig(true, 600)
+                )
+            )
+        }
+        runtime.saveStarted.await()
 
-        assertEquals(SupplementReminderUpdateResult.NOT_READY, blocked)
-        assertFalse(model.supplementReminderUpdatesReady)
-        assertEquals(defaults, model.supplements.toList())
+        assertFalse(save.isCompleted)
+        assertFalse(model.supplements.single().reminderEnabled)
         assertTrue(runtime.savedPayloads.isEmpty())
-        runtime.trainingStates.emit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
+        runtime.saveGate!!.complete(Unit)
 
-        assertEquals("Stored", model.supplements.single().name)
-        assertTrue(model.supplementReminderUpdatesReady)
-        val applied = model.updateSupplementReminders(
-            mapOf("stored-supplement" to SupplementReminderConfig(true, 600))
-        )
-        assertEquals(SupplementReminderUpdateResult.APPLIED, applied)
+        assertEquals(NotificationSettingsSaveResult.Success("account-a"), save.await())
         assertTrue(model.supplements.single().reminderEnabled)
         assertEquals(600, model.supplements.single().reminderMinute)
         assertEquals(1, runtime.savedPayloads.size)
+    }
+
+    @Test
+    fun durableReminderSaveFailureOrCancellationDoesNotMutateMemory() = runBlocking {
+        listOf<Throwable>(
+            IllegalStateException("disk full"),
+            CancellationException("write cancelled")
+        ).forEach { failure ->
+            val runtime = FakeTrainingViewModelRuntime(
+                session = SessionPreferences(authenticatedUserId = "account-a")
+            )
+            runtime.trainingStates.tryEmit(
+                TrainingStateEntity("account-a", trainingPayload("Stored"), 1L)
+            )
+            runtime.saveFailure = failure
+            val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+
+            val result = model.persistSupplementReminders(
+                accountId = "account-a",
+                configurations = mapOf(
+                    "stored-supplement" to SupplementReminderConfig(true, 600)
+                )
+            )
+
+            assertTrue(result is NotificationSettingsSaveResult.Failed)
+            val failed = result as NotificationSettingsSaveResult.Failed
+            assertEquals(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS, failed.stage)
+            assertTrue(failed.message.contains(failure.message.orEmpty()))
+            assertFalse(model.supplements.single().reminderEnabled)
+            assertTrue(runtime.savedPayloads.isEmpty())
+        }
+    }
+
+    @Test
+    fun durableReminderSaveDetectsAccountSwitchAndDoesNotApplyAToB() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
+        runtime.saveGate = CompletableDeferred()
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+
+        val save = async {
+            model.persistSupplementReminders(
+                accountId = "account-a",
+                configurations = mapOf(
+                    "stored-supplement" to SupplementReminderConfig(true, 600)
+                )
+            )
+        }
+        runtime.saveStarted.await()
+        runtime.selectAccount("account-b")
+        yield()
+        runtime.saveGate!!.complete(Unit)
+
+        val result = save.await()
+        assertTrue(result is NotificationSettingsSaveResult.AccountChanged)
+        val changed = result as NotificationSettingsSaveResult.AccountChanged
+        assertEquals("account-a", changed.expectedAccountId)
+        assertEquals("account-b", changed.actualAccountId)
+        assertTrue(runtime.savedPayloads.isEmpty())
     }
 
     @Test
@@ -524,14 +589,23 @@ class TrainingViewModelTest {
         val savedPayloads = mutableListOf<String>()
         val supplementSchedules = mutableListOf<Pair<String, SupplementReminderSettingsEntity>>()
         var saveGate: CompletableDeferred<Unit>? = null
+        val saveStarted = CompletableDeferred<Unit>()
+        var saveFailure: Throwable? = null
 
         override fun trainingState(userId: String): Flow<TrainingStateEntity?> = trainingStates
 
         override suspend fun currentUserId(): String? = sessionState.value.authenticatedUserId
 
         override suspend fun saveTrainingState(userId: String, payload: String) {
+            saveStarted.complete(Unit)
             saveGate?.await()
+            saveFailure?.let { throw it }
+            require(sessionState.value.authenticatedUserId == userId)
             savedPayloads += payload
+        }
+
+        fun selectAccount(accountId: String) {
+            sessionState.value = SessionPreferences(authenticatedUserId = accountId)
         }
 
         override suspend fun currentTrainingReminderSettings(userId: String) = null

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -40,8 +41,10 @@ import com.avitoohband.nutrun.data.UserProfileEntity
 import com.avitoohband.nutrun.data.WalkPointEntity
 import com.avitoohband.nutrun.data.WalkSessionEntity
 import java.time.Instant
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.TimeZone
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -51,6 +54,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Before
@@ -249,6 +253,7 @@ class ProductionFlowTest {
     @Test
     fun todayOpensAllSupplementManagement() {
         enterDemo()
+        cleanupTask5SupplementsFromToday()
         composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
 
         composeRule.onNodeWithText("Manage supplements").assertIsDisplayed()
@@ -258,17 +263,17 @@ class ProductionFlowTest {
         composeRule.onNodeWithText("Cancel").performClick()
         composeRule.onNodeWithTag("add-managed-supplement").performClick()
         composeRule.onNodeWithText("Take on").assertIsDisplayed()
-        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "All days")
-            .forEach { label ->
-                composeRule.onNodeWithText(label).assertIsDisplayed()
-            }
-        composeRule.onNodeWithText("All days").performClick()
+        DayOfWeek.entries.forEach { day ->
+            composeRule.onNodeWithTag("supplement-dialog-weekday-${day.name}").assertIsDisplayed()
+        }
+        composeRule.onNodeWithTag("supplement-dialog-weekday-all").performClick()
     }
 
     @Test
     fun demoConfiguresSupplementRemindersAndOpensManagement() {
         grantNotificationPermission()
         enterDemo()
+        cleanupTask5SupplementsFromToday()
         composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
         composeRule.onNodeWithText("Profile and settings").performClick()
         composeRule.onNodeWithText("Notification settings").performClick()
@@ -326,6 +331,9 @@ class ProductionFlowTest {
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
             .assertTextContains("09:45")
+        composeRule.onNodeWithTag("manage-supplements-from-notifications")
+            .performScrollTo().performClick()
+        removeTask5SupplementsFromManagement()
 
     }
 
@@ -375,6 +383,7 @@ class ProductionFlowTest {
     fun demoAddsAndEditsSupplementReminderConfiguration() {
         grantNotificationPermission()
         enterDemo()
+        cleanupTask5SupplementsFromToday()
         composeRule.onNodeWithContentDescription("Add supplement").performClick()
 
         composeRule.onNodeWithTag("supplement-dialog-reminder-enabled")
@@ -404,6 +413,7 @@ class ProductionFlowTest {
             .assertTextContains("09:30")
         composeRule.onNodeWithTag("supplement-dialog-reminder-enabled").performScrollTo().performClick()
         composeRule.onNodeWithTag("supplement-dialog-save").performClick()
+        removeTask5SupplementsFromManagement()
     }
 
     private fun grantNotificationPermission() {
@@ -413,6 +423,30 @@ class ProductionFlowTest {
                 "pm grant ${instrumentation.targetContext.packageName} " +
                     android.Manifest.permission.POST_NOTIFICATIONS
             ).close()
+        }
+    }
+
+    private fun cleanupTask5SupplementsFromToday() {
+        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+        removeTask5SupplementsFromManagement()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+    }
+
+    private fun removeTask5SupplementsFromManagement() {
+        listOf("Task 5 Magnesium", "Reconcile Zinc").forEach { name ->
+            val matcher = hasContentDescription("Remove $name")
+            val found = runCatching {
+                composeRule.onNodeWithTag("manage-supplements-list")
+                    .performScrollToNode(matcher)
+                composeRule.onNode(matcher).performClick()
+            }.isSuccess
+            if (found) {
+                composeRule.onNodeWithTag("confirm-remove-supplement").performClick()
+                composeRule.waitUntil(timeoutMillis = 5_000) {
+                    composeRule.onAllNodesWithContentDescription("Remove $name")
+                        .fetchSemanticsNodes().isEmpty()
+                }
+            }
         }
     }
 
@@ -636,8 +670,9 @@ class SupplementReminderSettingsCardComposeTest {
             MaterialTheme {
                 NotificationSettingsSaveButton(
                     valid = true,
-                    trainingModel = model,
-                    onClick = {}
+                    accountReady = model.supplementReminderReadyAccountId == "account-a",
+                    persist = { NotificationSettingsSaveResult.Success("account-a") },
+                    onSuccess = {}
                 )
             }
         }
@@ -649,6 +684,65 @@ class SupplementReminderSettingsCardComposeTest {
         }
         composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
         scope.cancel()
+    }
+
+    @Test
+    fun notificationSaveWaitsForFailureAndKeepsTheScreenOpenWithAnError() {
+        val completion = CompletableDeferred<NotificationSettingsSaveResult>()
+        var navigated = false
+        composeRule.setContent {
+            MaterialTheme {
+                NotificationSettingsSaveButton(
+                    valid = true,
+                    accountReady = true,
+                    persist = { completion.await() },
+                    onSuccess = { navigated = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { assertFalse(navigated) }
+        completion.complete(
+            NotificationSettingsSaveResult.Failed(
+                expectedAccountId = "account-a",
+                stage = NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                message = "disk full"
+            )
+        )
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("notification-settings-save-error")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("notification-settings-save-error")
+            .assertTextContains(
+                "No other notification settings were saved",
+                substring = true
+            )
+        composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
+        composeRule.runOnIdle { assertFalse(navigated) }
+    }
+
+    @Test
+    fun notificationSaveNavigatesOnlyAfterDurableSuccess() {
+        val completion = CompletableDeferred<NotificationSettingsSaveResult>()
+        var navigated = false
+        composeRule.setContent {
+            NotificationSettingsSaveButton(
+                valid = true,
+                accountReady = true,
+                persist = { completion.await() },
+                onSuccess = { navigated = true }
+            )
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.runOnIdle { assertFalse(navigated) }
+        completion.complete(NotificationSettingsSaveResult.Success("account-a"))
+        composeRule.waitUntil(timeoutMillis = 5_000) { navigated }
+        composeRule.runOnIdle { assertTrue(navigated) }
     }
 
     @Test

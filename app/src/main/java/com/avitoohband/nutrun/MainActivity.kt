@@ -94,6 +94,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -152,9 +153,12 @@ import java.time.DayOfWeek
 import java.time.format.DateTimeParseException
 import java.time.LocalTime
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -882,7 +886,8 @@ private fun SupplementsScreen(
                     onClick = {
                         training.removeSupplement(supplement.id)
                         pendingRemoval = null
-                    }
+                    },
+                    modifier = Modifier.testTag("confirm-remove-supplement")
                 ) {
                     Text("Remove")
                 }
@@ -898,7 +903,8 @@ private fun SupplementsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag("manage-supplements-list"),
         contentPadding = PaddingValues(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -2960,45 +2966,62 @@ private fun NotificationSettingsScreen(
     onManageSupplements: () -> Unit
 ) {
     val context = LocalContext.current
-    var waterEnabled by rememberSaveable(state.hydrationPlan.remindersEnabled) {
+    val accountId = state.session.authenticatedUserId
+    var waterEnabled by rememberSaveable(accountId, state.hydrationPlan.remindersEnabled) {
         mutableStateOf(state.hydrationPlan.remindersEnabled)
     }
-    var interval by rememberSaveable(state.hydrationPlan.intervalMinutes) {
+    var interval by rememberSaveable(accountId, state.hydrationPlan.intervalMinutes) {
         mutableStateOf(state.hydrationPlan.intervalMinutes.toString())
     }
-    var wakingStart by rememberSaveable(state.hydrationPlan.wakingStartMinute) {
+    var wakingStart by rememberSaveable(accountId, state.hydrationPlan.wakingStartMinute) {
         mutableStateOf(formatMinute(state.hydrationPlan.wakingStartMinute))
     }
-    var wakingEnd by rememberSaveable(state.hydrationPlan.wakingEndMinute) {
+    var wakingEnd by rememberSaveable(accountId, state.hydrationPlan.wakingEndMinute) {
         mutableStateOf(formatMinute(state.hydrationPlan.wakingEndMinute))
     }
     val training = state.trainingReminderSettings
-    var trainingEnabled by rememberSaveable(training.enabled) { mutableStateOf(training.enabled) }
-    var previousTime by rememberSaveable(training.previousDayMinute) { mutableStateOf(formatMinute(training.previousDayMinute)) }
-    var sameTime by rememberSaveable(training.sameDayMinute) { mutableStateOf(formatMinute(training.sameDayMinute)) }
+    var trainingEnabled by rememberSaveable(accountId, training.enabled) {
+        mutableStateOf(training.enabled)
+    }
+    var previousTime by rememberSaveable(accountId, training.previousDayMinute) {
+        mutableStateOf(formatMinute(training.previousDayMinute))
+    }
+    var sameTime by rememberSaveable(accountId, training.sameDayMinute) {
+        mutableStateOf(formatMinute(training.sameDayMinute))
+    }
     val supplementSettings = state.supplementReminderSettings
-    var supplementMasterEnabled by rememberSaveable(supplementSettings.enabled) {
+    var supplementMasterEnabled by rememberSaveable(accountId, supplementSettings.enabled) {
         mutableStateOf(supplementSettings.enabled)
     }
     val supplements = trainingModel.supplements.toList()
-    var supplementDrafts by rememberSaveable(
-        stateSaver = SupplementReminderDraftsSaver
+    val readyAccountId = trainingModel.supplementReminderReadyAccountId
+    val accountReady = accountId != null && readyAccountId == accountId
+    var supplementDraftState by rememberSaveable(
+        stateSaver = SupplementReminderDraftStateSaver
     ) {
-        mutableStateOf(
-            reconcileSupplementReminderDrafts(emptyMap(), supplements)
-        )
+        mutableStateOf(SupplementReminderDraftState())
     }
-    val supplementIds = supplements.map(Supplement::id)
-    val visibleSupplementDrafts = if (trainingModel.supplementReminderUpdatesReady) {
-        reconcileSupplementReminderDrafts(supplementDrafts, supplements)
-    } else {
-        supplementDrafts
+    val visibleDraftState = resolveSupplementReminderDraftState(
+        state = supplementDraftState,
+        screenAccountId = accountId,
+        readyAccountId = readyAccountId,
+        supplements = supplements
+    )
+    val supplementSource = supplements.map { supplement ->
+        Triple(supplement.id, supplement.reminderEnabled, supplement.reminderMinute)
     }
-    LaunchedEffect(supplementIds, trainingModel.supplementReminderUpdatesReady) {
-        if (visibleSupplementDrafts != supplementDrafts) {
-            supplementDrafts = visibleSupplementDrafts
+    LaunchedEffect(accountId) {
+        if (supplementDraftState.accountId != accountId) {
+            supplementDraftState = SupplementReminderDraftState(accountId = accountId)
         }
     }
+    LaunchedEffect(accountId, readyAccountId, supplementSource) {
+        if (accountReady && visibleDraftState != supplementDraftState) {
+            supplementDraftState = visibleDraftState
+        }
+    }
+    val visibleSupplementDrafts = visibleDraftState.drafts
+    val readySupplements = if (accountReady) supplements else emptyList()
     var permissionGranted by remember {
         mutableStateOf(
             android.os.Build.VERSION.SDK_INT < 33 ||
@@ -3019,7 +3042,7 @@ private fun NotificationSettingsScreen(
     val endMinute = parseMinute(wakingEnd)
     val previousMinute = parseMinute(previousTime)
     val sameMinute = parseMinute(sameTime)
-    val supplementMinutes = supplements.associate { supplement ->
+    val supplementMinutes = readySupplements.associate { supplement ->
         val draft = visibleSupplementDrafts[supplement.id]
             ?: SupplementReminderDraft(
                 supplement.reminderEnabled,
@@ -3077,11 +3100,18 @@ private fun NotificationSettingsScreen(
             SupplementReminderSettingsCard(
                 masterEnabled = supplementMasterEnabled,
                 onMasterEnabledChange = { supplementMasterEnabled = it },
-                supplements = supplements,
+                supplements = readySupplements,
                 drafts = visibleSupplementDrafts,
-                onDraftsChange = { supplementDrafts = it },
+                onDraftsChange = { updated ->
+                    supplementDraftState = applySupplementReminderDraftChanges(
+                        state = visibleDraftState,
+                        updated = updated,
+                        supplements = readySupplements
+                    )
+                },
                 onPermissionRequest = ::requestPermission,
-                onManageSupplements = onManageSupplements
+                onManageSupplements = onManageSupplements,
+                loading = !accountReady
             )
         }
         val supplementPermissionRequired = supplementMasterEnabled ||
@@ -3108,42 +3138,48 @@ private fun NotificationSettingsScreen(
         item {
             NotificationSettingsSaveButton(
                 valid = valid,
-                trainingModel = trainingModel,
-                onClick = {
-                    val reminderResult = trainingModel.updateSupplementReminders(
-                        supplements.associate { supplement ->
+                accountReady = accountReady,
+                persist = persist@{
+                    val expectedAccountId = accountId
+                        ?: return@persist NotificationSettingsSaveResult.NotReady(null)
+                    val configurations = readySupplements.associate { supplement ->
                             val draft = visibleSupplementDrafts.getValue(supplement.id)
                             supplement.id to SupplementReminderConfig(
                                 enabled = draft.enabled,
                                 minute = supplementMinutes.getValue(supplement.id)!!
                             )
+                    }
+                    orchestrateNotificationSettingsSave(
+                        persistIndividuals = {
+                            trainingModel.persistSupplementReminders(
+                                expectedAccountId,
+                                configurations
+                            )
+                        },
+                        persistRemainingSettings = {
+                            app.persistNotificationSettings(
+                                accountId = expectedAccountId,
+                                hydration = state.hydrationPlan.copy(
+                                    remindersEnabled = waterEnabled,
+                                    intervalMinutes = intervalValue!!,
+                                    wakingStartMinute = startMinute!!,
+                                    wakingEndMinute = endMinute!!
+                                ),
+                                training = training.copy(
+                                    enabled = trainingEnabled,
+                                    previousDayMinute = previousMinute!!,
+                                    sameDayMinute = sameMinute!!,
+                                    timezoneId = java.time.ZoneId.systemDefault().id
+                                ),
+                                supplements = supplementSettings.copy(
+                                    enabled = supplementMasterEnabled,
+                                    timezoneId = java.time.ZoneId.systemDefault().id
+                                )
+                            )
                         }
                     )
-                    if (reminderResult != SupplementReminderUpdateResult.APPLIED) return@NotificationSettingsSaveButton
-                    app.saveHydrationPlan(
-                        state.hydrationPlan.copy(
-                            remindersEnabled = waterEnabled,
-                            intervalMinutes = intervalValue!!,
-                            wakingStartMinute = startMinute!!,
-                            wakingEndMinute = endMinute!!
-                        )
-                    )
-                    app.saveTrainingReminderSettings(
-                        training.copy(
-                            enabled = trainingEnabled,
-                            previousDayMinute = previousMinute!!,
-                            sameDayMinute = sameMinute!!,
-                            timezoneId = java.time.ZoneId.systemDefault().id
-                        )
-                    )
-                    app.saveSupplementReminderSettings(
-                        supplementSettings.copy(
-                            enabled = supplementMasterEnabled,
-                            timezoneId = java.time.ZoneId.systemDefault().id
-                        )
-                    )
-                    onBack()
                 },
+                onSuccess = onBack,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -3165,15 +3201,45 @@ internal fun shouldRequestSupplementReminderPermission(
 @Composable
 internal fun NotificationSettingsSaveButton(
     valid: Boolean,
-    trainingModel: TrainingViewModel,
-    onClick: () -> Unit,
+    accountReady: Boolean,
+    persist: suspend () -> NotificationSettingsSaveResult,
+    onSuccess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Button(
-        enabled = valid && trainingModel.supplementReminderUpdatesReady,
-        onClick = onClick,
-        modifier = modifier.testTag("save-notification-settings")
-    ) { Text("Save notification settings") }
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Button(
+            enabled = valid && accountReady && !saving,
+            onClick = {
+                scope.launch {
+                    saving = true
+                    error = null
+                    val result = persist()
+                    withContext(Dispatchers.Main.immediate) {
+                        saving = false
+                        if (result.allowsNavigation) {
+                            onSuccess()
+                        } else {
+                            error = result.errorMessage()
+                        }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().testTag("save-notification-settings")
+        ) {
+            Text(if (saving) "Saving notification settings..." else "Save notification settings")
+        }
+        error?.let { message ->
+            Text(
+                message,
+                modifier = Modifier.testTag("notification-settings-save-error"),
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+    }
 }
 
 @Composable
@@ -3234,6 +3300,7 @@ internal fun AddSupplementDialog(
                                     selectedDays + day
                                 }
                             },
+                            modifier = Modifier.testTag("supplement-dialog-weekday-${day.name}"),
                             label = {
                                 Text(
                                     day.name.take(3).lowercase()
@@ -3257,6 +3324,7 @@ internal fun AddSupplementDialog(
                                     selectedDays + day
                                 }
                             },
+                            modifier = Modifier.testTag("supplement-dialog-weekday-${day.name}"),
                             label = {
                                 Text(
                                     day.name.take(3).lowercase()
@@ -3275,6 +3343,7 @@ internal fun AddSupplementDialog(
                             DayOfWeek.entries.toSet()
                         }
                     },
+                    modifier = Modifier.testTag("supplement-dialog-weekday-all"),
                     label = { Text("All days") }
                 )
                 if (selectedDays.isEmpty()) {

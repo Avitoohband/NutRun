@@ -42,6 +42,128 @@ class SupplementReminderUiRulesTest {
     }
 
     @Test
+    fun transientSameIdDefaultsAreNeverSeededAndUneditedValuesYieldToRestoredAccountRows() {
+        val transientDefault = Supplement(
+            id = "shared-id",
+            name = "Transient",
+            dose = "1 mg",
+            schedule = SupplementSchedule(RecurrenceType.DAILY),
+            reminderEnabled = false,
+            reminderMinute = 480
+        )
+        val restored = transientDefault.copy(
+            name = "Persisted",
+            reminderEnabled = true,
+            reminderMinute = 10 * 60 + 15
+        )
+        val transientState = SupplementReminderDraftState(
+            accountId = "account-a",
+            drafts = mapOf(
+                "shared-id" to SupplementReminderDraft(enabled = false, time = "08:00")
+            ),
+            dirtyIds = emptySet()
+        )
+
+        val loading = resolveSupplementReminderDraftState(
+            state = transientState,
+            screenAccountId = "account-a",
+            readyAccountId = null,
+            supplements = listOf(transientDefault)
+        )
+        val ready = resolveSupplementReminderDraftState(
+            state = transientState,
+            screenAccountId = "account-a",
+            readyAccountId = "account-a",
+            supplements = listOf(restored)
+        )
+
+        assertEquals("account-a", loading.accountId)
+        assertTrue(loading.drafts.isEmpty())
+        assertEquals(emptySet<String>(), loading.dirtyIds)
+        assertEquals(
+            SupplementReminderDraft(enabled = true, time = "10:15"),
+            ready.drafts.getValue("shared-id")
+        )
+        assertTrue(ready.dirtyIds.isEmpty())
+    }
+
+    @Test
+    fun accountSwitchDiscardsDirtyDraftEvenWhenTheNewAccountUsesTheSameSupplementId() {
+        val accountADraft = SupplementReminderDraft(enabled = true, time = "22:10")
+        val accountB = Supplement(
+            id = "shared-id",
+            name = "B persisted",
+            dose = "2 mg",
+            schedule = SupplementSchedule(RecurrenceType.DAILY),
+            reminderEnabled = false,
+            reminderMinute = 7 * 60 + 5
+        )
+        val state = SupplementReminderDraftState(
+            accountId = "account-a",
+            drafts = mapOf("shared-id" to accountADraft),
+            dirtyIds = setOf("shared-id")
+        )
+
+        val switching = resolveSupplementReminderDraftState(
+            state = state,
+            screenAccountId = "account-b",
+            readyAccountId = null,
+            supplements = listOf(accountB)
+        )
+        val restored = resolveSupplementReminderDraftState(
+            state = switching,
+            screenAccountId = "account-b",
+            readyAccountId = "account-b",
+            supplements = listOf(accountB)
+        )
+
+        assertEquals("account-b", switching.accountId)
+        assertTrue(switching.drafts.isEmpty())
+        assertEquals(
+            SupplementReminderDraft(enabled = false, time = "07:05"),
+            restored.drafts.getValue("shared-id")
+        )
+        assertTrue(restored.dirtyIds.isEmpty())
+    }
+
+    @Test
+    fun sameReadyAccountRetainsOnlyDirtyIdsDuringMembershipReconciliation() {
+        val clean = supplement("clean", enabled = true, minute = 600)
+        val dirty = supplement("dirty", enabled = false, minute = 480)
+        val state = SupplementReminderDraftState(
+            accountId = "account-a",
+            drafts = mapOf(
+                "clean" to SupplementReminderDraft(false, "06:00"),
+                "dirty" to SupplementReminderDraft(true, "09:45"),
+                "removed" to SupplementReminderDraft(true, "22:00")
+            ),
+            dirtyIds = setOf("dirty", "removed")
+        )
+
+        val reconciled = resolveSupplementReminderDraftState(
+            state,
+            screenAccountId = "account-a",
+            readyAccountId = "account-a",
+            supplements = listOf(clean, dirty)
+        )
+
+        assertEquals(SupplementReminderDraft(true, "10:00"), reconciled.drafts.getValue("clean"))
+        assertEquals(SupplementReminderDraft(true, "09:45"), reconciled.drafts.getValue("dirty"))
+        assertEquals(setOf("dirty"), reconciled.dirtyIds)
+
+        val changed = applySupplementReminderDraftChanges(
+            state = reconciled,
+            updated = reconciled.drafts + mapOf(
+                "clean" to SupplementReminderDraft(false, "06:30"),
+                "dirty" to SupplementReminderDraft(false, "08:00")
+            ),
+            supplements = listOf(clean, dirty)
+        )
+
+        assertEquals(setOf("clean"), changed.dirtyIds)
+    }
+
+    @Test
     fun notificationPermissionIsRequestedOnlyForDisabledToEnabledTransitions() {
         assertTrue(shouldRequestSupplementReminderPermission(previousEnabled = null, enabled = true))
         assertTrue(shouldRequestSupplementReminderPermission(previousEnabled = false, enabled = true))
@@ -125,6 +247,15 @@ class SupplementReminderUiRulesTest {
             model.supplements.single()
         )
     }
+
+    private fun supplement(id: String, enabled: Boolean, minute: Int) = Supplement(
+        id = id,
+        name = id,
+        dose = "1 mg",
+        schedule = SupplementSchedule(RecurrenceType.DAILY),
+        reminderEnabled = enabled,
+        reminderMinute = minute
+    )
 
     private fun modelWith(supplement: Supplement): TrainingViewModel =
         TrainingViewModel(null, null).also { model ->

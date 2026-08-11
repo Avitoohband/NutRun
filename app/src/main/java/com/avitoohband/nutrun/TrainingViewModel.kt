@@ -22,23 +22,21 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class SupplementReminderConfig(
     val enabled: Boolean,
     val minute: Int
 )
-
-enum class SupplementReminderUpdateResult {
-    APPLIED,
-    NOT_READY
-}
 
 internal interface TrainingViewModelRuntime {
     val session: Flow<SessionPreferences>
@@ -140,6 +138,8 @@ class TrainingViewModel private constructor(
     private var restoredPayload: String? = null
     private var restoredUserId: String? = null
 
+    var supplementReminderReadyAccountId by mutableStateOf<String?>(null)
+        private set
     var supplementReminderUpdatesReady by mutableStateOf(runtime == null)
         private set
     var isAuthenticated by mutableStateOf(false)
@@ -185,6 +185,7 @@ class TrainingViewModel private constructor(
                     currentUserId = session.authenticatedUserId
                     restoredPayload = null
                     restoredUserId = null
+                    supplementReminderReadyAccountId = null
                     supplementReminderUpdatesReady = false
                     resetTrainingState()
                     session.authenticatedUserId?.let { userId ->
@@ -197,6 +198,7 @@ class TrainingViewModel private constructor(
                                 }
                             if (currentUserId == userId) {
                                 restoredUserId = userId
+                                supplementReminderReadyAccountId = userId
                                 supplementReminderUpdatesReady = true
                             }
                         }
@@ -311,13 +313,8 @@ class TrainingViewModel private constructor(
         persistTrainingState(rescheduleSupplementReminders = true)
     }
 
-    fun updateSupplementReminders(
-        configurations: Map<String, SupplementReminderConfig>
-    ): SupplementReminderUpdateResult {
+    internal fun updateSupplementReminders(configurations: Map<String, SupplementReminderConfig>) {
         configurations.values.forEach { requireValidReminderMinute(it.minute) }
-        if (runtime != null && !supplementReminderUpdatesReady) {
-            return SupplementReminderUpdateResult.NOT_READY
-        }
         supplements.indices.forEach { index ->
             configurations[supplements[index].id]?.let { config ->
                 supplements[index] = supplements[index].copy(
@@ -327,7 +324,72 @@ class TrainingViewModel private constructor(
             }
         }
         persistTrainingState(rescheduleSupplementReminders = true)
-        return SupplementReminderUpdateResult.APPLIED
+    }
+
+    suspend fun persistSupplementReminders(
+        accountId: String,
+        configurations: Map<String, SupplementReminderConfig>
+    ): NotificationSettingsSaveResult {
+        configurations.values.forEach { requireValidReminderMinute(it.minute) }
+        val targetRuntime = runtime ?: return NotificationSettingsSaveResult.Failed(
+            expectedAccountId = accountId,
+            stage = NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+            message = "Durable persistence is unavailable."
+        )
+        if (currentUserId != accountId) {
+            return NotificationSettingsSaveResult.AccountChanged(
+                accountId,
+                currentUserId,
+                NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS
+            )
+        }
+        if (restoredUserId != accountId || supplementReminderReadyAccountId != accountId) {
+            return NotificationSettingsSaveResult.NotReady(accountId)
+        }
+        val updatedSupplements = supplements.map { supplement ->
+            configurations[supplement.id]?.let { config ->
+                supplement.copy(
+                    reminderEnabled = config.enabled,
+                    reminderMinute = config.minute
+                )
+            } ?: supplement
+        }
+        val payload = currentTrainingPayload(updatedSupplements)
+        return try {
+            targetRuntime.saveTrainingState(accountId, payload)
+            val actualAccountId = targetRuntime.currentUserId()
+            if (actualAccountId != accountId || currentUserId != accountId) {
+                NotificationSettingsSaveResult.AccountChanged(
+                    accountId,
+                    actualAccountId,
+                    NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS
+                )
+            } else {
+                supplements.clear()
+                supplements.addAll(updatedSupplements)
+                restoredPayload = payload
+                modelScope.launch {
+                    runCatching { rescheduleSupplementReminders(accountId, targetRuntime) }
+                }
+                NotificationSettingsSaveResult.Success(accountId)
+            }
+        } catch (error: Exception) {
+            if (error is CancellationException && !currentCoroutineContext().isActive) throw error
+            val actualAccountId = runCatching { targetRuntime.currentUserId() }.getOrNull()
+            if (actualAccountId != accountId || currentUserId != accountId) {
+                NotificationSettingsSaveResult.AccountChanged(
+                    accountId,
+                    actualAccountId,
+                    NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS
+                )
+            } else {
+                NotificationSettingsSaveResult.Failed(
+                    expectedAccountId = accountId,
+                    stage = NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                    message = error.message ?: "Training state persistence failed."
+                )
+            }
+        }
     }
 
     fun addSession(name: String, weekday: DayOfWeek) {
@@ -680,7 +742,25 @@ class TrainingViewModel private constructor(
         val userId = currentUserId ?: return
         val targetRuntime = runtime ?: return
         if (restoredUserId != userId) return
-        val payload = encodeTrainingState(
+        val payload = currentTrainingPayload(supplements)
+        restoredPayload = payload
+        supplementReschedulePending = supplementReschedulePending || rescheduleSupplementReminders
+        persistJob?.cancel()
+        persistJob = modelScope.launch {
+            targetRuntime.saveTrainingState(userId, payload)
+            if (targetRuntime.currentUserId() != userId) return@launch
+            targetRuntime.currentTrainingReminderSettings(userId)?.let { settings ->
+                targetRuntime.scheduleTraining(userId, settings)
+            }
+            if (supplementReschedulePending) {
+                rescheduleSupplementReminders(userId, targetRuntime)
+                supplementReschedulePending = false
+            }
+        }
+    }
+
+    private fun currentTrainingPayload(supplements: List<Supplement>): String =
+        encodeTrainingState(
             supplements = supplements,
             sessions = sessions,
             history = history,
@@ -697,21 +777,6 @@ class TrainingViewModel private constructor(
             defaultRestTimerSeconds = defaultRestTimerSeconds,
             usesMetricUnits = usesMetricUnits
         )
-        restoredPayload = payload
-        supplementReschedulePending = supplementReschedulePending || rescheduleSupplementReminders
-        persistJob?.cancel()
-        persistJob = modelScope.launch {
-            targetRuntime.saveTrainingState(userId, payload)
-            if (targetRuntime.currentUserId() != userId) return@launch
-            targetRuntime.currentTrainingReminderSettings(userId)?.let { settings ->
-                targetRuntime.scheduleTraining(userId, settings)
-            }
-            if (supplementReschedulePending) {
-                rescheduleSupplementReminders(userId, targetRuntime)
-                supplementReschedulePending = false
-            }
-        }
-    }
 
     private suspend fun rescheduleSupplementReminders(
         userId: String,

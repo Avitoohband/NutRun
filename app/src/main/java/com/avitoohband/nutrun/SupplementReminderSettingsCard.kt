@@ -26,39 +26,102 @@ data class SupplementReminderDraft(
     val time: String
 )
 
-internal val SupplementReminderDraftsSaver =
-    Saver<Map<String, SupplementReminderDraft>, ArrayList<String>>(
-        save = { drafts ->
-            ArrayList<String>(drafts.size * 3).apply {
-                drafts.forEach { (id, draft) ->
+internal data class SupplementReminderDraftState(
+    val accountId: String? = null,
+    val drafts: Map<String, SupplementReminderDraft> = emptyMap(),
+    val dirtyIds: Set<String> = emptySet()
+)
+
+internal val SupplementReminderDraftStateSaver =
+    Saver<SupplementReminderDraftState, ArrayList<String>>(
+        save = { state ->
+            ArrayList<String>(1 + state.drafts.size * 4).apply {
+                add(state.accountId.orEmpty())
+                state.drafts.forEach { (id, draft) ->
                     add(id)
                     add(if (draft.enabled) "1" else "0")
                     add(draft.time)
+                    add(if (id in state.dirtyIds) "1" else "0")
                 }
             }
         },
         restore = { values ->
-            values.chunked(3)
-                .filter { it.size == 3 }
-                .associate { (id, enabled, time) ->
+            val restored = values.drop(1)
+                .chunked(4)
+                .filter { it.size == 4 }
+            SupplementReminderDraftState(
+                accountId = values.firstOrNull()?.takeIf(String::isNotEmpty),
+                drafts = restored.associate { (id, enabled, time) ->
                     id to SupplementReminderDraft(enabled == "1", time)
-                }
+                },
+                dirtyIds = restored.filter { it[3] == "1" }.mapTo(mutableSetOf()) { it[0] }
+            )
         }
     )
+
+internal fun resolveSupplementReminderDraftState(
+    state: SupplementReminderDraftState,
+    screenAccountId: String?,
+    readyAccountId: String?,
+    supplements: List<Supplement>
+): SupplementReminderDraftState {
+    if (screenAccountId == null || readyAccountId != screenAccountId) {
+        return SupplementReminderDraftState(accountId = screenAccountId)
+    }
+    val sameAccount = state.accountId == screenAccountId
+    val retainedDirtyIds = if (sameAccount) {
+        state.dirtyIds.intersect(supplements.mapTo(mutableSetOf(), Supplement::id))
+    } else {
+        emptySet()
+    }
+    val drafts = supplements.associate { supplement ->
+        val persisted = supplement.reminderDraft()
+        supplement.id to if (supplement.id in retainedDirtyIds) {
+            state.drafts[supplement.id] ?: persisted
+        } else {
+            persisted
+        }
+    }
+    return SupplementReminderDraftState(
+        accountId = screenAccountId,
+        drafts = drafts,
+        dirtyIds = retainedDirtyIds
+    )
+}
+
+internal fun applySupplementReminderDraftChanges(
+    state: SupplementReminderDraftState,
+    updated: Map<String, SupplementReminderDraft>,
+    supplements: List<Supplement>
+): SupplementReminderDraftState {
+    val persisted = supplements.associate { it.id to it.reminderDraft() }
+    val dirtyIds = updated.keys.filterTo(mutableSetOf()) { id ->
+        updated[id] != persisted[id]
+    }
+    return state.copy(
+        drafts = updated,
+        dirtyIds = dirtyIds
+    )
+}
 
 internal fun reconcileSupplementReminderDrafts(
     drafts: Map<String, SupplementReminderDraft>,
     supplements: List<Supplement>
-): Map<String, SupplementReminderDraft> =
-    supplements.associate { supplement ->
-        supplement.id to (
-            drafts[supplement.id]
-                ?: SupplementReminderDraft(
-                    enabled = supplement.reminderEnabled,
-                    time = formatReminderMinute(supplement.reminderMinute)
-                )
-            )
-    }
+): Map<String, SupplementReminderDraft> = resolveSupplementReminderDraftState(
+    state = SupplementReminderDraftState(
+        accountId = "legacy",
+        drafts = drafts,
+        dirtyIds = drafts.keys
+    ),
+    screenAccountId = "legacy",
+    readyAccountId = "legacy",
+    supplements = supplements
+).drafts
+
+private fun Supplement.reminderDraft() = SupplementReminderDraft(
+    enabled = reminderEnabled,
+    time = formatReminderMinute(reminderMinute)
+)
 
 @Composable
 fun SupplementReminderSettingsCard(
@@ -69,6 +132,7 @@ fun SupplementReminderSettingsCard(
     onDraftsChange: (Map<String, SupplementReminderDraft>) -> Unit,
     onPermissionRequest: () -> Unit,
     onManageSupplements: () -> Unit,
+    loading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val enableAll = supplements.any { supplement ->
@@ -94,11 +158,17 @@ fun SupplementReminderSettingsCard(
                         onMasterEnabledChange(enabled)
                         if (enabled && !masterEnabled) onPermissionRequest()
                     },
+                    enabled = !loading,
                     modifier = Modifier.testTag("supplement-reminders-master")
                 )
             }
 
-            if (supplements.isEmpty()) {
+            if (loading) {
+                Text(
+                    "Loading supplement reminders...",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (supplements.isEmpty()) {
                 Text(
                     "No supplements configured",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
