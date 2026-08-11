@@ -44,7 +44,10 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 
 class SupplementReminderWorkerTest {
     @Test
@@ -339,16 +342,35 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
-    fun signOutCancellationTargetsOnlyTheSignedInAccountsSupplementAndRecoveryWork() {
+    fun terminalCoordinatorSignOutClearsSessionBeforeQueuedRescheduleCanRun() = runBlocking {
         val enqueuer = RecordingWorkEnqueuer()
-        val supplementScheduler = SupplementReminderScheduler(
-            store = FakeSchedulerStore("user", emptyList()),
-            enqueuer = enqueuer,
-            now = { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+        val store = FakeSupplementReminderSchedulingStore("user", enabledSettings())
+        val coordinator = SupplementReminderSchedulingCoordinator(
+            store,
+            SupplementReminderScheduler(
+                FakeSchedulerStore("user", listOf(dailySupplement("Vitamin D", 480))),
+                enqueuer,
+                { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+            ),
+            ReminderRescheduleRecoveryScheduler(enqueuer)
         )
-        val recoveryScheduler = ReminderRescheduleRecoveryScheduler(enqueuer)
 
-        cancelReminderWorkBeforeSignOut("user", supplementScheduler, recoveryScheduler)
+        val clearStarted = CompletableDeferred<Unit>()
+        val finishClear = CompletableDeferred<Unit>()
+        val signOut = launch {
+            coordinator.signOut("user") {
+                clearStarted.complete(Unit)
+                finishClear.await()
+                store.clearSession()
+            }
+        }
+        clearStarted.await()
+        val reschedule = launch { coordinator.reschedule("user") }
+        yield()
+        assertTrue(enqueuer.enqueued.isEmpty())
+        finishClear.complete(Unit)
+        signOut.join()
+        reschedule.join()
 
         assertEquals(
             listOf(
@@ -359,7 +381,37 @@ class SupplementReminderWorkerTest {
             ),
             enqueuer.cancelled
         )
-        assertTrue(enqueuer.cancelled.none { it.contains("other") })
+        assertTrue(enqueuer.enqueued.isEmpty())
+    }
+
+    @Test
+    fun terminalCoordinatorSignOutPropagatesCancellationFromSessionClear() {
+        val enqueuer = RecordingWorkEnqueuer()
+        val coordinator = SupplementReminderSchedulingCoordinator(
+            FakeSupplementReminderSchedulingStore("user", enabledSettings()),
+            SupplementReminderScheduler(
+                FakeSchedulerStore("user", emptyList()),
+                enqueuer,
+                { ZonedDateTime.of(2026, 8, 10, 7, 0, 0, 0, it) }
+            ),
+            ReminderRescheduleRecoveryScheduler(enqueuer)
+        )
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                coordinator.signOut("user") { throw CancellationException("cancelled") }
+            }
+        }
+
+        assertEquals(
+            listOf(
+                "supplement-reminder:user",
+                "reminder-reschedule-recovery:user:HYDRATION",
+                "reminder-reschedule-recovery:user:TRAINING",
+                "reminder-reschedule-recovery:user:SUPPLEMENTS"
+            ),
+            enqueuer.cancelled
+        )
     }
 
     @Test
@@ -729,6 +781,10 @@ class SupplementReminderWorkerTest {
         override suspend fun currentUserId(): String? = userId
 
         override suspend fun supplementReminderSettings(userId: String) = settings
+
+        fun clearSession() {
+            userId = null
+        }
     }
 
     private class RecordingWorkEnqueuer : ReminderWorkEnqueuer {

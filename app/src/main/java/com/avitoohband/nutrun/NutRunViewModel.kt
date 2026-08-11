@@ -37,7 +37,10 @@ import java.time.LocalDate
 import java.util.concurrent.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -112,65 +115,53 @@ private data class ReminderSettingsSnapshot(
     val supplements: SupplementReminderSettingsEntity
 )
 
+internal interface NutRunViewModelReminderRuntime {
+    val session: StateFlow<SessionPreferences>
+    val supplementReminderSettings: StateFlow<SupplementReminderSettingsEntity>
+    val schedulingCoordinator: SupplementReminderSchedulingCoordinator
+
+    suspend fun saveSupplementReminderSettings(
+        userId: String,
+        settings: SupplementReminderSettingsEntity
+    )
+
+    suspend fun pauseWalk()
+    fun signOutAuthentication()
+    suspend fun signOutPreferences()
+}
+
+private fun productionNutRunViewModelScope(): CoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
-class NutRunViewModel @Inject constructor(
-    private val repository: NutRunRepository,
-    private val preferences: AppPreferences,
-    private val foodSearchService: FoodSearchService,
-    private val hydrationScheduler: HydrationScheduler,
-    private val trainingReminderScheduler: TrainingReminderScheduler,
-    private val supplementReminderScheduler: SupplementReminderScheduler,
-    private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler,
-    private val supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator,
-    private val billingManager: BillingManager,
-    private val authenticationGateway: AuthenticationGateway,
-    private val healthConnectManager: NutRunHealthConnectManager
-) : ViewModel() {
+class NutRunViewModel private constructor(
+    private val reminderRuntime: NutRunViewModelReminderRuntime?,
+    @Suppress("UNUSED_PARAMETER") private val testRuntimeConstructor: Boolean,
+    coroutineScope: CoroutineScope
+) : ViewModel(coroutineScope) {
+    private lateinit var repository: NutRunRepository
+    private lateinit var preferences: AppPreferences
+    private lateinit var foodSearchService: FoodSearchService
+    private lateinit var hydrationScheduler: HydrationScheduler
+    private lateinit var trainingReminderScheduler: TrainingReminderScheduler
+    private lateinit var supplementReminderScheduler: SupplementReminderScheduler
+    private lateinit var reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler
+    private lateinit var supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator
+    private lateinit var billingManager: BillingManager
+    private lateinit var authenticationGateway: AuthenticationGateway
+    private lateinit var healthConnectManager: NutRunHealthConnectManager
     private val currentDate = MutableStateFlow(LocalDate.now())
     private val hydrationLogMutex = Mutex()
     private val _hydrationGoalCelebrations =
         MutableSharedFlow<HydrationGoalCelebration>(extraBufferCapacity = 1)
     val hydrationGoalCelebrations: SharedFlow<HydrationGoalCelebration> =
         _hydrationGoalCelebrations.asSharedFlow()
-    private val food = currentDate.flatMapLatest(repository::food)
-    private val water = currentDate.flatMapLatest(repository::water)
+    lateinit var state: StateFlow<NutRunUiState>
+        private set
 
-    val state: StateFlow<NutRunUiState> = combine(
-        preferences.session,
-        repository.profile,
-        food,
-        water,
-        repository.hydrationPlan,
-        repository.weights,
-        repository.walks,
-        repository.activeWalk,
-        repository.trainingReminderSettings,
-        repository.supplementReminderSettings,
-        repository.recentFoods,
-        repository.foodTemplates
-    ) { values ->
-        @Suppress("UNCHECKED_CAST")
-        NutRunUiState(
-            session = values[0] as SessionPreferences,
-            profile = values[1] as UserProfile?,
-            food = values[2] as List<FoodLogEntity>,
-            water = values[3] as List<WaterLogEntity>,
-            hydrationPlan = values[4] as HydrationPlanEntity,
-            weights = values[5] as List<WeightEntryEntity>,
-            walks = values[6] as List<WalkSessionEntity>,
-            activeWalk = values[7] as WalkSessionEntity?,
-            trainingReminderSettings = values[8] as TrainingReminderSettingsEntity,
-            supplementReminderSettings = values[9] as SupplementReminderSettingsEntity,
-            recentFoods = values[10] as List<FoodLogEntity>,
-            foodTemplates = values[11] as List<FoodTemplateEntity>
-        )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutRunUiState())
-
-    val routePoints: StateFlow<List<WalkPointEntity>> = repository.activeWalk
-        .map(::activeRouteSessionId)
-        .flatMapLatest { id -> id?.let(repository::walkPoints) ?: flowOf(emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    lateinit var routePoints: StateFlow<List<WalkPointEntity>>
+        private set
 
     private val _selectedWalkId = MutableStateFlow<String?>(null)
     val selectedWalkId: StateFlow<String?> = _selectedWalkId
@@ -181,14 +172,89 @@ class NutRunViewModel @Inject constructor(
     val foodSearchResults = MutableStateFlow<List<FoodCatalogItem>>(emptyList())
     val foodSearchBusy = MutableStateFlow(false)
     val message = MutableStateFlow<String?>(null)
-    val billingState: StateFlow<BillingUiState> = billingManager.state
+    lateinit var billingState: StateFlow<BillingUiState>
+        private set
     val healthConnectState = MutableStateFlow(
-        HealthConnectUiState(available = healthConnectManager.isAvailable())
+        HealthConnectUiState()
     )
-    val healthConnectPermissions: Set<String> = healthConnectManager.permissions
+    val healthConnectPermissions: Set<String>
+        get() = if (::healthConnectManager.isInitialized) healthConnectManager.permissions else emptySet()
     private var searchJob: Job? = null
 
-    init {
+    @Inject
+    constructor(
+        repository: NutRunRepository,
+        preferences: AppPreferences,
+        foodSearchService: FoodSearchService,
+        hydrationScheduler: HydrationScheduler,
+        trainingReminderScheduler: TrainingReminderScheduler,
+        supplementReminderScheduler: SupplementReminderScheduler,
+        reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler,
+        supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator,
+        billingManager: BillingManager,
+        authenticationGateway: AuthenticationGateway,
+        healthConnectManager: NutRunHealthConnectManager
+    ) : this(null, false, productionNutRunViewModelScope()) {
+        this.repository = repository
+        this.preferences = preferences
+        this.foodSearchService = foodSearchService
+        this.hydrationScheduler = hydrationScheduler
+        this.trainingReminderScheduler = trainingReminderScheduler
+        this.supplementReminderScheduler = supplementReminderScheduler
+        this.reminderRescheduleRecoveryScheduler = reminderRescheduleRecoveryScheduler
+        this.supplementReminderSchedulingCoordinator = supplementReminderSchedulingCoordinator
+        this.billingManager = billingManager
+        this.authenticationGateway = authenticationGateway
+        this.healthConnectManager = healthConnectManager
+        initializeProduction()
+    }
+
+    internal constructor(
+        reminderRuntime: NutRunViewModelReminderRuntime,
+        coroutineScope: CoroutineScope
+    ) : this(reminderRuntime, true, coroutineScope) {
+        initializeReminderRuntime(reminderRuntime)
+    }
+
+    private fun initializeProduction() {
+        val food = currentDate.flatMapLatest(repository::food)
+        val water = currentDate.flatMapLatest(repository::water)
+        state = combine(
+            preferences.session,
+            repository.profile,
+            food,
+            water,
+            repository.hydrationPlan,
+            repository.weights,
+            repository.walks,
+            repository.activeWalk,
+            repository.trainingReminderSettings,
+            repository.supplementReminderSettings,
+            repository.recentFoods,
+            repository.foodTemplates
+        ) { values ->
+            @Suppress("UNCHECKED_CAST")
+            NutRunUiState(
+                session = values[0] as SessionPreferences,
+                profile = values[1] as UserProfile?,
+                food = values[2] as List<FoodLogEntity>,
+                water = values[3] as List<WaterLogEntity>,
+                hydrationPlan = values[4] as HydrationPlanEntity,
+                weights = values[5] as List<WeightEntryEntity>,
+                walks = values[6] as List<WalkSessionEntity>,
+                activeWalk = values[7] as WalkSessionEntity?,
+                trainingReminderSettings = values[8] as TrainingReminderSettingsEntity,
+                supplementReminderSettings = values[9] as SupplementReminderSettingsEntity,
+                recentFoods = values[10] as List<FoodLogEntity>,
+                foodTemplates = values[11] as List<FoodTemplateEntity>
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutRunUiState())
+        routePoints = repository.activeWalk
+            .map(::activeRouteSessionId)
+            .flatMapLatest { id -> id?.let(repository::walkPoints) ?: flowOf(emptyList()) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        billingState = billingManager.state
+        healthConnectState.value = HealthConnectUiState(available = healthConnectManager.isAvailable())
         viewModelScope.launch {
             refreshHealthConnectStatus()
         }
@@ -458,12 +524,43 @@ class NutRunViewModel @Inject constructor(
         }
     }
 
+    private fun initializeReminderRuntime(runtime: NutRunViewModelReminderRuntime) {
+        state = combine(runtime.session, runtime.supplementReminderSettings) { session, settings ->
+            NutRunUiState(session = session, supplementReminderSettings = settings)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, NutRunUiState())
+        routePoints = MutableStateFlow(emptyList())
+        billingState = MutableStateFlow(BillingUiState())
+        viewModelScope.launch {
+            state.map {
+                it.session.authenticatedUserId to it.supplementReminderSettings
+            }
+                .distinctUntilChanged()
+                .collect { (userId, _) ->
+                    if (userId != null) runtime.schedulingCoordinator.reschedule(userId)
+                }
+        }
+    }
+
     fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity) {
         viewModelScope.launch {
             try {
-                val userId = preferences.currentSession().authenticatedUserId ?: return@launch
-                repository.saveSupplementReminderSettings(userId, settings)
-                if (preferences.currentSession().authenticatedUserId != userId) return@launch
+                val runtime = reminderRuntime
+                val userId = if (runtime != null) {
+                    runtime.session.value.authenticatedUserId
+                } else {
+                    preferences.currentSession().authenticatedUserId
+                } ?: return@launch
+                if (runtime != null) {
+                    runtime.saveSupplementReminderSettings(userId, settings)
+                } else {
+                    repository.saveSupplementReminderSettings(userId, settings)
+                }
+                val currentUserId = if (runtime != null) {
+                    runtime.session.value.authenticatedUserId
+                } else {
+                    preferences.currentSession().authenticatedUserId
+                }
+                if (currentUserId != userId) return@launch
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -498,13 +595,35 @@ class NutRunViewModel @Inject constructor(
     fun signOut() {
         clearSelectedWalk()
         viewModelScope.launch {
-            val userId = preferences.currentSession().authenticatedUserId
-            repository.updateWalkState(com.avitoohband.nutrun.domain.WalkState.PAUSED)
-            userId?.let {
-                supplementReminderSchedulingCoordinator.cancel(it)
+            val runtime = reminderRuntime
+            val userId = if (runtime != null) {
+                runtime.session.value.authenticatedUserId
+            } else {
+                preferences.currentSession().authenticatedUserId
             }
-            if (!isDemoAccount(userId)) authenticationGateway.signOut()
-            preferences.signOut()
+            if (runtime != null) {
+                runtime.pauseWalk()
+                if (userId != null) {
+                    runtime.schedulingCoordinator.signOut(userId) {
+                        if (!isDemoAccount(userId)) runtime.signOutAuthentication()
+                        runtime.signOutPreferences()
+                    }
+                } else {
+                    runtime.signOutAuthentication()
+                    runtime.signOutPreferences()
+                }
+                return@launch
+            }
+            repository.updateWalkState(com.avitoohband.nutrun.domain.WalkState.PAUSED)
+            if (userId != null) {
+                supplementReminderSchedulingCoordinator.signOut(userId) {
+                    if (!isDemoAccount(userId)) authenticationGateway.signOut()
+                    preferences.signOut()
+                }
+            } else {
+                authenticationGateway.signOut()
+                preferences.signOut()
+            }
         }
     }
 
@@ -537,15 +656,6 @@ class NutRunViewModel @Inject constructor(
     fun clearMessage() {
         message.value = null
     }
-}
-
-fun cancelReminderWorkBeforeSignOut(
-    userId: String,
-    supplementReminderScheduler: SupplementReminderScheduler,
-    recoveryScheduler: ReminderRescheduleRecoveryScheduler
-) {
-    supplementReminderScheduler.cancel(userId)
-    recoveryScheduler.cancel(userId)
 }
 
 suspend fun rescheduleSupplementReminderWork(
@@ -638,6 +748,14 @@ class SupplementReminderSchedulingCoordinator private constructor(
         mutex.withLock {
             supplementReminderScheduler.cancel(userId)
             recoveryScheduler.cancel(userId)
+        }
+    }
+
+    suspend fun signOut(userId: String, clearSession: suspend () -> Unit) {
+        mutex.withLock {
+            supplementReminderScheduler.cancel(userId)
+            recoveryScheduler.cancel(userId)
+            clearSession()
         }
     }
 }
