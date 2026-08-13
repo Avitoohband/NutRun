@@ -51,6 +51,8 @@ class AppPreferences @Inject constructor(
         fun email(userId: String) = stringPreferencesKey("account_${userId}_email")
         fun trialStartedAt(userId: String) = longPreferencesKey("account_${userId}_trial_started_at")
         fun subscriber(userId: String) = booleanPreferencesKey("account_${userId}_subscriber")
+        fun reminderRecoverySystems(userId: String) = stringPreferencesKey("account_${userId}_reminder_recovery")
+        fun reminderRecoveryClosing(userId: String) = booleanPreferencesKey("account_${userId}_reminder_recovery_closing")
     }
 
     val session: Flow<SessionPreferences> = context.dataStore.data.map { values ->
@@ -97,7 +99,10 @@ class AppPreferences @Inject constructor(
             values.remove(Keys.email(userId))
             values.remove(Keys.trialStartedAt(userId))
             values.remove(Keys.subscriber(userId))
+            values.remove(Keys.reminderRecoverySystems(userId))
+            values.remove(Keys.reminderRecoveryClosing(userId))
             if (values[Keys.currentUserId] == userId) values.remove(Keys.currentUserId)
         }
     }
+
 }

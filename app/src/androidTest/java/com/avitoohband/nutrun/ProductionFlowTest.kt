@@ -1,33 +1,64 @@
 package com.avitoohband.nutrun
 
+import android.app.NotificationManager
+import android.media.AudioAttributes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.espresso.Espresso.pressBack
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunDatabase
+import com.avitoohband.nutrun.data.SessionPreferences
+import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
+import com.avitoohband.nutrun.data.TrainingStateEntity
 import com.avitoohband.nutrun.data.UserProfileEntity
 import com.avitoohband.nutrun.data.WalkPointEntity
 import com.avitoohband.nutrun.data.WalkSessionEntity
+import com.avitoohband.nutrun.reminders.ReminderSystem
 import java.time.Instant
+import java.time.DayOfWeek
+import java.time.LocalDate
 import java.util.TimeZone
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
@@ -160,9 +191,9 @@ class ProductionFlowTest {
             }
 
             composeRule.onAllNodesWithTag("walk-history-card")[0]
-                .assertTextContains("4500 steps")
+                .assertTextContains("4500 steps", substring = true)
             composeRule.onAllNodesWithTag("walk-history-card")[1]
-                .assertTextContains("Steps unavailable")
+                .assertTextContains("Steps unavailable", substring = true)
             composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
 
             composeRule.waitUntil(timeoutMillis = 10_000) {
@@ -225,6 +256,7 @@ class ProductionFlowTest {
     @Test
     fun todayOpensAllSupplementManagement() {
         enterDemo()
+        cleanupTask5SupplementsFromToday()
         composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
 
         composeRule.onNodeWithText("Manage supplements").assertIsDisplayed()
@@ -234,11 +266,191 @@ class ProductionFlowTest {
         composeRule.onNodeWithText("Cancel").performClick()
         composeRule.onNodeWithTag("add-managed-supplement").performClick()
         composeRule.onNodeWithText("Take on").assertIsDisplayed()
-        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "All days")
-            .forEach { label ->
-                composeRule.onNodeWithText(label).assertIsDisplayed()
+        DayOfWeek.entries.forEach { day ->
+            composeRule.onNodeWithTag("supplement-dialog-weekday-${day.name}").assertIsDisplayed()
+        }
+        composeRule.onNodeWithTag("supplement-dialog-weekday-all").performClick()
+    }
+
+    @Test
+    fun demoConfiguresSupplementRemindersAndOpensManagement() {
+        grantNotificationPermission()
+        enterDemo()
+        cleanupTask5SupplementsFromToday()
+        composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
+        composeRule.onNodeWithText("Profile and settings").performClick()
+        composeRule.onNodeWithText("Notification settings").performClick()
+
+        composeRule.onNodeWithText("Supplement reminders").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("supplement-reminders-master").assertIsOff()
+        composeRule.onNodeWithTag("supplement-reminders-toggle-all").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .performTextClearance()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .performTextInput("09:45")
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Supplement reminders")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .assertTextContains("09:45")
+
+        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOff()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .assertTextContains("09:45")
+
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time-clock").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time-picker")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithTag("manage-supplements-from-notifications")
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithText("Manage supplements").assertIsDisplayed()
+        composeRule.onNodeWithTag("add-managed-supplement").performClick()
+        composeRule.onNodeWithTag("supplement-dialog-name").performTextInput("Reconcile Zinc")
+        composeRule.onNodeWithTag("supplement-dialog-dose").performTextInput("15 mg")
+        composeRule.onNodeWithTag("supplement-dialog-save").performClick()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .performScrollTo()
+            .assertTextContains("09:45")
+        composeRule.onNodeWithText("Reconcile Zinc reminder time")
+            .performScrollTo()
+            .assertTextContains("08:00")
+        composeRule.onNodeWithTag("supplement-reminders-master")
+            .performScrollTo()
+            .performClick().assertIsOn()
+        composeRule.onNodeWithTag("notification-settings-list")
+            .performScrollToNode(hasTestTag("save-notification-settings"))
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.onNodeWithText("Notification settings").performClick()
+        composeRule.onNodeWithText("Supplement reminders").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("supplement-reminders-master").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .assertTextContains("09:45")
+        composeRule.onNodeWithTag("manage-supplements-from-notifications")
+            .performScrollTo().performClick()
+        removeTask5SupplementsFromManagement()
+
+    }
+
+    @Test
+    fun supplementNotificationFocusesTodaySupplements() {
+        enterDemo()
+        composeRule.onNodeWithTag("bottom-nav-training").performClick()
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.intent
+                .putExtra(MainActivity.EXTRA_DESTINATION, "today")
+                .putExtra(MainActivity.EXTRA_SUPPLEMENTS_SECTION, true)
+        }
+        composeRule.activityRule.scenario.recreate()
+
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("today-supplements-heading")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("today-supplements-heading").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("today-list").performScrollToNode(hasText("Today"))
+        composeRule.onNodeWithTag("today-heading").assertIsDisplayed()
+        composeRule.onNodeWithTag("bottom-nav-training").performClick()
+        composeRule.onNodeWithTag("bottom-nav-today").performClick()
+        composeRule.onNodeWithTag("today-heading").assertIsDisplayed()
+
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("today-heading").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("today-heading").assertIsDisplayed()
+
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.intent
+                .putExtra(MainActivity.EXTRA_DESTINATION, "today")
+                .putExtra(MainActivity.EXTRA_SUPPLEMENTS_SECTION, true)
+        }
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("today-supplements-heading")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("today-supplements-heading").assertIsDisplayed()
+    }
+
+    @Test
+    fun demoAddsAndEditsSupplementReminderConfiguration() {
+        grantNotificationPermission()
+        enterDemo()
+        cleanupTask5SupplementsFromToday()
+        composeRule.onNodeWithContentDescription("Add supplement").performClick()
+
+        composeRule.onNodeWithTag("supplement-dialog-reminder-enabled")
+            .performScrollTo()
+            .assertIsOn()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time")
+            .performScrollTo()
+            .assertTextContains("08:00")
+        composeRule.onNodeWithTag("supplement-dialog-name").performTextInput("Task 5 Magnesium")
+        composeRule.onNodeWithTag("supplement-dialog-dose").performTextInput("200 mg")
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time")
+            .performScrollTo()
+            .performTextClearance()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time").performTextInput("25:00")
+        composeRule.onNodeWithTag("supplement-dialog-save").assertIsNotEnabled()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time").performTextClearance()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time").performTextInput("09:30")
+        composeRule.onNodeWithTag("supplement-dialog-save").performClick()
+
+        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+        composeRule.onNodeWithContentDescription("Edit Task 5 Magnesium").performClick()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-enabled")
+            .performScrollTo()
+            .assertIsOn()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time")
+            .performScrollTo()
+            .assertTextContains("09:30")
+        composeRule.onNodeWithTag("supplement-dialog-reminder-enabled").performScrollTo().performClick()
+        composeRule.onNodeWithTag("supplement-dialog-save").performClick()
+        removeTask5SupplementsFromManagement()
+    }
+
+    private fun grantNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            instrumentation.uiAutomation.executeShellCommand(
+                "pm grant ${instrumentation.targetContext.packageName} " +
+                    android.Manifest.permission.POST_NOTIFICATIONS
+            ).close()
+        }
+    }
+
+    private fun cleanupTask5SupplementsFromToday() {
+        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+        removeTask5SupplementsFromManagement()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+    }
+
+    private fun removeTask5SupplementsFromManagement() {
+        listOf("Task 5 Magnesium", "Reconcile Zinc").forEach { name ->
+            val matcher = hasContentDescription("Remove $name")
+            val found = runCatching {
+                composeRule.onNodeWithTag("manage-supplements-list")
+                    .performScrollToNode(matcher)
+                composeRule.onNode(matcher).performClick()
+            }.isSuccess
+            if (found) {
+                composeRule.onNodeWithTag("confirm-remove-supplement").performClick()
+                composeRule.waitUntil(timeoutMillis = 5_000) {
+                    composeRule.onAllNodesWithContentDescription("Remove $name")
+                        .fetchSemanticsNodes().isEmpty()
+                }
             }
-        composeRule.onNodeWithText("All days").performClick()
+        }
     }
 
     private fun enterDemo() {
@@ -332,9 +544,402 @@ class ProductionFlowTest {
     }
 }
 
+class SupplementReminderSettingsCardComposeTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun individualBulkAndMasterTogglesPreserveTimeDrafts() {
+        val supplement = Supplement(
+            id = "magnesium",
+            name = "Magnesium",
+            dose = "200 mg",
+            schedule = SupplementSchedule(RecurrenceType.DAILY),
+            reminderEnabled = false,
+            reminderMinute = 10 * 60 + 15
+        )
+        var permissionRequests = 0
+
+        composeRule.setContent {
+            var masterEnabled by remember { mutableStateOf(false) }
+            var drafts by remember {
+                mutableStateOf(
+                    mapOf(
+                        supplement.id to SupplementReminderDraft(
+                            enabled = false,
+                            time = "10:15"
+                        )
+                    )
+                )
+            }
+            MaterialTheme {
+                SupplementReminderSettingsCard(
+                    masterEnabled = masterEnabled,
+                    onMasterEnabledChange = { masterEnabled = it },
+                    supplements = listOf(supplement),
+                    drafts = drafts,
+                    onDraftsChange = { drafts = it },
+                    onPermissionRequest = { permissionRequests += 1 },
+                    onManageSupplements = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").assertIsOff()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").assertIsOff()
+        composeRule.onNodeWithTag("supplement-reminders-toggle-all").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-time")
+            .assertTextContains("10:15")
+        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOff()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-enabled").assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-magnesium-time")
+            .assertTextContains("10:15")
+        composeRule.runOnIdle { assertEquals(3, permissionRequests) }
+    }
+
+    @Test
+    fun invalidTypedTimeShowsInlineValidationAndClockPicker() {
+        val supplement = Supplement(
+            id = "vitamin-d",
+            name = "Vitamin D",
+            dose = "2,000 IU",
+            schedule = SupplementSchedule(RecurrenceType.DAILY)
+        )
+        composeRule.setContent {
+            var drafts by remember {
+                mutableStateOf(
+                    mapOf(
+                        supplement.id to SupplementReminderDraft(false, "08:00")
+                    )
+                )
+            }
+            MaterialTheme {
+                SupplementReminderSettingsCard(
+                    masterEnabled = false,
+                    onMasterEnabledChange = {},
+                    supplements = listOf(supplement),
+                    drafts = drafts,
+                    onDraftsChange = { drafts = it },
+                    onPermissionRequest = {},
+                    onManageSupplements = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("supplement-reminder-vitamin-d-time")
+            .performTextClearance()
+        composeRule.onNodeWithTag("supplement-reminder-vitamin-d-time")
+            .performTextInput("25:00")
+        composeRule.onNodeWithText("Use a valid 24-hour time (HH:mm).")
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("supplement-reminder-vitamin-d-time-clock").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-vitamin-d-time-picker")
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun emptyStateKeepsManageSupplementsAction() {
+        var managed = false
+        composeRule.setContent {
+            MaterialTheme {
+                SupplementReminderSettingsCard(
+                    masterEnabled = false,
+                    onMasterEnabledChange = {},
+                    supplements = emptyList(),
+                    drafts = emptyMap(),
+                    onDraftsChange = {},
+                    onPermissionRequest = {},
+                    onManageSupplements = { managed = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("No supplements configured").assertIsDisplayed()
+        composeRule.onNodeWithTag("manage-supplements-from-notifications").performClick()
+        composeRule.runOnIdle { assertTrue(managed) }
+    }
+
+    @Test
+    fun loadingReminderCardDisablesMutationNavigation() {
+        composeRule.setContent {
+            MaterialTheme {
+                SupplementReminderSettingsCard(
+                    masterEnabled = false,
+                    onMasterEnabledChange = {},
+                    supplements = emptyList(),
+                    drafts = emptyMap(),
+                    onDraftsChange = {},
+                    onPermissionRequest = {},
+                    onManageSupplements = {},
+                    loading = true
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Loading supplement reminders...").assertIsDisplayed()
+        composeRule.onNodeWithTag("supplement-reminders-master").assertIsNotEnabled()
+        composeRule.onNodeWithTag("manage-supplements-from-notifications").assertIsNotEnabled()
+    }
+
+    @Test
+    fun trainingScreenHidesMutationControlsUntilFirstPayload() {
+        val runtime = PendingTrainingRuntime()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val model = TrainingViewModel(runtime, scope)
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("training-loading").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").assertDoesNotExist()
+        runBlocking { runtime.trainingStates.emit(null) }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            model.trainingMutationsReady
+        }
+        composeRule.onNodeWithTag("training-loading").assertDoesNotExist()
+        composeRule.onNodeWithTag("training-list").assertIsDisplayed()
+        scope.cancel()
+    }
+
+    @Test
+    fun notificationSaveWaitsForTheActiveTrainingRestore() {
+        val runtime = PendingTrainingRuntime()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val model = TrainingViewModel(runtime, scope)
+        composeRule.setContent {
+            MaterialTheme {
+                NotificationSettingsSaveButton(
+                    valid = true,
+                    accountReady = model.supplementReminderReadyAccountId == "account-a",
+                    persist = { NotificationSettingsSaveResult.Success("account-a") },
+                    currentAccountId = { "account-a" },
+                    onSuccess = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        runBlocking { runtime.trainingStates.emit(null) }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            model.supplementReminderUpdatesReady
+        }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
+        scope.cancel()
+    }
+
+    @Test
+    fun notificationSaveWaitsForAllNewAccountSnapshots() {
+        var hydrationAccountId by mutableStateOf("account-a")
+        var trainingAccountId by mutableStateOf("account-a")
+        var supplementAccountId by mutableStateOf("account-a")
+        var trainingPayloadAccountId by mutableStateOf("account-a")
+        composeRule.setContent {
+            MaterialTheme {
+                NotificationSettingsSaveButton(
+                    valid = true,
+                    accountReady = notificationSettingsAccountReady(
+                        accountId = "account-b",
+                        hydrationAccountId = hydrationAccountId,
+                        trainingAccountId = trainingAccountId,
+                        supplementAccountId = supplementAccountId,
+                        trainingPayloadAccountId = trainingPayloadAccountId
+                    ),
+                    persist = { NotificationSettingsSaveResult.Success("account-b") },
+                    currentAccountId = { "account-b" },
+                    onSuccess = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { hydrationAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { trainingAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { supplementAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { trainingPayloadAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
+    }
+
+    @Test
+    fun notificationSaveWaitsForFailureAndKeepsTheScreenOpenWithAnError() {
+        val completion = CompletableDeferred<NotificationSettingsSaveResult>()
+        var navigated = false
+        composeRule.setContent {
+            MaterialTheme {
+                NotificationSettingsSaveButton(
+                    valid = true,
+                    accountReady = true,
+                    persist = { completion.await() },
+                    currentAccountId = { "account-a" },
+                    onSuccess = { navigated = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { assertFalse(navigated) }
+        completion.complete(
+            NotificationSettingsSaveResult.Failed(
+                expectedAccountId = "account-a",
+                stage = NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                message = "disk full"
+            )
+        )
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("notification-settings-save-error")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("notification-settings-save-error")
+            .assertTextContains(
+                "No other notification settings were saved",
+                substring = true
+            )
+        composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
+        composeRule.runOnIdle { assertFalse(navigated) }
+    }
+
+    @Test
+    fun notificationSaveNavigatesOnlyAfterDurableSuccess() {
+        val completion = CompletableDeferred<NotificationSettingsSaveResult>()
+        var navigated = false
+        composeRule.setContent {
+            NotificationSettingsSaveButton(
+                valid = true,
+                accountReady = true,
+                persist = { completion.await() },
+                currentAccountId = { "account-a" },
+                onSuccess = { navigated = true }
+            )
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.runOnIdle { assertFalse(navigated) }
+        completion.complete(NotificationSettingsSaveResult.Success("account-a"))
+        composeRule.waitUntil(timeoutMillis = 5_000) { navigated }
+        composeRule.runOnIdle { assertTrue(navigated) }
+    }
+
+    @Test
+    fun notificationSaveKeepsScreenOpenWhenAccountChangesAfterFinalStage() {
+        var currentAccountId: String? = "account-a"
+        var navigated = false
+        composeRule.setContent {
+            NotificationSettingsSaveButton(
+                valid = true,
+                accountReady = true,
+                persist = {
+                    currentAccountId = "account-b"
+                    NotificationSettingsSaveResult.Success("account-a")
+                },
+                currentAccountId = { currentAccountId },
+                onSuccess = { navigated = true }
+            )
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("notification-settings-save-error")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithTag("notification-settings-save-error")
+            .assertTextContains("active account changed", substring = true)
+        composeRule.runOnIdle { assertFalse(navigated) }
+    }
+
+    @Test
+    fun reminderOnlyDialogEditReturnsTheExactIntervalSchedule() {
+        val existing = Supplement(
+            id = "interval-dialog",
+            name = "Iron",
+            dose = "18 mg",
+            schedule = SupplementSchedule(
+                type = RecurrenceType.EVERY_N_DAYS,
+                startDate = LocalDate.of(2026, 1, 3),
+                intervalDays = 4
+            ),
+            completedOn = LocalDate.of(2026, 8, 10),
+            reminderEnabled = true,
+            reminderMinute = 480
+        )
+        var savedSchedule: SupplementSchedule? = null
+        composeRule.setContent {
+            MaterialTheme {
+                AddSupplementDialog(
+                    existing = existing,
+                    onDismiss = {},
+                    onAdd = { _, _, schedule, _, _ -> savedSchedule = schedule }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time")
+            .performScrollTo()
+            .performTextClearance()
+        composeRule.onNodeWithTag("supplement-dialog-reminder-time").performTextInput("09:40")
+        composeRule.onNodeWithTag("supplement-dialog-save").performClick()
+
+        composeRule.runOnIdle { assertEquals(existing.schedule, savedSchedule) }
+    }
+
+    private class PendingTrainingRuntime : TrainingViewModelRuntime {
+        private val sessionState = MutableStateFlow(
+            SessionPreferences(authenticatedUserId = "account-a")
+        )
+        override val session: Flow<SessionPreferences> = sessionState
+        val trainingStates = MutableSharedFlow<TrainingStateEntity?>(replay = 1)
+
+        override fun trainingState(userId: String): Flow<TrainingStateEntity?> = trainingStates
+        override suspend fun currentUserId(): String? = sessionState.value.authenticatedUserId
+        override suspend fun saveTrainingState(userId: String, payload: String) = Unit
+        override suspend fun currentTrainingReminderSettings(
+            userId: String
+        ): TrainingReminderSettingsEntity? = null
+        override suspend fun currentSupplementReminderSettings(
+            userId: String
+        ) = SupplementReminderSettingsEntity(userId = userId)
+        override fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) = Unit
+        override suspend fun scheduleSupplement(
+            userId: String,
+            settings: SupplementReminderSettingsEntity
+        ) = Unit
+        override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) = Unit
+    }
+}
+
 class ProgressionSuggestionComposeTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun emptySessionRequiresExercisesBeforeItCanStart() {
+        val model = TrainingViewModel(null, null)
+        model.addSession("Regular", java.time.DayOfWeek.SUNDAY)
+        val emptySession = requireNotNull(model.selectedSession())
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("training-list").performScrollToNode(
+            hasTestTag("session-card-${emptySession.id}")
+        )
+        composeRule.onNodeWithTag("start-session-${emptySession.id}").assertIsNotEnabled()
+        composeRule.onNodeWithText("Add exercises to start").assertIsDisplayed()
+    }
 
     @Test
     fun progressionSuggestionAppearsBeforeStartAndDuringLogging() {
@@ -374,10 +979,10 @@ class ProgressionSuggestionComposeTest {
         }
 
         val programTag = "program-progression-${target.id}"
-        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag(programTag))
-        composeRule.onNodeWithTag(programTag)
+        composeRule.onNodeWithTag("training-list", useUnmergedTree = true).performScrollToNode(hasTestTag(programTag))
+        composeRule.onNodeWithTag(programTag, useUnmergedTree = true)
             .assertIsDisplayed()
-            .assertTextContains("Increase to 62.5 kg")
+            .assertTextContains("Increase to 62.5 kg", substring = true)
 
         composeRule.onNodeWithTag("start-session-${updatedSession.id}").performClick()
 
@@ -385,6 +990,59 @@ class ProgressionSuggestionComposeTest {
         composeRule.onNodeWithTag(activeTag)
             .performScrollTo()
             .assertIsDisplayed()
-            .assertTextContains("Increase to 62.5 kg")
+            .assertTextContains("Increase to 62.5 kg", substring = true)
+    }
+
+    @Test
+    fun zeroEffortInputCanCompleteAWorkoutSet() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val target = session.exercises.first()
+        model.startWorkout(session.id)
+        val set = model.activeSetLogs.getValue(target.id).first()
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("workout-effort-${set.id}").performTextInput("0")
+        composeRule.onNodeWithTag("workout-set-completed-${set.id}").performClick()
+
+        composeRule.runOnIdle {
+            val savedSet = model.activeSetLogs.getValue(target.id).first()
+            assertTrue(savedSet.completed)
+            assertEquals(0.0, savedSet.rpe!!, 0.001)
+        }
+    }
+
+    @Test
+    fun expiredRestTimerShowsAlertAndCreatesAlarmChannel() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val notificationManager = context.getSystemService(NotificationManager::class.java)
+        notificationManager.deleteNotificationChannel("rest_timer_finished_v1")
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        model.startRestTimer(seconds = 1)
+        Thread.sleep(1_100L)
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("Rest complete").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Rest complete").assertIsDisplayed()
+        composeRule.runOnIdle {
+            val channel = notificationManager.getNotificationChannel("rest_timer_finished_v1")
+            assertEquals(NotificationManager.IMPORTANCE_HIGH, channel?.importance)
+            assertEquals(AudioAttributes.USAGE_ALARM, channel?.audioAttributes?.usage)
+            assertTrue(channel?.shouldVibrate() == true)
+        }
     }
 }

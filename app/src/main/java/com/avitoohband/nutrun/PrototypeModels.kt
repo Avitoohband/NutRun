@@ -77,7 +77,9 @@ data class Supplement(
     val name: String,
     val dose: String,
     val schedule: SupplementSchedule,
-    val completedOn: LocalDate? = null
+    val completedOn: LocalDate? = null,
+    val reminderEnabled: Boolean = false,
+    val reminderMinute: Int = 8 * 60
 ) {
     fun isCompletedOn(date: LocalDate): Boolean = completedOn == date
 }

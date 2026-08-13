@@ -11,6 +11,7 @@ import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.WalkState
 import com.avitoohband.nutrun.sync.SyncScheduler
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,6 +23,43 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import org.json.JSONArray
+
+internal suspend fun <T> withExpectedRepositoryAccount(
+    expectedAccountId: String,
+    currentAccountId: suspend () -> String?,
+    write: suspend (String) -> T
+): T {
+    require(expectedAccountId.isNotBlank())
+    require(expectedAccountId == currentAccountId())
+    return write(expectedAccountId)
+}
+
+internal fun hydrationPlanSnapshotForAccount(
+    accountId: String,
+    row: HydrationPlanEntity?
+): HydrationPlanEntity = row
+    ?.takeIf { it.userId == accountId }
+    ?: defaultHydrationPlan(accountId)
+
+internal fun trainingReminderSettingsSnapshotForAccount(
+    accountId: String,
+    row: TrainingReminderSettingsEntity?
+): TrainingReminderSettingsEntity = row
+    ?.takeIf { it.userId == accountId }
+    ?: TrainingReminderSettingsEntity(
+        id = "training-reminders:$accountId",
+        userId = accountId
+    )
+
+internal fun supplementReminderSettingsSnapshotForAccount(
+    accountId: String,
+    row: SupplementReminderSettingsEntity?
+): SupplementReminderSettingsEntity = row
+    ?.takeIf { it.userId == accountId }
+    ?: SupplementReminderSettingsEntity(
+        id = "supplement-reminders:$accountId",
+        userId = accountId
+    )
 
 @Singleton
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -50,13 +88,35 @@ class NutRunRepository @Inject constructor(
         id?.let(dao::observeFoodTemplates) ?: flowOf(emptyList())
     }
 
-    val hydrationPlan = userId.flatMapLatest { id ->
-        id?.let(dao::observeHydrationPlan) ?: flowOf(null)
-    }.map { it ?: HydrationPlanEntity() }
+    val hydrationPlan = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(HydrationPlanEntity())
+        } else {
+            dao.observeHydrationPlan(accountId).map { row ->
+                hydrationPlanSnapshotForAccount(accountId, row)
+            }
+        }
+    }
 
-    val trainingReminderSettings = userId.flatMapLatest { id ->
-        id?.let(dao::observeTrainingReminderSettings) ?: flowOf(null)
-    }.map { it ?: TrainingReminderSettingsEntity() }
+    val trainingReminderSettings = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(TrainingReminderSettingsEntity())
+        } else {
+            dao.observeTrainingReminderSettings(accountId).map { row ->
+                trainingReminderSettingsSnapshotForAccount(accountId, row)
+            }
+        }
+    }
+
+    val supplementReminderSettings = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(SupplementReminderSettingsEntity())
+        } else {
+            dao.observeSupplementReminderSettings(accountId).map { row ->
+                supplementReminderSettingsSnapshotForAccount(accountId, row)
+            }
+        }
+    }
 
     val walks = userId.flatMapLatest { id ->
         id?.let(dao::observeWalks) ?: flowOf(emptyList())
@@ -354,28 +414,62 @@ class NutRunRepository @Inject constructor(
     suspend fun currentHydrationPlan(): HydrationPlanEntity? =
         dao.hydrationPlan(requireUserId())
 
-    suspend fun saveHydrationPlan(plan: HydrationPlanEntity) {
+    suspend fun saveHydrationPlan(plan: HydrationPlanEntity) =
+        saveHydrationPlan(requireUserId(), plan)
+
+    suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity) {
         require(plan.goalMl in 250..10_000)
         require(plan.servingMl in 50..2_000)
         require(plan.intervalMinutes >= 15)
         require(plan.wakingEndMinute > plan.wakingStartMinute)
-        val accountId = requireUserId()
-        val scoped = plan.copy(id = "hydration:$accountId", userId = accountId)
-        dao.saveHydrationPlan(scoped)
-        queue(accountId, "hydrationPlan", scoped.id, "UPSERT", scoped.toJson())
+        withExpectedRepositoryAccount(userId, { requireUserId() }) { accountId ->
+            val scoped = plan.copy(id = "hydration:$accountId", userId = accountId)
+            dao.saveHydrationPlan(scoped)
+            queue(accountId, "hydrationPlan", scoped.id, "UPSERT", scoped.toJson())
+        }
     }
 
-    suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity) {
+    suspend fun saveTrainingReminderSettings(settings: TrainingReminderSettingsEntity) =
+        saveTrainingReminderSettings(requireUserId(), settings)
+
+    suspend fun saveTrainingReminderSettings(
+        userId: String,
+        settings: TrainingReminderSettingsEntity
+    ) {
         require(settings.previousDayMinute in 0 until 24 * 60)
         require(settings.sameDayMinute in 0 until 24 * 60)
-        val accountId = requireUserId()
-        dao.saveTrainingReminderSettings(
-            settings.copy(id = "training-reminders:$accountId", userId = accountId)
-        )
+        withExpectedRepositoryAccount(userId, { requireUserId() }) { accountId ->
+            dao.saveTrainingReminderSettings(
+                settings.copy(id = "training-reminders:$accountId", userId = accountId)
+            )
+        }
     }
 
     suspend fun currentTrainingReminderSettings(): TrainingReminderSettingsEntity? =
         dao.trainingReminderSettings(requireUserId())
+
+    suspend fun saveSupplementReminderSettings(settings: SupplementReminderSettingsEntity) {
+        val accountId = requireUserId()
+        saveSupplementReminderSettings(accountId, settings)
+    }
+
+    suspend fun saveSupplementReminderSettings(
+        userId: String,
+        settings: SupplementReminderSettingsEntity
+    ) {
+        require(userId.isNotBlank())
+        require(userId == requireUserId())
+        dao.saveSupplementReminderSettings(
+            settings.copy(
+                id = "supplement-reminders:$userId",
+                userId = userId,
+                timezoneId = ZoneId.systemDefault().id
+            )
+        )
+    }
+
+    suspend fun currentSupplementReminderSettings(): SupplementReminderSettingsEntity? =
+        dao.supplementReminderSettings(requireUserId())
 
     suspend fun waterTotal(date: LocalDate = LocalDate.now()): Int =
         dao.waterTotal(requireUserId(), date.toString())

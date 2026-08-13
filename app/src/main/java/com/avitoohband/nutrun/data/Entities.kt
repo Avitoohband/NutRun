@@ -3,6 +3,7 @@ package com.avitoohband.nutrun.data
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.time.ZoneId
 
 @Entity(tableName = "user_profile", indices = [Index("userId")])
 data class UserProfileEntity(
@@ -95,6 +96,17 @@ data class TrainingReminderSettingsEntity(
 )
 
 @Entity(
+    tableName = "supplement_reminder_settings",
+    indices = [Index("userId", unique = true)]
+)
+data class SupplementReminderSettingsEntity(
+    @PrimaryKey val id: String = "",
+    val userId: String = "",
+    val enabled: Boolean = false,
+    val timezoneId: String = ZoneId.systemDefault().id
+)
+
+@Entity(
     tableName = "reminder_delivery",
     indices = [
         Index("userId"),
@@ -106,8 +118,16 @@ data class ReminderDeliveryEntity(
     val userId: String,
     val reminderType: String,
     val trainingDate: String,
-    val deliveredAtMillis: Long
-)
+    val deliveredAtMillis: Long,
+    val state: String = STATE_DELIVERED,
+    val claimedAtMillis: Long = 0
+) {
+    companion object {
+        const val STATE_PENDING = "PENDING"
+        const val STATE_POSTED = "POSTED"
+        const val STATE_DELIVERED = "DELIVERED"
+    }
+}
 
 @Entity(tableName = "walk_sessions", indices = [Index("userId"), Index("startedAtMillis"), Index("state")])
 data class WalkSessionEntity(
