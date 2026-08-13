@@ -620,7 +620,7 @@ class TrainingViewModel private constructor(
         require(reps == null || reps in 0..1_000)
         require(weightKg == null || weightKg in 0.0..2_000.0)
         require(durationSeconds == null || durationSeconds in 0..86_400)
-        require(rpe == null || rpe in 1.0..10.0)
+        require(rpe == null || rpe in 0.0..10.0)
         val session = activeSession() ?: return
         val target = session.exercises.firstOrNull { it.id == targetId } ?: return
         val wasCompleted = activeSetLogs[targetId]

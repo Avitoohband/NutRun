@@ -1,8 +1,11 @@
 package com.avitoohband.nutrun
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import android.provider.Settings
@@ -113,6 +116,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.health.connect.client.PermissionController
@@ -1037,6 +1042,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
     var editSessionId by remember { mutableStateOf<String?>(null) }
     var editRestTimer by remember { mutableStateOf(false) }
     var confirmCancelWorkout by remember { mutableStateOf(false) }
+    var restTimerFinished by remember { mutableStateOf(false) }
     var rescheduleRequest by remember {
         mutableStateOf<Pair<TrainingSession, LocalDate>?>(null)
     }
@@ -1109,6 +1115,18 @@ internal fun TrainingScreen(model: TrainingViewModel) {
             confirmButton = { TextButton(onClick = model::dismissWorkoutSummary) { Text("Done") } }
         )
     }
+    if (restTimerFinished) {
+        AlertDialog(
+            onDismissRequest = { restTimerFinished = false },
+            title = { Text("Rest complete") },
+            text = { Text("Your next set is ready.") },
+            confirmButton = {
+                Button(onClick = { restTimerFinished = false }) {
+                    Text("Continue workout")
+                }
+            }
+        )
+    }
     model.activeSession()?.let { session ->
         val context = LocalContext.current
         val timerEnd = model.restTimerEndAtMillis
@@ -1124,6 +1142,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                 model.restTimerEndAtMillis == timerEnd
             ) {
                 model.skipRestTimer()
+                restTimerFinished = true
                 playRestTimerFinishedFeedback(context)
             }
         }
@@ -2685,7 +2704,7 @@ private fun WorkoutHistorySetEditorRow(
         if (reps.isNotBlank() && parsedReps !in 0..1_000) return
         if (weight.isNotBlank() && (enteredWeight == null || enteredWeight !in 0.0..2_000.0)) return
         if (minutes.isNotBlank() && (parsedMinutes == null || parsedMinutes !in 0.0..1_440.0)) return
-        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 1.0..10.0)) return
+        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 0.0..10.0)) return
         onChange(
             set.copy(
                 reps = parsedReps,
@@ -3728,7 +3747,7 @@ private fun WorkoutSetRow(
         if (reps.isNotBlank() && parsedReps !in 0..1_000) return
         if (weight.isNotBlank() && (enteredWeight == null || enteredWeight < 0.0)) return
         if (minutes.isNotBlank() && (parsedMinutes == null || parsedMinutes !in 0.0..1_440.0)) return
-        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 1.0..10.0)) return
+        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 0.0..10.0)) return
         onChange(
             parsedReps,
             enteredWeight?.let { if (metric) it else it / KG_TO_POUNDS },
@@ -3771,13 +3790,14 @@ private fun WorkoutSetRow(
         OutlinedTextField(
             value = rpe,
             onValueChange = { rpe = it; emit() },
-            modifier = Modifier.weight(0.8f),
+            modifier = Modifier.weight(0.8f).testTag("workout-effort-${set.id}"),
             label = { Text("RPE") },
             singleLine = true
         )
         Checkbox(
             checked = set.completed,
-            onCheckedChange = { emit(it) }
+            onCheckedChange = { emit(it) },
+            modifier = Modifier.testTag("workout-set-completed-${set.id}")
         )
     }
 }
@@ -3897,12 +3917,62 @@ private fun RestTimerSettingsDialog(
     )
 }
 
+private const val REST_TIMER_CHANNEL_ID = "rest_timer_finished_v1"
+private const val REST_TIMER_NOTIFICATION_ID = 3_001
+private val REST_TIMER_VIBRATION = longArrayOf(0L, 300L, 150L, 450L, 150L, 600L)
+
 @Suppress("DEPRECATION")
 private fun playRestTimerFinishedFeedback(context: Context) {
-    runCatching {
-        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        RingtoneManager.getRingtone(context, soundUri)?.play()
+    val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+    val audioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ALARM)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
+    val notificationManager = context.getSystemService(NotificationManager::class.java)
+    notificationManager.createNotificationChannel(
+        NotificationChannel(
+            REST_TIMER_CHANNEL_ID,
+            "Rest timer alerts",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Alerts when a workout rest timer finishes"
+            setSound(soundUri, audioAttributes)
+            enableVibration(true)
+            vibrationPattern = REST_TIMER_VIBRATION
+        }
+    )
+
+    val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+    val notifications = NotificationManagerCompat.from(context)
+    if (permissionGranted && notifications.areNotificationsEnabled()) {
+        notifications.notify(
+            REST_TIMER_NOTIFICATION_ID,
+            NotificationCompat.Builder(context, REST_TIMER_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Rest complete")
+                .setContentText("Your next set is ready.")
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setAutoCancel(true)
+                .build()
+        )
+        return
     }
+
+    runCatching {
+        RingtoneManager.getRingtone(context, soundUri)?.apply {
+            this.audioAttributes = audioAttributes
+            play()
+        }
+    }
+    vibrateRestTimerFinished(context)
+}
+
+@Suppress("DEPRECATION")
+private fun vibrateRestTimerFinished(context: Context) {
     runCatching {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java).defaultVibrator
@@ -3910,12 +3980,7 @@ private fun playRestTimerFinishedFeedback(context: Context) {
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
         if (vibrator.hasVibrator()) {
-            vibrator.vibrate(
-                VibrationEffect.createWaveform(
-                    longArrayOf(0L, 180L, 100L, 260L),
-                    -1
-                )
-            )
+            vibrator.vibrate(VibrationEffect.createWaveform(REST_TIMER_VIBRATION, -1))
         }
     }
 }

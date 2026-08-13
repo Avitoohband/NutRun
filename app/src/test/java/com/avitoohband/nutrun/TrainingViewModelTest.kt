@@ -764,6 +764,29 @@ class TrainingViewModelTest {
     }
 
     @Test
+    fun zeroEffortValueCanCompleteAWorkoutSet() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val target = session.exercises.first()
+
+        model.startWorkout(session.id)
+        model.updateWorkoutSet(
+            targetId = target.id,
+            setNumber = 1,
+            reps = 8,
+            weightKg = 60.0,
+            durationSeconds = null,
+            rpe = 0.0,
+            completed = true
+        )
+
+        val savedSet = model.activeSetLogs.getValue(target.id).first()
+        assertTrue(savedSet.completed)
+        assertEquals(0.0, savedSet.rpe!!, 0.001)
+        assertTrue(model.restTimerEndAtMillis != null)
+    }
+
+    @Test
     fun movedAndSkippedSessionsChangeOnlyTheSelectedWeek() {
         val model = TrainingViewModel(null, null)
         val week = trainingWeek(LocalDate.of(2026, 7, 20))

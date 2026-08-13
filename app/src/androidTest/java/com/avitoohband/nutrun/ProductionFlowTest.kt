@@ -1,5 +1,7 @@
 package com.avitoohband.nutrun
 
+import android.app.NotificationManager
+import android.media.AudioAttributes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -989,5 +991,58 @@ class ProgressionSuggestionComposeTest {
             .performScrollTo()
             .assertIsDisplayed()
             .assertTextContains("Increase to 62.5 kg", substring = true)
+    }
+
+    @Test
+    fun zeroEffortInputCanCompleteAWorkoutSet() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val target = session.exercises.first()
+        model.startWorkout(session.id)
+        val set = model.activeSetLogs.getValue(target.id).first()
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("workout-effort-${set.id}").performTextInput("0")
+        composeRule.onNodeWithTag("workout-set-completed-${set.id}").performClick()
+
+        composeRule.runOnIdle {
+            val savedSet = model.activeSetLogs.getValue(target.id).first()
+            assertTrue(savedSet.completed)
+            assertEquals(0.0, savedSet.rpe!!, 0.001)
+        }
+    }
+
+    @Test
+    fun expiredRestTimerShowsAlertAndCreatesAlarmChannel() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val notificationManager = context.getSystemService(NotificationManager::class.java)
+        notificationManager.deleteNotificationChannel("rest_timer_finished_v1")
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        model.startRestTimer(seconds = 1)
+        Thread.sleep(1_100L)
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("Rest complete").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Rest complete").assertIsDisplayed()
+        composeRule.runOnIdle {
+            val channel = notificationManager.getNotificationChannel("rest_timer_finished_v1")
+            assertEquals(NotificationManager.IMPORTANCE_HIGH, channel?.importance)
+            assertEquals(AudioAttributes.USAGE_ALARM, channel?.audioAttributes?.usage)
+            assertTrue(channel?.shouldVibrate() == true)
+        }
     }
 }
