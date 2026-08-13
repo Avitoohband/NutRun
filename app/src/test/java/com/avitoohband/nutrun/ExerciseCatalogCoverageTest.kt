@@ -1,6 +1,7 @@
 package com.avitoohband.nutrun
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -225,5 +226,21 @@ class ExerciseCatalogCoverageTest {
 
         assertEquals(addedStableIds, newIds)
         assertEquals("Pull up", catalog.first { it.id == "pull-up" }.name)
+    }
+
+    @Test
+    fun addedSeedsUseMovementSpecificMetadataAndGuidance() {
+        val catalog = builtInExerciseCatalog().associateBy(Exercise::id)
+        fun exercise(id: String) = requireNotNull(catalog[id])
+
+        assertEquals("Calves", exercise("calf-press-machine").primaryMuscles)
+        assertEquals("Calves", exercise("seated-calf-raise").primaryMuscles)
+        assertEquals("Calves", exercise("wall-calf-raise").primaryMuscles)
+        assertTrue(exercise("calf-press-machine").instructions.contains("ankles"))
+        assertTrue(exercise("pull-up").instructions.contains("bar"))
+        assertTrue(exercise("backpack-deadlift").safetyNote.contains("spine"))
+        assertTrue(exercise("band-external-rotation").safetyNote.contains("pain-free"))
+        assertFalse(exercise("calf-press-machine").primaryMuscles == exercise("calf-press-machine").category)
+        assertFalse(exercise("pull-up").instructions == exercise("pike-push-up").instructions)
     }
 }
