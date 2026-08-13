@@ -26,6 +26,9 @@ data class PersistedTrainingState(
     val legacyUsesMetricUnits: Boolean?,
     val usesMetricUnits: Boolean
 )
+internal val TrainingViewModel.sessions: List<TrainingSession>
+    get() = workoutTemplates.toCompatibilitySessions(weeklyDayPlans)
+
 
 fun defaultSupplements() = listOf(
     Supplement("supplement-1", "Vitamin D", "2,000 IU", SupplementSchedule(RecurrenceType.DAILY)),
@@ -196,7 +199,9 @@ fun decodeTrainingState(
 ): PersistedTrainingState? = runCatching {
     val root = JSONObject(payload)
     val isVersion2 = root.optInt("schemaVersion", 1) >= 2
-    val builtInExerciseIds = exerciseLibrary.map(Exercise::id).toSet()
+    val builtInExerciseIds = exerciseLibrary
+        .filterNot { it.id.isTypedUuid("exercise-") }
+        .map(Exercise::id).toSet()
     val customExercises = root.optJSONArray("customExercises")?.objects()?.map(JSONObject::toExercise)
         ?.filter { it.id.isTypedUuid("exercise-") && it.id !in builtInExerciseIds }
         ?.distinctBy(Exercise::id)
@@ -387,7 +392,7 @@ private fun JSONObject.toWeeklyDayPlan(templateIds: Set<String>): WeeklyDayPlan?
     WeeklyDayPlan(DayOfWeek.valueOf(getString("weekday")), if (isRestDay) emptyList() else validIds, isRestDay)
 }.getOrNull()
 
-private fun List<WorkoutTemplate>.toCompatibilitySessions(plans: List<WeeklyDayPlan>): List<TrainingSession> {
+internal fun List<WorkoutTemplate>.toCompatibilitySessions(plans: List<WeeklyDayPlan>): List<TrainingSession> {
     val weekdayByTemplateId = plans.filterNot(WeeklyDayPlan::isRestDay)
         .flatMap { plan -> plan.templateIds.map { it to plan.weekday } }
         .toMap()

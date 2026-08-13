@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -29,6 +30,318 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class TrainingViewModelTest {
+    @Test
+    fun createWorkoutTrimsNameAndStartsEmpty() {
+        val model = TrainingViewModel(null, null)
+        assertEquals(TrainingMutationResult.Success, model.createWorkout("  Push B  "))
+        val created = model.workoutTemplates.last()
+        assertEquals("Push B", created.name)
+        assertTrue(created.exercises.isEmpty())
+        assertTrue(created.id.startsWith("workout-"))
+    }
+
+    @Test
+    fun blankWorkoutNamesAreRejectedWithoutChangingTemplates() {
+        val model = TrainingViewModel(null, null)
+        val before = model.workoutTemplates.toList()
+
+        assertTrue(model.createWorkout("   ") is TrainingMutationResult.ValidationError)
+        assertTrue(model.renameWorkout(before.first().id, "\t") is TrainingMutationResult.ValidationError)
+        assertEquals(before, model.workoutTemplates)
+    }
+
+    @Test
+    fun renameWorkoutTrimsTheReplacementName() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+
+        assertEquals(TrainingMutationResult.Success, model.renameWorkout(template.id, "  Upper A  "))
+        assertEquals("Upper A", model.workoutTemplates.first { it.id == template.id }.name)
+    }
+
+    @Test
+    fun setCountIsStoredPerTemplateAndRejectsZeroOrTwentyOne() {
+        val model = TrainingViewModel(null, null)
+        val first = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        val second = model.workoutTemplates.first { it.id != first.id && it.exercises.isNotEmpty() }
+        val target = first.exercises.first()
+
+        assertEquals(TrainingMutationResult.Success, model.updateTargetSets(first.id, target.id, 7))
+        assertEquals(
+            7,
+            model.workoutTemplates.first { it.id == first.id }.exercises.first { it.id == target.id }.sets
+        )
+        assertEquals(second, model.workoutTemplates.first { it.id == second.id })
+        assertTrue(model.updateTargetSets(first.id, target.id, 0) is TrainingMutationResult.ValidationError)
+        assertTrue(model.updateTargetSets(first.id, target.id, 21) is TrainingMutationResult.ValidationError)
+    }
+
+    @Test
+    fun customExerciseIsAddedToCatalogAndSelectedWorkout() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        val result = model.createCustomExerciseAndAdd(
+            template.id,
+            CustomExerciseDraft(name = "Suitcase march", primaryMuscles = "Core")
+        )
+        assertEquals(TrainingMutationResult.Success, result)
+        val custom = model.customExercises.single { it.name == "Suitcase march" }
+        assertTrue(custom.id.startsWith("exercise-"))
+        assertEquals(
+            custom.id,
+            model.workoutTemplates.first { it.id == template.id }.exercises.last().exercise.id
+        )
+        assertTrue(model.exerciseLibrary.any { it.id == custom.id })
+    }
+
+    @Test
+    fun replacingAssignmentsDeduplicatesInOrderAndClearsRestDay() {
+        val model = TrainingViewModel(null, null)
+        val push = model.workoutTemplates.first { it.id == "session-monday-push-biceps" }
+        val walk = model.workoutTemplates.first { it.id == "session-sunday-cardio" }
+
+        assertEquals(
+            TrainingMutationResult.Success,
+            model.replaceAssignments(java.time.DayOfWeek.MONDAY, listOf(push.id, walk.id, push.id))
+        )
+
+        val monday = model.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.MONDAY }
+        assertEquals(listOf(push.id, walk.id), monday.templateIds)
+        assertFalse(monday.isRestDay)
+    }
+
+    @Test
+    fun settingRestDayClearsEveryAssignment() {
+        val model = TrainingViewModel(null, null)
+
+        assertEquals(TrainingMutationResult.Success, model.setRestDay(java.time.DayOfWeek.MONDAY))
+
+        assertEquals(
+            WeeklyDayPlan(java.time.DayOfWeek.MONDAY, isRestDay = true),
+            model.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.MONDAY }
+        )
+    }
+
+    @Test
+    fun addingAnExerciseAlreadyInTemplateIsRejectedWithoutChangingTargets() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        val before = template.exercises
+        model.selectSession(template.id)
+
+        val result = model.addExerciseToSelectedSession(template.exercises.first().exercise)
+
+        assertTrue(result is TrainingMutationResult.ValidationError)
+        assertEquals(before, model.workoutTemplates.first { it.id == template.id }.exercises)
+    }
+
+    @Test
+    fun blankAndCaseFoldedDuplicateCustomNamesDoNotMutateCatalogOrTargets() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        assertEquals(
+            TrainingMutationResult.Success,
+            model.createCustomExerciseAndAdd(template.id, CustomExerciseDraft(name = "Suitcase march"))
+        )
+        val catalogBefore = model.customExercises.toList()
+        val targetsBefore = model.workoutTemplates.first { it.id == template.id }.exercises
+
+        assertTrue(
+            model.createCustomExerciseAndAdd(template.id, CustomExerciseDraft(name = "  ")) is
+                TrainingMutationResult.ValidationError
+        )
+        assertTrue(
+            model.createCustomExerciseAndAdd(template.id, CustomExerciseDraft(name = "SUITCASE MARCH")) is
+                TrainingMutationResult.ValidationError
+        )
+
+        assertEquals(catalogBefore, model.customExercises)
+        assertEquals(targetsBefore, model.workoutTemplates.first { it.id == template.id }.exercises)
+    }
+
+    @Test
+    fun deletingTemplateRemovesCurrentReferencesButPreservesHistoryPastOverridesAndCustomExercises() {
+        val model = TrainingViewModel(null, null)
+        val today = LocalDate.of(2026, 8, 13)
+        val deleted = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        val retained = model.workoutTemplates.first { it.id != deleted.id }
+        val custom = customExercise(
+            "exercise-00000000-0000-0000-0000-000000000099",
+            "Retained custom"
+        )
+        model.customExercises += custom
+        model.weeklyDayPlans.clear()
+        model.weeklyDayPlans += WeeklyDayPlan(java.time.DayOfWeek.MONDAY, listOf(deleted.id, retained.id))
+        val oldOverride = TrainingScheduleOverride(deleted.id, today.minusDays(1), today)
+        val todayOverride = TrainingScheduleOverride(deleted.id, today, today.plusDays(1))
+        val futureOverride = TrainingScheduleOverride(deleted.id, today.plusDays(1), null, skipped = true)
+        val retainedOverride = TrainingScheduleOverride(retained.id, today.plusDays(2), today.plusDays(3))
+        model.scheduleOverrides += listOf(oldOverride, todayOverride, futureOverride, retainedOverride)
+        val record = WorkoutRecord(
+            id = "history-1",
+            sessionId = deleted.id,
+            sessionName = deleted.name,
+            performedOn = today.minusDays(2),
+            startedAtMillis = 1L,
+            finishedAtMillis = 2L,
+            completedTargetIds = emptySet(),
+            completedLogicalTargets = 0,
+            totalLogicalTargets = deleted.exercises.size,
+            sets = emptyList()
+        )
+        model.workoutHistory += record
+
+        assertEquals(TrainingMutationResult.Success, model.deleteWorkout(deleted.id, today))
+
+        assertTrue(model.workoutTemplates.none { it.id == deleted.id })
+        assertEquals(
+            listOf(retained.id),
+            model.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.MONDAY }.templateIds
+        )
+        assertEquals(listOf(oldOverride, retainedOverride), model.scheduleOverrides)
+        assertEquals(listOf(record), model.workoutHistory)
+        assertEquals(listOf(custom), model.customExercises)
+    }
+
+    @Test
+    fun deletingActiveTemplateReturnsConflictAndLeavesAllStateUnchanged() {
+        val model = TrainingViewModel(null, null)
+        val active = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        model.selectSession(active.id)
+        model.startWorkout(active.id)
+        val templates = model.workoutTemplates.toList()
+        val plans = model.weeklyDayPlans.toList()
+        val overrides = model.scheduleOverrides.toList()
+        val selected = model.selectedSessionId
+        val activeId = model.activeWorkoutSessionId
+        val logs = model.activeSetLogs.toMap()
+
+        assertEquals(TrainingMutationResult.ActiveWorkoutConflict, model.deleteWorkout(active.id))
+
+        assertEquals(templates, model.workoutTemplates)
+        assertEquals(plans, model.weeklyDayPlans)
+        assertEquals(overrides, model.scheduleOverrides)
+        assertEquals(selected, model.selectedSessionId)
+        assertEquals(activeId, model.activeWorkoutSessionId)
+        assertEquals(logs, model.activeSetLogs)
+    }
+
+    @Test
+    fun mutationsReturnNotReadyUntilTheAccountsFirstPayload() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        val before = model.workoutTemplates.toList()
+
+        assertEquals(TrainingMutationResult.NotReady, model.createWorkout("Too early"))
+        assertEquals(before, model.workoutTemplates)
+        assertTrue(runtime.attemptedPayloads.isEmpty())
+    }
+
+    @Test
+    fun switchingAccountsRestoresOnlyTheNewAccountsCustomExercisesAfterItsFirstPayload() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val accountAExercise = customExercise(
+            "exercise-00000000-0000-0000-0000-0000000000a1",
+            "Account A carry"
+        )
+        val accountBExercise = customExercise(
+            "exercise-00000000-0000-0000-0000-0000000000b1",
+            "Account B carry"
+        )
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity("account-a", encodeTrainingState(customExercises = listOf(accountAExercise)), 1L)
+        )
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+        assertEquals(listOf(accountAExercise), model.customExercises)
+
+        runtime.selectAccount("account-b")
+        withTimeout(5_000) { while (model.trainingMutationsReady) yield() }
+        assertTrue(model.customExercises.isEmpty())
+        runtime.trainingStates.emit(
+            TrainingStateEntity("account-b", encodeTrainingState(customExercises = listOf(accountBExercise)), 2L)
+        )
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+
+        assertEquals(listOf(accountBExercise), model.customExercises)
+        assertTrue(model.exerciseLibrary.none { it.id == accountAExercise.id })
+        assertTrue(model.exerciseLibrary.any { it.id == accountBExercise.id })
+    }
+
+    @Test
+    fun failedMutationSaveRestoresExactSnapshotAndExposesDismissibleError() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val fixture = rollbackFixture()
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", fixture.payload, 1L))
+        runtime.saveFailure = IllegalStateException("disk full")
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+        val templates = model.workoutTemplates.toList()
+        val plans = model.weeklyDayPlans.toList()
+        val custom = model.customExercises.toList()
+        val overrides = model.scheduleOverrides.toList()
+        val selected = model.selectedSessionId
+        val active = model.activeWorkoutSessionId
+        val started = model.activeWorkoutStartedAtMillis
+        val completed = model.completedExerciseIds.toMap()
+        val logs = model.activeSetLogs.toMap()
+
+        assertEquals(TrainingMutationResult.Success, model.renameWorkout(fixture.template.id, "Changed"))
+        withTimeout(5_000) { while (model.mutationError == null) yield() }
+
+        assertEquals(templates, model.workoutTemplates)
+        assertEquals(plans, model.weeklyDayPlans)
+        assertEquals(custom, model.customExercises)
+        assertEquals(overrides, model.scheduleOverrides)
+        assertEquals(selected, model.selectedSessionId)
+        assertEquals(active, model.activeWorkoutSessionId)
+        assertEquals(started, model.activeWorkoutStartedAtMillis)
+        assertEquals(completed, model.completedExerciseIds)
+        assertEquals(logs, model.activeSetLogs)
+        assertEquals("disk full", model.mutationError)
+
+        model.dismissMutationError()
+        assertNull(model.mutationError)
+    }
+
+    @Test
+    fun olderFailedGenerationDoesNotRollbackNewerSuccessfulMutation() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val fixture = rollbackFixture()
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", fixture.payload, 1L))
+        val firstGate = CompletableDeferred<Unit>()
+        val firstStarted = runtime.prepareSave(
+            gate = firstGate,
+            nonCancellable = true,
+            failure = IllegalStateException("older write failed")
+        )
+        runtime.prepareSave()
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+
+        assertEquals(TrainingMutationResult.Success, model.renameWorkout(fixture.template.id, "Generation N"))
+        firstStarted.await()
+        assertEquals(TrainingMutationResult.Success, model.renameWorkout(fixture.template.id, "Generation N plus 1"))
+        firstGate.complete(Unit)
+        withTimeout(5_000) { while (runtime.savedPayloads.isEmpty()) yield() }
+
+        assertEquals(
+            "Generation N plus 1",
+            model.workoutTemplates.single { it.id == fixture.template.id }.name
+        )
+        val persisted = requireNotNull(decodeTrainingState(runtime.savedPayloads.last(), builtInExerciseCatalog()))
+        assertEquals("Generation N plus 1", persisted.workoutTemplates.single().name)
+        assertNull(model.mutationError)
+    }
+
     @Test
     fun durableReminderSaveWaitsForRepositoryBeforeMutatingOrReportingSuccess() = runBlocking {
         val runtime = FakeTrainingViewModelRuntime(session = SessionPreferences(authenticatedUserId = "account-a"))
@@ -1220,6 +1533,64 @@ class TrainingViewModelTest {
         val unassigned: WorkoutTemplate,
         val payload: String
     )
+    private fun customExercise(id: String, name: String) = Exercise(
+        id = id,
+        name = name,
+        category = "Custom",
+        primaryMuscles = "Core",
+        secondaryMuscles = "",
+        instructions = "",
+        safetyNote = ""
+    )
+
+    private fun rollbackFixture(): RollbackFixture {
+        val custom = customExercise(
+            "exercise-00000000-0000-0000-0000-0000000000f1",
+            "Rollback carry"
+        )
+        val target = ExerciseTarget(
+            id = "rollback-target",
+            exercise = custom,
+            sets = 3,
+            reps = 10
+        )
+        val template = WorkoutTemplate("rollback-template", "Rollback workout", listOf(target))
+        val plan = WeeklyDayPlan(java.time.DayOfWeek.MONDAY, listOf(template.id))
+        val override = TrainingScheduleOverride(
+            sessionId = template.id,
+            originalDate = LocalDate.of(2026, 8, 18),
+            scheduledDate = LocalDate.of(2026, 8, 19)
+        )
+        val setLog = WorkoutSetLog(
+            id = "rollback-set",
+            targetId = target.id,
+            exerciseId = custom.id,
+            exerciseName = custom.name,
+            setNumber = 1,
+            reps = 10,
+            completed = true
+        )
+        return RollbackFixture(
+            template = template,
+            payload = encodeTrainingState(
+                selectedSessionId = template.id,
+                activeWorkoutSessionId = template.id,
+                completedExerciseIds = mapOf(target.id to true),
+                scheduleOverrides = listOf(override),
+                activeSetLogs = mapOf(target.id to listOf(setLog)),
+                activeWorkoutStartedAtMillis = 1234L,
+                customExercises = listOf(custom),
+                workoutTemplates = listOf(template),
+                weeklyDayPlans = listOf(plan)
+            )
+        )
+    }
+
+    private data class RollbackFixture(
+        val template: WorkoutTemplate,
+        val payload: String
+    )
+
     private fun trainingPayload(supplementName: String): String = encodeTrainingState(
         supplements = listOf(
             Supplement(
@@ -1265,7 +1636,8 @@ class TrainingViewModelTest {
             gate: CompletableDeferred<Unit>? = null,
             nonCancellable: Boolean = false,
             emitToTrainingStatesBeforeCompletion: Boolean = false,
-            roomEmissionCompleted: CompletableDeferred<Unit>? = null
+            roomEmissionCompleted: CompletableDeferred<Unit>? = null,
+            failure: Throwable? = null
         ): CompletableDeferred<Unit> {
             val started = CompletableDeferred<Unit>()
             saveControls += SaveControl(
@@ -1273,12 +1645,14 @@ class TrainingViewModelTest {
                 nonCancellable = nonCancellable,
                 started = started,
                 emitToTrainingStatesBeforeCompletion = emitToTrainingStatesBeforeCompletion,
-                roomEmissionCompleted = roomEmissionCompleted
+                roomEmissionCompleted = roomEmissionCompleted,
+                failure = failure
             )
             return started
         }
 
-        override fun trainingState(userId: String): Flow<TrainingStateEntity?> = trainingStates
+        override fun trainingState(userId: String): Flow<TrainingStateEntity?> =
+            trainingStates.filter { it == null || it.userId == userId }
 
         override suspend fun currentUserId(): String? = sessionState.value.authenticatedUserId
 
@@ -1300,7 +1674,7 @@ class TrainingViewModelTest {
                     gate.await()
                 }
             }
-            saveFailure?.let { throw it }
+            (control?.failure ?: saveFailure)?.let { throw it }
             savedPayloads += payload
         }
 
@@ -1340,7 +1714,8 @@ class TrainingViewModelTest {
             val nonCancellable: Boolean,
             val started: CompletableDeferred<Unit>,
             val emitToTrainingStatesBeforeCompletion: Boolean,
-            val roomEmissionCompleted: CompletableDeferred<Unit>?
+            val roomEmissionCompleted: CompletableDeferred<Unit>?,
+            val failure: Throwable?
         )
     }
 }
