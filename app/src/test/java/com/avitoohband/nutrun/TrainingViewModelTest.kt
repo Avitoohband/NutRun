@@ -1058,6 +1058,168 @@ class TrainingViewModelTest {
         assertEquals(listOf(assigned, unassigned), restored.workoutTemplates)
         assertEquals(plans, restored.weeklyDayPlans)
     }
+    @Test
+    fun compatibilitySessionMutationsPersistCanonicalTemplatesWithoutLosingV2Data() = runBlocking {
+        verifyCanonicalCompatibilityMutation(
+            mutate = { model ->
+                model.addSession("Added workout", java.time.DayOfWeek.FRIDAY)
+            },
+            assertMutation = { restored, model ->
+                val addedId = requireNotNull(model.selectedSessionId)
+                val added = restored.workoutTemplates.single { it.id == addedId }
+                assertTrue(addedId.isTypedUuid("workout-"))
+                assertTrue(added.isUserCreated)
+                assertEquals("Added workout", added.name)
+                assertEquals(
+                    listOf(addedId),
+                    restored.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.FRIDAY }.templateIds
+                )
+            }
+        )
+
+        verifyCanonicalCompatibilityMutation(
+            mutate = { model ->
+                model.addExerciseToSelectedSession(model.exerciseLibrary.first { it.id == "bench-press" })
+            },
+            assertMutation = { restored, _ ->
+                assertTrue(restored.workoutTemplates.assignedTemplate().exercises.any { it.exercise.id == "bench-press" })
+            }
+        )
+
+        verifyCanonicalCompatibilityMutation(
+            mutate = { model ->
+                model.removeExerciseFromSelectedSession("assigned-target")
+            },
+            assertMutation = { restored, _ ->
+                assertTrue(restored.workoutTemplates.assignedTemplate().exercises.none { it.id == "assigned-target" })
+            }
+        )
+
+        verifyCanonicalCompatibilityMutation(
+            mutate = { model ->
+                model.updateSelectedExercise(
+                    targetId = "assigned-target",
+                    sets = 5,
+                    reps = 15,
+                    weightKg = 37.5,
+                    durationMinutes = null,
+                    distanceKm = null
+                )
+            },
+            assertMutation = { restored, _ ->
+                val target = restored.workoutTemplates.assignedTemplate().exercises.single { it.id == "assigned-target" }
+                assertEquals(5, target.sets)
+                assertEquals(15, target.reps)
+                assertEquals(37.5, target.weightKg!!, 0.001)
+            }
+        )
+
+        verifyCanonicalCompatibilityMutation(
+            mutate = { model ->
+                model.decideSuggestion(SuggestionDecision.ACCEPTED, 55.0)
+            },
+            assertMutation = { restored, _ ->
+                val target = restored.workoutTemplates.assignedTemplate().exercises.single { it.id == "lat-target" }
+                assertEquals(55.0, target.weightKg!!, 0.001)
+            }
+        )
+    }
+
+    private suspend fun verifyCanonicalCompatibilityMutation(
+        mutate: (TrainingViewModel) -> Unit,
+        assertMutation: (PersistedTrainingState, TrainingViewModel) -> Unit
+    ) {
+        val fixture = canonicalCompatibilityFixture()
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", fixture.payload, 1L))
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) {
+            while (!model.trainingMutationsReady) yield()
+        }
+
+        mutate(model)
+        withTimeout(5_000) {
+            while (runtime.savedPayloads.isEmpty()) yield()
+        }
+        val savedPayload = runtime.savedPayloads.last()
+        val restored = requireNotNull(decodeTrainingState(savedPayload, model.exerciseLibrary))
+        val reloadRuntime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        reloadRuntime.trainingStates.tryEmit(TrainingStateEntity("account-a", savedPayload, 2L))
+        val reloadedModel = TrainingViewModel(reloadRuntime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) {
+            while (!reloadedModel.trainingMutationsReady) yield()
+        }
+
+        assertEquals(listOf(fixture.custom), restored.customExercises)
+        assertEquals(restored.workoutTemplates, reloadedModel.workoutTemplates)
+        assertEquals(restored.weeklyDayPlans, reloadedModel.weeklyDayPlans)
+        assertEquals(fixture.unassigned, restored.workoutTemplates.single { it.id == fixture.unassigned.id })
+        assertEquals(
+            listOf(fixture.assigned.id),
+            restored.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.MONDAY }.templateIds
+        )
+        assertEquals(
+            listOf(fixture.assigned.id),
+            restored.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.WEDNESDAY }.templateIds
+        )
+        assertEquals(
+            WeeklyDayPlan(java.time.DayOfWeek.SATURDAY, isRestDay = true),
+            restored.weeklyDayPlans.single { it.weekday == java.time.DayOfWeek.SATURDAY }
+        )
+        assertMutation(restored, reloadedModel)
+    }
+
+    private fun canonicalCompatibilityFixture(): CanonicalCompatibilityFixture {
+        val custom = Exercise(
+            id = "exercise-00000000-0000-0000-0000-000000000010",
+            name = "Custom carry",
+            category = "Custom",
+            primaryMuscles = "Grip",
+            secondaryMuscles = "",
+            instructions = "Carry steadily.",
+            safetyNote = ""
+        )
+        val latPulldown = builtInExerciseCatalog().first { it.id == "lat-pulldown" }
+        val assigned = WorkoutTemplate(
+            id = "assigned-template",
+            name = "Assigned",
+            exercises = listOf(
+                ExerciseTarget("assigned-target", custom, sets = 3, reps = 12),
+                ExerciseTarget("lat-target", latPulldown, sets = 4, reps = 10, weightKg = 42.5)
+            )
+        )
+        val unassigned = WorkoutTemplate("unassigned-template", "Unassigned")
+        val plans = listOf(
+            WeeklyDayPlan(java.time.DayOfWeek.MONDAY, listOf(assigned.id)),
+            WeeklyDayPlan(java.time.DayOfWeek.WEDNESDAY, listOf(assigned.id)),
+            WeeklyDayPlan(java.time.DayOfWeek.SATURDAY, isRestDay = true)
+        )
+        return CanonicalCompatibilityFixture(
+            custom = custom,
+            assigned = assigned,
+            unassigned = unassigned,
+            payload = encodeTrainingState(
+                selectedSessionId = assigned.id,
+                customExercises = listOf(custom),
+                workoutTemplates = listOf(assigned, unassigned),
+                weeklyDayPlans = plans
+            )
+        )
+    }
+
+    private fun List<WorkoutTemplate>.assignedTemplate(): WorkoutTemplate =
+        single { it.id == "assigned-template" }
+
+    private data class CanonicalCompatibilityFixture(
+        val custom: Exercise,
+        val assigned: WorkoutTemplate,
+        val unassigned: WorkoutTemplate,
+        val payload: String
+    )
     private fun trainingPayload(supplementName: String): String = encodeTrainingState(
         supplements = listOf(
             Supplement(

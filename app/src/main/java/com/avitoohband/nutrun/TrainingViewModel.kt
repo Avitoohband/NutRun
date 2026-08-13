@@ -527,8 +527,10 @@ class TrainingViewModel private constructor(
 
     fun addSession(name: String, weekday: DayOfWeek) {
         if (!trainingMutationsReady) return
-        val session = TrainingSession(id("session"), name.trim(), weekday)
+        val session = TrainingSession(id("workout"), name.trim(), weekday)
         sessions += session
+        synchronizeCanonicalTemplate(session)
+        assignCanonicalWeekday(session)
         selectedSessionId = session.id
         persistTrainingState()
     }
@@ -562,6 +564,7 @@ class TrainingViewModel private constructor(
             distanceKm = distanceKm
         )
         sessions[index] = sessions[index].copy(exercises = sessions[index].exercises + target)
+        synchronizeCanonicalTemplate(sessions[index])
         persistTrainingState()
     }
 
@@ -573,6 +576,7 @@ class TrainingViewModel private constructor(
         sessions[index] = sessions[index].copy(
             exercises = sessions[index].exercises.filterNot { it.id == targetId }
         )
+        synchronizeCanonicalTemplate(sessions[index])
         persistTrainingState()
     }
 
@@ -584,6 +588,7 @@ class TrainingViewModel private constructor(
         sessions[index] = sessions[index].copy(exercises = sessions[index].exercises.map { target ->
             if (target.id == targetId) target.copy(sets = sets, reps = reps, weightKg = weightKg, durationMinutes = durationMinutes, distanceKm = distanceKm) else target
         })
+        synchronizeCanonicalTemplate(sessions[index])
         persistTrainingState()
     }
 
@@ -881,6 +886,7 @@ class TrainingViewModel private constructor(
                         if (target.exercise.id == "lat-pulldown") target.copy(weightKg = editedWeightKg) else target
                     }
                 )
+                synchronizeCanonicalTemplate(sessions[index])
             }
             history.add(0, "Lat pulldown progression accepted: ${displayWeight(editedWeightKg, usesMetricUnits)}")
         }
@@ -1038,6 +1044,42 @@ class TrainingViewModel private constructor(
     }
 
     private fun TrainingSession.toCanonicalTemplate() = WorkoutTemplate(id, name, exercises, guidance)
+
+    private fun synchronizeCanonicalTemplate(session: TrainingSession) {
+        val index = workoutTemplates.indexOfFirst { it.id == session.id }
+        if (index < 0) {
+            workoutTemplates += if (session.id.isTypedUuid("workout-")) {
+                WorkoutTemplate.userCreated(
+                    name = session.name,
+                    exercises = session.exercises,
+                    guidance = session.guidance,
+                    id = session.id
+                )
+            } else {
+                session.toCanonicalTemplate()
+            }
+        } else {
+            workoutTemplates[index] = workoutTemplates[index].copy(
+                name = session.name,
+                exercises = session.exercises,
+                guidance = session.guidance
+            )
+        }
+    }
+
+    private fun assignCanonicalWeekday(session: TrainingSession) {
+        val existingAssignments = weeklyDayPlans
+            .firstOrNull { it.weekday == session.weekday }
+            ?.templateIds
+            .orEmpty()
+        val updatedPlans = replaceDayAssignments(
+            plans = weeklyDayPlans,
+            weekday = session.weekday,
+            templateIds = existingAssignments + session.id
+        )
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(updatedPlans)
+    }
 
     private fun List<TrainingSession>.toCanonicalWeeklyDayPlans(): List<WeeklyDayPlan> =
         groupBy(TrainingSession::weekday).map { (weekday, sameDay) ->
