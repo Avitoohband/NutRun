@@ -2,13 +2,42 @@ package com.avitoohband.nutrun
 
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.util.UUID
+
+enum class WorkoutTemplateOrigin { BUILT_IN, USER_CREATED }
 
 data class WorkoutTemplate(
     val id: String,
     val name: String,
     val exercises: List<ExerciseTarget> = emptyList(),
-    val guidance: List<String> = emptyList()
-)
+    val guidance: List<String> = emptyList(),
+    val origin: WorkoutTemplateOrigin = WorkoutTemplateOrigin.BUILT_IN
+) {
+    val isUserCreated: Boolean
+        get() = origin == WorkoutTemplateOrigin.USER_CREATED
+
+    init {
+        require(!isUserCreated || id.isCanonicalUuid()) { "User-created workout IDs must be UUIDs" }
+    }
+
+    companion object {
+        fun userCreated(
+            name: String,
+            exercises: List<ExerciseTarget> = emptyList(),
+            guidance: List<String> = emptyList(),
+            id: String = UUID.randomUUID().toString()
+        ): WorkoutTemplate = WorkoutTemplate(
+            id = id,
+            name = name,
+            exercises = exercises,
+            guidance = guidance,
+            origin = WorkoutTemplateOrigin.USER_CREATED
+        )
+    }
+}
+
+private fun String.isCanonicalUuid(): Boolean =
+    runCatching { UUID.fromString(this).toString() == this }.getOrDefault(false)
 
 data class WeeklyDayPlan(
     val weekday: DayOfWeek,
@@ -26,14 +55,24 @@ data class DefaultTrainingProgram(
     val dayPlans: List<WeeklyDayPlan>
 )
 
+private fun normalizeWeeklyDayPlans(plans: List<WeeklyDayPlan>): List<WeeklyDayPlan> =
+    plans.distinctBy(WeeklyDayPlan::weekday)
+
+private fun List<WeeklyDayPlan>.requireUniqueWeekdays() {
+    require(map(WeeklyDayPlan::weekday).distinct().size == size) {
+        "Weekly plans must contain one entry per weekday"
+    }
+}
+
 fun replaceDayAssignments(
     plans: List<WeeklyDayPlan>,
     weekday: DayOfWeek,
     templateIds: List<String>
 ): List<WeeklyDayPlan> {
     val replacement = WeeklyDayPlan(weekday, templateIds.distinct())
-    val index = plans.indexOfFirst { it.weekday == weekday }
-    return if (index == -1) plans + replacement else plans.mapIndexed { planIndex, plan ->
+    val normalizedPlans = normalizeWeeklyDayPlans(plans)
+    val index = normalizedPlans.indexOfFirst { it.weekday == weekday }
+    return if (index == -1) normalizedPlans + replacement else normalizedPlans.mapIndexed { planIndex, plan ->
         if (planIndex == index) replacement else plan
     }
 }
@@ -43,8 +82,9 @@ fun markRestDay(
     weekday: DayOfWeek
 ): List<WeeklyDayPlan> {
     val replacement = WeeklyDayPlan(weekday, isRestDay = true)
-    val index = plans.indexOfFirst { it.weekday == weekday }
-    return if (index == -1) plans + replacement else plans.mapIndexed { planIndex, plan ->
+    val normalizedPlans = normalizeWeeklyDayPlans(plans)
+    val index = normalizedPlans.indexOfFirst { it.weekday == weekday }
+    return if (index == -1) normalizedPlans + replacement else normalizedPlans.mapIndexed { planIndex, plan ->
         if (planIndex == index) replacement else plan
     }
 }
@@ -55,6 +95,7 @@ fun templatesForDate(
     overrides: List<TrainingScheduleOverride>,
     date: LocalDate
 ): List<WorkoutTemplate> {
+    plans.requireUniqueWeekdays()
     val movedFromDate = overrides
         .filter { it.originalDate == date }
         .map(TrainingScheduleOverride::sessionId)

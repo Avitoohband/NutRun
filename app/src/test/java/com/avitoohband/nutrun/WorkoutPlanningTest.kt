@@ -86,4 +86,68 @@ class WorkoutPlanningTest {
             ExerciseTarget("too-many", exercise, sets = 21)
         }
     }
+
+    @Test
+    fun userCreatedWorkoutGetsCanonicalUuidBackedId() {
+        val workout = WorkoutTemplate.userCreated("Custom workout")
+
+        assertTrue(workout.isUserCreated)
+        assertEquals(workout.id, java.util.UUID.fromString(workout.id).toString())
+    }
+
+    @Test
+    fun userCreatedWorkoutRejectsNonUuidId() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            WorkoutTemplate.userCreated(name = "Custom workout", id = "not-a-uuid")
+        }
+    }
+
+    @Test
+    fun replaceDayAssignmentsNormalizesDuplicateWeekdays() {
+        val plans = replaceDayAssignments(
+            listOf(
+                WeeklyDayPlan(DayOfWeek.MONDAY, listOf("push")),
+                WeeklyDayPlan(DayOfWeek.TUESDAY, listOf("walk")),
+                WeeklyDayPlan(DayOfWeek.MONDAY, listOf("pull"))
+            ),
+            DayOfWeek.MONDAY,
+            listOf("legs")
+        )
+
+        assertEquals(
+            listOf(
+                WeeklyDayPlan(DayOfWeek.MONDAY, listOf("legs")),
+                WeeklyDayPlan(DayOfWeek.TUESDAY, listOf("walk"))
+            ),
+            plans
+        )
+    }
+
+    @Test
+    fun markRestDayNormalizesDuplicateWeekdays() {
+        val plans = markRestDay(
+            listOf(
+                WeeklyDayPlan(DayOfWeek.MONDAY, listOf("push")),
+                WeeklyDayPlan(DayOfWeek.MONDAY, listOf("pull"))
+            ),
+            DayOfWeek.MONDAY
+        )
+
+        assertEquals(listOf(WeeklyDayPlan(DayOfWeek.MONDAY, isRestDay = true)), plans)
+    }
+
+    @Test
+    fun templatesForDateRejectsDuplicateWeekdays() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            templatesForDate(
+                listOf(WorkoutTemplate("push", "Push"), WorkoutTemplate("pull", "Pull")),
+                listOf(
+                    WeeklyDayPlan(DayOfWeek.SUNDAY, listOf("push")),
+                    WeeklyDayPlan(DayOfWeek.SUNDAY, listOf("pull"))
+                ),
+                emptyList(),
+                sunday
+            )
+        }
+    }
 }
