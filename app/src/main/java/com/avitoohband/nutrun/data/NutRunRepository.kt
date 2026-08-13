@@ -34,6 +34,33 @@ internal suspend fun <T> withExpectedRepositoryAccount(
     return write(expectedAccountId)
 }
 
+internal fun hydrationPlanSnapshotForAccount(
+    accountId: String,
+    row: HydrationPlanEntity?
+): HydrationPlanEntity = row
+    ?.takeIf { it.userId == accountId }
+    ?: defaultHydrationPlan(accountId)
+
+internal fun trainingReminderSettingsSnapshotForAccount(
+    accountId: String,
+    row: TrainingReminderSettingsEntity?
+): TrainingReminderSettingsEntity = row
+    ?.takeIf { it.userId == accountId }
+    ?: TrainingReminderSettingsEntity(
+        id = "training-reminders:$accountId",
+        userId = accountId
+    )
+
+internal fun supplementReminderSettingsSnapshotForAccount(
+    accountId: String,
+    row: SupplementReminderSettingsEntity?
+): SupplementReminderSettingsEntity = row
+    ?.takeIf { it.userId == accountId }
+    ?: SupplementReminderSettingsEntity(
+        id = "supplement-reminders:$accountId",
+        userId = accountId
+    )
+
 @Singleton
 @OptIn(ExperimentalCoroutinesApi::class)
 class NutRunRepository @Inject constructor(
@@ -61,17 +88,35 @@ class NutRunRepository @Inject constructor(
         id?.let(dao::observeFoodTemplates) ?: flowOf(emptyList())
     }
 
-    val hydrationPlan = userId.flatMapLatest { id ->
-        id?.let(dao::observeHydrationPlan) ?: flowOf(null)
-    }.map { it ?: HydrationPlanEntity() }
+    val hydrationPlan = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(HydrationPlanEntity())
+        } else {
+            dao.observeHydrationPlan(accountId).map { row ->
+                hydrationPlanSnapshotForAccount(accountId, row)
+            }
+        }
+    }
 
-    val trainingReminderSettings = userId.flatMapLatest { id ->
-        id?.let(dao::observeTrainingReminderSettings) ?: flowOf(null)
-    }.map { it ?: TrainingReminderSettingsEntity() }
+    val trainingReminderSettings = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(TrainingReminderSettingsEntity())
+        } else {
+            dao.observeTrainingReminderSettings(accountId).map { row ->
+                trainingReminderSettingsSnapshotForAccount(accountId, row)
+            }
+        }
+    }
 
-    val supplementReminderSettings = userId.flatMapLatest { id ->
-        id?.let(dao::observeSupplementReminderSettings) ?: flowOf(null)
-    }.map { it ?: SupplementReminderSettingsEntity() }
+    val supplementReminderSettings = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(SupplementReminderSettingsEntity())
+        } else {
+            dao.observeSupplementReminderSettings(accountId).map { row ->
+                supplementReminderSettingsSnapshotForAccount(accountId, row)
+            }
+        }
+    }
 
     val walks = userId.flatMapLatest { id ->
         id?.let(dao::observeWalks) ?: flowOf(emptyList())

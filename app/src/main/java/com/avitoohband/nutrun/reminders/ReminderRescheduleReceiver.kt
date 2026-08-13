@@ -58,6 +58,31 @@ suspend fun rescheduleReminderSystems(
     return ReminderRescheduleOutcome(failed)
 }
 
+suspend fun rescheduleReminderSystemsWithRecovery(
+    userId: String,
+    hydration: suspend () -> Unit,
+    training: suspend () -> Unit,
+    supplements: suspend () -> Unit,
+    scheduleRecovery: suspend (String, ReminderSystem) -> Unit,
+    systems: Set<ReminderSystem> = ReminderSystem.entries.toSet()
+): ReminderRescheduleOutcome {
+    val outcome = rescheduleReminderSystems(
+        hydration = hydration,
+        training = training,
+        supplements = supplements,
+        systems = systems
+    )
+    outcome.failedSystems.forEach { system ->
+        try {
+            scheduleRecovery(userId, system)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+        }
+    }
+    return outcome
+}
+
 interface ReminderRescheduleReceiverRuntime {
     fun launch(receiver: BroadcastReceiver, work: suspend () -> Unit)
 }

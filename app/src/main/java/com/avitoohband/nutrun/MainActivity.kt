@@ -661,6 +661,7 @@ private fun TodayScreen(
     onSupplementsFocusConsumed: (Long) -> Unit = {}
 ) {
     val profile = state.profile ?: return
+    val trainingReady = training.trainingMutationsReady
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -683,7 +684,10 @@ private fun TodayScreen(
         onSupplementsFocusConsumed(requestId)
     }
     var addSupplement by remember { mutableStateOf(false) }
-    if (addSupplement) {
+    LaunchedEffect(trainingReady) {
+        if (!trainingReady) addSupplement = false
+    }
+    if (addSupplement && trainingReady) {
         AddSupplementDialog(
             onDismiss = { addSupplement = false },
             onAdd = { name, dose, schedule, reminderEnabled, reminderMinute ->
@@ -774,15 +778,24 @@ private fun TodayScreen(
                 )
                 TextButton(
                     onClick = onManageSupplements,
+                    enabled = trainingReady,
                     modifier = Modifier.testTag("manage-supplements")
                 ) {
                     Text("Manage")
                 }
-                IconButton(onClick = { addSupplement = true }) { Icon(Icons.Default.Add, "Add supplement") }
+                IconButton(
+                    onClick = { addSupplement = true },
+                    enabled = trainingReady
+                ) {
+                    Icon(Icons.Default.Add, "Add supplement")
+                }
             }
         }
         val today = LocalDate.now()
-        val dueSupplements = dueSupplementsForDate(training.supplements, today)
+        val dueSupplements = if (trainingReady) dueSupplementsForDate(training.supplements, today) else emptyList()
+        if (!trainingReady) item {
+            Text("Loading supplements...", modifier = Modifier.testTag("today-supplements-loading"))
+        }
         items(dueSupplements, key = { it.id }) { supplement ->
             val completed = supplement.isCompletedOn(today)
             Card(
@@ -801,7 +814,8 @@ private fun TodayScreen(
                 ) {
                     Checkbox(
                         checked = completed,
-                        onCheckedChange = { training.toggleSupplement(supplement.id, it) }
+                        onCheckedChange = { training.toggleSupplement(supplement.id, it) },
+                        enabled = trainingReady
                     )
                     Column {
                         val color = if (completed) {
@@ -824,6 +838,7 @@ private fun SupplementsScreen(
     training: TrainingViewModel,
     onBack: () -> Unit
 ) {
+    val trainingReady = training.trainingMutationsReady
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -840,6 +855,36 @@ private fun SupplementsScreen(
     var addSupplement by remember { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<Supplement?>(null) }
     var editingSupplement by remember { mutableStateOf<Supplement?>(null) }
+
+    LaunchedEffect(trainingReady) {
+        if (!trainingReady) {
+            addSupplement = false
+            pendingRemoval = null
+            editingSupplement = null
+        }
+    }
+    if (!trainingReady) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .testTag("supplements-loading")
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                }
+                Text("Manage supplements", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Loading supplements...")
+            }
+        }
+        return
+    }
 
     if (addSupplement) {
         AddSupplementDialog(
@@ -978,6 +1023,16 @@ private fun SupplementsScreen(
 
 @Composable
 internal fun TrainingScreen(model: TrainingViewModel) {
+    if (!model.trainingMutationsReady) {
+        Box(
+            modifier = Modifier.fillMaxSize().testTag("training-loading"),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Loading training...")
+        }
+        return
+    }
+
     var addSession by remember { mutableStateOf(false) }
     var editSessionId by remember { mutableStateOf<String?>(null) }
     var editRestTimer by remember { mutableStateOf(false) }
@@ -2967,35 +3022,61 @@ private fun NotificationSettingsScreen(
 ) {
     val context = LocalContext.current
     val accountId = state.session.authenticatedUserId
-    var waterEnabled by rememberSaveable(accountId, state.hydrationPlan.remindersEnabled) {
+    var waterEnabled by rememberSaveable(
+        accountId,
+        state.hydrationPlan.userId,
+        state.hydrationPlan.remindersEnabled
+    ) {
         mutableStateOf(state.hydrationPlan.remindersEnabled)
     }
-    var interval by rememberSaveable(accountId, state.hydrationPlan.intervalMinutes) {
+    var interval by rememberSaveable(
+        accountId,
+        state.hydrationPlan.userId,
+        state.hydrationPlan.intervalMinutes
+    ) {
         mutableStateOf(state.hydrationPlan.intervalMinutes.toString())
     }
-    var wakingStart by rememberSaveable(accountId, state.hydrationPlan.wakingStartMinute) {
+    var wakingStart by rememberSaveable(
+        accountId,
+        state.hydrationPlan.userId,
+        state.hydrationPlan.wakingStartMinute
+    ) {
         mutableStateOf(formatMinute(state.hydrationPlan.wakingStartMinute))
     }
-    var wakingEnd by rememberSaveable(accountId, state.hydrationPlan.wakingEndMinute) {
+    var wakingEnd by rememberSaveable(
+        accountId,
+        state.hydrationPlan.userId,
+        state.hydrationPlan.wakingEndMinute
+    ) {
         mutableStateOf(formatMinute(state.hydrationPlan.wakingEndMinute))
     }
     val training = state.trainingReminderSettings
-    var trainingEnabled by rememberSaveable(accountId, training.enabled) {
+    var trainingEnabled by rememberSaveable(accountId, training.userId, training.enabled) {
         mutableStateOf(training.enabled)
     }
-    var previousTime by rememberSaveable(accountId, training.previousDayMinute) {
+    var previousTime by rememberSaveable(accountId, training.userId, training.previousDayMinute) {
         mutableStateOf(formatMinute(training.previousDayMinute))
     }
-    var sameTime by rememberSaveable(accountId, training.sameDayMinute) {
+    var sameTime by rememberSaveable(accountId, training.userId, training.sameDayMinute) {
         mutableStateOf(formatMinute(training.sameDayMinute))
     }
     val supplementSettings = state.supplementReminderSettings
-    var supplementMasterEnabled by rememberSaveable(accountId, supplementSettings.enabled) {
+    var supplementMasterEnabled by rememberSaveable(
+        accountId,
+        supplementSettings.userId,
+        supplementSettings.enabled
+    ) {
         mutableStateOf(supplementSettings.enabled)
     }
     val supplements = trainingModel.supplements.toList()
     val readyAccountId = trainingModel.supplementReminderReadyAccountId
-    val accountReady = accountId != null && readyAccountId == accountId
+    val accountReady = notificationSettingsAccountReady(
+        accountId = accountId,
+        hydrationAccountId = state.hydrationPlan.userId,
+        trainingAccountId = training.userId,
+        supplementAccountId = supplementSettings.userId,
+        trainingPayloadAccountId = readyAccountId
+    )
     var supplementDraftState by rememberSaveable(
         stateSaver = SupplementReminderDraftStateSaver
     ) {
@@ -3066,20 +3147,47 @@ private fun NotificationSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { TextButton(onClick = onBack) { Text("Back") } }
+        if (!accountReady) {
+            item {
+                Text(
+                    "Loading notification settings...",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         item {
             Card(shape = RoundedCornerShape(8.dp)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Water reminders", Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                        Switch(waterEnabled, {
-                            waterEnabled = it
-                            if (it) requestPermission()
-                        })
+                        Switch(
+                            checked = waterEnabled,
+                            onCheckedChange = {
+                                waterEnabled = it
+                                if (it) requestPermission()
+                            },
+                            enabled = accountReady
+                        )
                     }
                     if (waterEnabled) {
-                        OutlinedTextField(interval, { interval = it.filter(Char::isDigit) }, label = { Text("Interval (minutes)") })
-                        OutlinedTextField(wakingStart, { wakingStart = it }, label = { Text("First reminder (HH:mm)") })
-                        OutlinedTextField(wakingEnd, { wakingEnd = it }, label = { Text("Last reminder (HH:mm)") })
+                        OutlinedTextField(
+                            interval,
+                            { interval = it.filter(Char::isDigit) },
+                            enabled = accountReady,
+                            label = { Text("Interval (minutes)") }
+                        )
+                        OutlinedTextField(
+                            wakingStart,
+                            { wakingStart = it },
+                            enabled = accountReady,
+                            label = { Text("First reminder (HH:mm)") }
+                        )
+                        OutlinedTextField(
+                            wakingEnd,
+                            { wakingEnd = it },
+                            enabled = accountReady,
+                            label = { Text("Last reminder (HH:mm)") }
+                        )
                     }
                 }
             }
@@ -3089,14 +3197,28 @@ private fun NotificationSettingsScreen(
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Training reminders", Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                        Switch(trainingEnabled, {
-                            trainingEnabled = it
-                            if (it) requestPermission()
-                        })
+                        Switch(
+                            checked = trainingEnabled,
+                            onCheckedChange = {
+                                trainingEnabled = it
+                                if (it) requestPermission()
+                            },
+                            enabled = accountReady
+                        )
                     }
                     if (trainingEnabled) {
-                        OutlinedTextField(previousTime, { previousTime = it }, label = { Text("Previous day (HH:mm)") })
-                        OutlinedTextField(sameTime, { sameTime = it }, label = { Text("Same day (HH:mm)") })
+                        OutlinedTextField(
+                            previousTime,
+                            { previousTime = it },
+                            enabled = accountReady,
+                            label = { Text("Previous day (HH:mm)") }
+                        )
+                        OutlinedTextField(
+                            sameTime,
+                            { sameTime = it },
+                            enabled = accountReady,
+                            label = { Text("Same day (HH:mm)") }
+                        )
                     }
                 }
             }
@@ -3198,6 +3320,18 @@ private fun parseMinute(value: String): Int? = runCatching {
     val time = LocalTime.parse(value)
     time.hour * 60 + time.minute
 }.getOrNull()
+
+internal fun notificationSettingsAccountReady(
+    accountId: String?,
+    hydrationAccountId: String,
+    trainingAccountId: String,
+    supplementAccountId: String,
+    trainingPayloadAccountId: String?
+): Boolean = accountId != null &&
+    hydrationAccountId == accountId &&
+    trainingAccountId == accountId &&
+    supplementAccountId == accountId &&
+    trainingPayloadAccountId == accountId
 
 internal fun shouldRequestSupplementReminderPermission(
     previousEnabled: Boolean?,

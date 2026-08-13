@@ -101,7 +101,13 @@ fun supplementDeliveryDecision(
         ?: SupplementDeliveryDecision.Reschedule
 }
 
-enum class SupplementNotificationDeliveryResult { Delivered, AlreadyDelivered, Retry, FinalizePending }
+enum class SupplementNotificationDeliveryResult {
+    Delivered,
+    AlreadyDelivered,
+    Retry,
+    FinalizePending,
+    Skipped
+}
 
 enum class SupplementDeliveryClaim { Available, Acquired, Pending, Posted, Delivered }
 
@@ -123,31 +129,200 @@ suspend fun claimedSupplementDelivery(
     store: SupplementDeliveryStore,
     claim: SupplementDeliveryClaimRequest,
     nowMillis: Long,
+    beforePost: suspend () -> Boolean = { true },
     postNotification: suspend () -> Unit
 ): SupplementNotificationDeliveryResult {
     return when (store.acquire(claim, nowMillis)) {
-    SupplementDeliveryClaim.Delivered -> SupplementNotificationDeliveryResult.AlreadyDelivered
-    SupplementDeliveryClaim.Posted -> SupplementNotificationDeliveryResult.FinalizePending
-    SupplementDeliveryClaim.Pending -> SupplementNotificationDeliveryResult.Retry
-    SupplementDeliveryClaim.Available -> SupplementNotificationDeliveryResult.Retry
-    SupplementDeliveryClaim.Acquired -> try {
-        postNotification()
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        runCatching { store.release(claim.id) }
-        return SupplementNotificationDeliveryResult.Retry
-    }.let {
-        val posted = runCatching { store.markPosted(claim.id) }.getOrDefault(false)
-        if (!posted) {
-            SupplementNotificationDeliveryResult.FinalizePending
-        } else if (runCatching { store.finalize(claim.id, nowMillis) }.getOrDefault(false)) {
-            SupplementNotificationDeliveryResult.Delivered
-        } else {
-            SupplementNotificationDeliveryResult.FinalizePending
+        SupplementDeliveryClaim.Delivered -> SupplementNotificationDeliveryResult.AlreadyDelivered
+        SupplementDeliveryClaim.Posted -> SupplementNotificationDeliveryResult.FinalizePending
+        SupplementDeliveryClaim.Pending -> SupplementNotificationDeliveryResult.Retry
+        SupplementDeliveryClaim.Available -> SupplementNotificationDeliveryResult.Retry
+        SupplementDeliveryClaim.Acquired -> {
+            val current = try {
+                beforePost()
+            } catch (error: CancellationException) {
+                releaseSupplementDeliveryClaim(store, claim.id)
+                throw error
+            } catch (_: Exception) {
+                releaseSupplementDeliveryClaim(store, claim.id)
+                return SupplementNotificationDeliveryResult.Retry
+            }
+            if (!current) {
+                return if (releaseSupplementDeliveryClaim(store, claim.id)) {
+                    SupplementNotificationDeliveryResult.Skipped
+                } else {
+                    SupplementNotificationDeliveryResult.Retry
+                }
+            }
+            try {
+                postNotification()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                releaseSupplementDeliveryClaim(store, claim.id)
+                return SupplementNotificationDeliveryResult.Retry
+            }
+            val posted = try {
+                store.markPosted(claim.id)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                false
+            }
+            if (!posted) {
+                SupplementNotificationDeliveryResult.FinalizePending
+            } else {
+                val finalized = try {
+                    store.finalize(claim.id, nowMillis)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    false
+                }
+                if (finalized) {
+                    SupplementNotificationDeliveryResult.Delivered
+                } else {
+                    SupplementNotificationDeliveryResult.FinalizePending
+                }
+            }
         }
     }
 }
+
+private suspend fun releaseSupplementDeliveryClaim(
+    store: SupplementDeliveryStore,
+    claimId: String
+): Boolean = try {
+    store.release(claimId)
+    true
+} catch (error: CancellationException) {
+    throw error
+} catch (_: Exception) {
+    false
+}
+
+data class SupplementDeliverySnapshot(
+    val authenticatedUserId: String?,
+    val settings: SupplementReminderSettingsEntity,
+    val currentDate: LocalDate,
+    val supplements: List<com.avitoohband.nutrun.Supplement>
+)
+
+enum class SupplementReminderExecutionResult { Success, Retry }
+
+private fun SupplementDeliverySnapshot.deliveryDecision(
+    userId: String,
+    intendedDate: LocalDate,
+    minute: Int
+): SupplementDeliveryDecision = if (settings.userId != userId) {
+    SupplementDeliveryDecision.Cancel
+} else {
+    supplementDeliveryDecision(
+        userId = userId,
+        authenticatedUserId = authenticatedUserId,
+        enabled = settings.enabled,
+        intendedDate = intendedDate,
+        currentDate = currentDate,
+        minute = minute,
+        supplements = supplements
+    )
+}
+
+private suspend fun settleSupplementReminderWork(
+    snapshot: SupplementDeliverySnapshot,
+    decision: SupplementDeliveryDecision,
+    cancel: suspend () -> Unit,
+    schedule: suspend (SupplementReminderSettingsEntity) -> Unit
+): SupplementReminderExecutionResult {
+    when (decision) {
+        SupplementDeliveryDecision.Cancel -> cancel()
+        SupplementDeliveryDecision.Reschedule,
+        is SupplementDeliveryDecision.Deliver -> schedule(snapshot.settings)
+    }
+    return SupplementReminderExecutionResult.Success
+}
+
+suspend fun executeSupplementReminderDelivery(
+    userId: String,
+    intendedDate: LocalDate,
+    minute: Int,
+    nowMillis: Long,
+    loadSnapshot: suspend () -> SupplementDeliverySnapshot,
+    alreadyDelivered: suspend () -> Boolean,
+    store: SupplementDeliveryStore,
+    notificationsAllowed: () -> Boolean,
+    postNotification: suspend (List<com.avitoohband.nutrun.Supplement>) -> Unit,
+    cancel: suspend () -> Unit,
+    schedule: suspend (SupplementReminderSettingsEntity) -> Unit
+): SupplementReminderExecutionResult {
+    val initialSnapshot = loadSnapshot()
+    val initialDecision = initialSnapshot.deliveryDecision(userId, intendedDate, minute)
+    if (initialDecision !is SupplementDeliveryDecision.Deliver) {
+        return settleSupplementReminderWork(initialSnapshot, initialDecision, cancel, schedule)
+    }
+    if (alreadyDelivered() || !notificationsAllowed()) {
+        val currentSnapshot = loadSnapshot()
+        return settleSupplementReminderWork(
+            currentSnapshot,
+            currentSnapshot.deliveryDecision(userId, intendedDate, minute),
+            cancel,
+            schedule
+        )
+    }
+
+    val preClaimSnapshot = loadSnapshot()
+    val preClaimDecision = preClaimSnapshot.deliveryDecision(userId, intendedDate, minute)
+    if (preClaimDecision !is SupplementDeliveryDecision.Deliver) {
+        return settleSupplementReminderWork(preClaimSnapshot, preClaimDecision, cancel, schedule)
+    }
+
+    var staleSnapshot: SupplementDeliverySnapshot? = null
+    var staleDecision: SupplementDeliveryDecision? = null
+    var dueAtPost: List<com.avitoohband.nutrun.Supplement>? = null
+    val deliveryResult = claimedSupplementDelivery(
+        store = store,
+        claim = SupplementDeliveryClaimRequest(
+            id = supplementDeliveryId(userId, intendedDate, minute),
+            userId = userId,
+            reminderType = "SUPPLEMENT:$minute",
+            trainingDate = intendedDate.toString()
+        ),
+        nowMillis = nowMillis,
+        beforePost = {
+            val snapshot = loadSnapshot()
+            val decision = snapshot.deliveryDecision(userId, intendedDate, minute)
+            if (decision is SupplementDeliveryDecision.Deliver) {
+                dueAtPost = decision.supplements
+                true
+            } else {
+                staleSnapshot = snapshot
+                staleDecision = decision
+                false
+            }
+        },
+        postNotification = { postNotification(checkNotNull(dueAtPost)) }
+    )
+
+    return when (deliveryResult) {
+        SupplementNotificationDeliveryResult.Retry -> SupplementReminderExecutionResult.Retry
+        SupplementNotificationDeliveryResult.Skipped -> settleSupplementReminderWork(
+            snapshot = checkNotNull(staleSnapshot),
+            decision = checkNotNull(staleDecision),
+            cancel = cancel,
+            schedule = schedule
+        )
+        SupplementNotificationDeliveryResult.Delivered,
+        SupplementNotificationDeliveryResult.AlreadyDelivered,
+        SupplementNotificationDeliveryResult.FinalizePending -> {
+            val currentSnapshot = loadSnapshot()
+            settleSupplementReminderWork(
+                currentSnapshot,
+                currentSnapshot.deliveryDecision(userId, intendedDate, minute),
+                cancel,
+                schedule
+            )
+        }
+    }
 }
 
 private val supplementDeliveryLocks = Array(32) { Mutex() }
@@ -187,85 +362,46 @@ class SupplementReminderWorker(
         val minute = inputData.getInt(KEY_MINUTE, -1)
         if (minute !in 0 until 24 * 60) return Result.success()
 
-        val scheduler = SupplementReminderScheduler(applicationContext)
         try {
             val dao = NutRunDatabase.getInstance(applicationContext).dao()
-            val settings = dao.supplementReminderSettings(userId)
-                ?: SupplementReminderSettingsEntity(userId = userId)
-            val authenticatedUserId = AppPreferences(applicationContext).currentSession().authenticatedUserId
-            val baseDecision = supplementDeliveryDecision(
-                userId = userId,
-                authenticatedUserId = authenticatedUserId,
-                enabled = settings.enabled,
-                intendedDate = intendedDate,
-                currentDate = LocalDate.now(settings.zone()),
-                minute = minute,
-                supplements = emptyList()
-            )
-            if (baseDecision == SupplementDeliveryDecision.Cancel) {
-                scheduler.cancel(userId)
-                return Result.success()
-            }
-            if (baseDecision == SupplementDeliveryDecision.Reschedule &&
-                !isSupplementDeliveryDateValid(intendedDate, LocalDate.now(settings.zone()))
-            ) {
-                scheduler.schedule(userId, settings)
-                return Result.success()
-            }
-
-            val supplements = dao.observeTrainingState(userId).first()
-                ?.let { decodeTrainingState(it.payloadJson, builtInExerciseCatalog()) }
-                ?.supplements
-                .orEmpty()
-            val deliveryDecision = supplementDeliveryDecision(
-                userId = userId,
-                authenticatedUserId = authenticatedUserId,
-                enabled = settings.enabled,
-                intendedDate = intendedDate,
-                currentDate = LocalDate.now(settings.zone()),
-                minute = minute,
-                supplements = supplements
-            )
-            val dueSupplements = when (deliveryDecision) {
-                SupplementDeliveryDecision.Cancel -> {
-                    scheduler.cancel(userId)
-                    return Result.success()
-                }
-                SupplementDeliveryDecision.Reschedule -> {
-                    scheduler.schedule(userId, settings)
-                    return Result.success()
-                }
-                is SupplementDeliveryDecision.Deliver -> deliveryDecision.supplements
+            val preferences = AppPreferences(applicationContext)
+            val scheduler = SupplementReminderScheduler(applicationContext)
+            suspend fun loadSnapshot(): SupplementDeliverySnapshot {
+                val settings = dao.supplementReminderSettings(userId)
+                    ?: SupplementReminderSettingsEntity(userId = userId)
+                val supplements = dao.observeTrainingState(userId).first()
+                    ?.let { decodeTrainingState(it.payloadJson, builtInExerciseCatalog()) }
+                    ?.supplements
+                    .orEmpty()
+                return SupplementDeliverySnapshot(
+                    authenticatedUserId = preferences.currentSession().authenticatedUserId,
+                    settings = settings,
+                    currentDate = LocalDate.now(settings.zone()),
+                    supplements = supplements
+                )
             }
 
             val reminderType = "SUPPLEMENT:$minute"
-            if (dao.reminderDelivered(userId, reminderType, intendedDate.toString())) {
-                scheduler.schedule(userId, settings)
-                return Result.success()
+            return when (
+                executeSupplementReminderDelivery(
+                    userId = userId,
+                    intendedDate = intendedDate,
+                    minute = minute,
+                    nowMillis = System.currentTimeMillis(),
+                    loadSnapshot = ::loadSnapshot,
+                    alreadyDelivered = {
+                        dao.reminderDelivered(userId, reminderType, intendedDate.toString())
+                    },
+                    store = RoomSupplementDeliveryStore(dao),
+                    notificationsAllowed = ::notificationsAllowed,
+                    postNotification = { due -> showNotification(due, userId, intendedDate, minute) },
+                    cancel = { scheduler.cancel(userId) },
+                    schedule = { settings -> scheduler.schedule(userId, settings) }
+                )
+            ) {
+                SupplementReminderExecutionResult.Success -> Result.success()
+                SupplementReminderExecutionResult.Retry -> Result.retry()
             }
-
-            if (notificationsAllowed()) {
-                when (
-                    claimedSupplementDelivery(
-                        store = RoomSupplementDeliveryStore(dao),
-                        claim = SupplementDeliveryClaimRequest(
-                            id = supplementDeliveryId(userId, intendedDate, minute),
-                            userId = userId,
-                            reminderType = reminderType,
-                            trainingDate = intendedDate.toString()
-                        ),
-                        nowMillis = System.currentTimeMillis(),
-                        postNotification = { showNotification(dueSupplements, userId, intendedDate, minute) }
-                    )
-                ) {
-                    SupplementNotificationDeliveryResult.Retry -> return Result.retry()
-                    SupplementNotificationDeliveryResult.Delivered,
-                    SupplementNotificationDeliveryResult.AlreadyDelivered,
-                    SupplementNotificationDeliveryResult.FinalizePending -> Unit
-                }
-            }
-            scheduler.schedule(userId, settings)
-            return Result.success()
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {

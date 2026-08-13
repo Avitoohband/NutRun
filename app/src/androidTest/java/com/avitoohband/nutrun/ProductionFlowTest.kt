@@ -40,6 +40,7 @@ import com.avitoohband.nutrun.data.TrainingStateEntity
 import com.avitoohband.nutrun.data.UserProfileEntity
 import com.avitoohband.nutrun.data.WalkPointEntity
 import com.avitoohband.nutrun.data.WalkSessionEntity
+import com.avitoohband.nutrun.reminders.ReminderSystem
 import java.time.Instant
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -662,6 +663,50 @@ class SupplementReminderSettingsCardComposeTest {
     }
 
     @Test
+    fun loadingReminderCardDisablesMutationNavigation() {
+        composeRule.setContent {
+            MaterialTheme {
+                SupplementReminderSettingsCard(
+                    masterEnabled = false,
+                    onMasterEnabledChange = {},
+                    supplements = emptyList(),
+                    drafts = emptyMap(),
+                    onDraftsChange = {},
+                    onPermissionRequest = {},
+                    onManageSupplements = {},
+                    loading = true
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Loading supplement reminders...").assertIsDisplayed()
+        composeRule.onNodeWithTag("supplement-reminders-master").assertIsNotEnabled()
+        composeRule.onNodeWithTag("manage-supplements-from-notifications").assertIsNotEnabled()
+    }
+
+    @Test
+    fun trainingScreenHidesMutationControlsUntilFirstPayload() {
+        val runtime = PendingTrainingRuntime()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val model = TrainingViewModel(runtime, scope)
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("training-loading").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").assertDoesNotExist()
+        runBlocking { runtime.trainingStates.emit(null) }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            model.trainingMutationsReady
+        }
+        composeRule.onNodeWithTag("training-loading").assertDoesNotExist()
+        composeRule.onNodeWithTag("training-list").assertIsDisplayed()
+        scope.cancel()
+    }
+
+    @Test
     fun notificationSaveWaitsForTheActiveTrainingRestore() {
         val runtime = PendingTrainingRuntime()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -685,6 +730,41 @@ class SupplementReminderSettingsCardComposeTest {
         }
         composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
         scope.cancel()
+    }
+
+    @Test
+    fun notificationSaveWaitsForAllNewAccountSnapshots() {
+        var hydrationAccountId by mutableStateOf("account-a")
+        var trainingAccountId by mutableStateOf("account-a")
+        var supplementAccountId by mutableStateOf("account-a")
+        var trainingPayloadAccountId by mutableStateOf("account-a")
+        composeRule.setContent {
+            MaterialTheme {
+                NotificationSettingsSaveButton(
+                    valid = true,
+                    accountReady = notificationSettingsAccountReady(
+                        accountId = "account-b",
+                        hydrationAccountId = hydrationAccountId,
+                        trainingAccountId = trainingAccountId,
+                        supplementAccountId = supplementAccountId,
+                        trainingPayloadAccountId = trainingPayloadAccountId
+                    ),
+                    persist = { NotificationSettingsSaveResult.Success("account-b") },
+                    currentAccountId = { "account-b" },
+                    onSuccess = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { hydrationAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { trainingAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { supplementAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsNotEnabled()
+        composeRule.runOnIdle { trainingPayloadAccountId = "account-b" }
+        composeRule.onNodeWithTag("save-notification-settings").assertIsEnabled()
     }
 
     @Test
@@ -832,6 +912,7 @@ class SupplementReminderSettingsCardComposeTest {
             userId: String,
             settings: SupplementReminderSettingsEntity
         ) = Unit
+        override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) = Unit
     }
 }
 

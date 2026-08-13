@@ -19,15 +19,19 @@ import com.avitoohband.nutrun.reminders.ReminderSystem
 import com.avitoohband.nutrun.reminders.ReminderWorkEnqueuer
 import com.avitoohband.nutrun.reminders.SupplementDeliveryClaim
 import com.avitoohband.nutrun.reminders.SupplementDeliveryDecision
+import com.avitoohband.nutrun.reminders.SupplementDeliverySnapshot
 import com.avitoohband.nutrun.reminders.SupplementDeliveryStore
 import com.avitoohband.nutrun.reminders.SupplementNotificationDeliveryResult
+import com.avitoohband.nutrun.reminders.SupplementReminderExecutionResult
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.SupplementReminderSchedulerStore
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduleDecision
 import com.avitoohband.nutrun.reminders.claimedSupplementDelivery
 import com.avitoohband.nutrun.reminders.deliverSupplementNotification
+import com.avitoohband.nutrun.reminders.executeSupplementReminderDelivery
 import com.avitoohband.nutrun.reminders.isSupplementDeliveryDateValid
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystems
+import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsWithRecovery
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsForUser
 import com.avitoohband.nutrun.reminders.executeReminderRecoveryAttempt
 import com.avitoohband.nutrun.reminders.supplementDeliveryId
@@ -130,6 +134,132 @@ class SupplementReminderWorkerTest {
     }
 
     @Test
+    fun staleConditionsImmediatelyBeforeClaimAvoidClaimAndPost() = runBlocking {
+        staleDeliveryCases().forEach { case ->
+            val snapshots = mutableListOf(eligibleDeliverySnapshot(), case.snapshot)
+            val store = FakeDeliveryStore()
+            var posts = 0
+            val actions = mutableListOf<String>()
+
+            val result = executeSupplementReminderDelivery(
+                userId = "user",
+                intendedDate = date,
+                minute = 480,
+                nowMillis = 1_000,
+                loadSnapshot = { snapshots.removeAt(0) },
+                alreadyDelivered = { false },
+                store = store,
+                notificationsAllowed = { true },
+                postNotification = { posts += 1 },
+                cancel = { actions += "cancel" },
+                schedule = { actions += "schedule" }
+            )
+
+            assertEquals(case.name, SupplementReminderExecutionResult.Success, result)
+            assertEquals(case.name, 0, store.acquireCalls)
+            assertEquals(case.name, 0, store.releaseCalls)
+            assertEquals(case.name, 0, posts)
+            assertEquals(case.name, listOf(case.expectedAction), actions)
+        }
+    }
+
+    @Test
+    fun staleConditionsAfterClaimReleaseWithoutPosting() = runBlocking {
+        staleDeliveryCases().forEach { case ->
+            val snapshots = mutableListOf(
+                eligibleDeliverySnapshot(),
+                eligibleDeliverySnapshot(),
+                case.snapshot
+            )
+            val store = FakeDeliveryStore()
+            var posts = 0
+            val actions = mutableListOf<String>()
+
+            val result = executeSupplementReminderDelivery(
+                userId = "user",
+                intendedDate = date,
+                minute = 480,
+                nowMillis = 1_000,
+                loadSnapshot = { snapshots.removeAt(0) },
+                alreadyDelivered = { false },
+                store = store,
+                notificationsAllowed = { true },
+                postNotification = { posts += 1 },
+                cancel = { actions += "cancel" },
+                schedule = { actions += "schedule" }
+            )
+
+            assertEquals(case.name, SupplementReminderExecutionResult.Success, result)
+            assertEquals(case.name, 1, store.acquireCalls)
+            assertEquals(case.name, 1, store.releaseCalls)
+            assertEquals(case.name, 0, posts)
+            assertEquals(case.name, listOf(case.expectedAction), actions)
+        }
+    }
+
+    @Test
+    fun freshPostSnapshotControlsNotificationContentsAndNextSchedule() = runBlocking {
+        val first = dailySupplement("Original", 480)
+        val latest = dailySupplement("Latest", 480)
+        val snapshots = mutableListOf(
+            eligibleDeliverySnapshot(listOf(first)),
+            eligibleDeliverySnapshot(listOf(first)),
+            eligibleDeliverySnapshot(listOf(latest)),
+            eligibleDeliverySnapshot(listOf(latest))
+        )
+        val posted = mutableListOf<List<String>>()
+        val scheduled = mutableListOf<com.avitoohband.nutrun.data.SupplementReminderSettingsEntity>()
+
+        val result = executeSupplementReminderDelivery(
+            userId = "user",
+            intendedDate = date,
+            minute = 480,
+            nowMillis = 1_000,
+            loadSnapshot = { snapshots.removeAt(0) },
+            alreadyDelivered = { false },
+            store = FakeDeliveryStore(),
+            notificationsAllowed = { true },
+            postNotification = { due -> posted += due.map(Supplement::name) },
+            cancel = {},
+            schedule = { scheduled += it }
+        )
+
+        assertEquals(SupplementReminderExecutionResult.Success, result)
+        assertEquals(listOf(listOf("Latest")), posted)
+        assertEquals(listOf(enabledSettings()), scheduled)
+    }
+
+    @Test
+    fun cancellationDuringPostClaimRevalidationPropagatesAndReleasesClaim() {
+        val store = FakeDeliveryStore()
+        var reads = 0
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                executeSupplementReminderDelivery(
+                    userId = "user",
+                    intendedDate = date,
+                    minute = 480,
+                    nowMillis = 1_000,
+                    loadSnapshot = {
+                        reads += 1
+                        if (reads == 3) throw CancellationException("cancelled")
+                        eligibleDeliverySnapshot()
+                    },
+                    alreadyDelivered = { false },
+                    store = store,
+                    notificationsAllowed = { true },
+                    postNotification = {},
+                    cancel = {},
+                    schedule = {}
+                )
+            }
+        }
+
+        assertEquals(1, store.releaseCalls)
+    }
+
+    @Test
     fun failedNotificationPostDoesNotWriteLedgerAndRequestsRetry() = runBlocking {
         var recordCalls = 0
 
@@ -200,6 +330,53 @@ class SupplementReminderWorkerTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun isolatedSchedulingAndRecoveryPropagateCancellation() {
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                rescheduleReminderSystemsWithRecovery(
+                    userId = "user",
+                    hydration = { throw CancellationException("scheduling cancelled") },
+                    training = {},
+                    supplements = {},
+                    scheduleRecovery = { _, _ -> }
+                )
+            }
+        }
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                rescheduleReminderSystemsWithRecovery(
+                    userId = "user",
+                    hydration = { error("hydration failed") },
+                    training = {},
+                    supplements = {},
+                    scheduleRecovery = { _, _ ->
+                        throw CancellationException("recovery cancelled")
+                    }
+                )
+            }
+        }
+    }
+
+    @Test
+    fun isolatedRecoveryAttemptsEveryFailedSystemEvenWhenOneEnqueueFails() = runBlocking {
+        val recoveryAttempts = mutableListOf<ReminderSystem>()
+
+        val outcome = rescheduleReminderSystemsWithRecovery(
+            userId = "user",
+            hydration = { error("hydration failed") },
+            training = { error("training failed") },
+            supplements = { error("supplements failed") },
+            scheduleRecovery = { _, system ->
+                recoveryAttempts += system
+                if (system == ReminderSystem.HYDRATION) error("enqueue failed")
+            }
+        )
+
+        assertEquals(ReminderSystem.entries.toSet(), outcome.failedSystems)
+        assertEquals(ReminderSystem.entries, recoveryAttempts)
     }
 
     @Test
@@ -755,6 +932,64 @@ class SupplementReminderWorkerTest {
             timezoneId = zone.id
         )
 
+    private data class StaleDeliveryCase(
+        val name: String,
+        val snapshot: SupplementDeliverySnapshot,
+        val expectedAction: String
+    )
+
+    private fun eligibleDeliverySnapshot(
+        supplements: List<Supplement> = listOf(dailySupplement("Vitamin D", 480))
+    ) = SupplementDeliverySnapshot(
+        authenticatedUserId = "user",
+        settings = enabledSettings(),
+        currentDate = date,
+        supplements = supplements
+    )
+
+    private fun staleDeliveryCases(): List<StaleDeliveryCase> {
+        val eligible = dailySupplement("Vitamin D", 480)
+        return listOf(
+            StaleDeliveryCase(
+                name = "account changed",
+                snapshot = eligibleDeliverySnapshot().copy(authenticatedUserId = "other"),
+                expectedAction = "cancel"
+            ),
+            StaleDeliveryCase(
+                name = "master disabled",
+                snapshot = eligibleDeliverySnapshot().copy(settings = enabledSettings(false)),
+                expectedAction = "cancel"
+            ),
+            StaleDeliveryCase(
+                name = "local date changed",
+                snapshot = eligibleDeliverySnapshot().copy(currentDate = date.plusDays(1)),
+                expectedAction = "schedule"
+            ),
+            StaleDeliveryCase(
+                name = "item completed",
+                snapshot = eligibleDeliverySnapshot(listOf(eligible.copy(completedOn = date))),
+                expectedAction = "schedule"
+            ),
+            StaleDeliveryCase(
+                name = "item disabled",
+                snapshot = eligibleDeliverySnapshot(listOf(eligible.copy(reminderEnabled = false))),
+                expectedAction = "schedule"
+            ),
+            StaleDeliveryCase(
+                name = "item no longer due",
+                snapshot = eligibleDeliverySnapshot(
+                    listOf(eligible.copy(schedule = eligible.schedule.copy(weekdays = setOf(DayOfWeek.TUESDAY))))
+                ),
+                expectedAction = "schedule"
+            ),
+            StaleDeliveryCase(
+                name = "no due items remain",
+                snapshot = eligibleDeliverySnapshot(emptyList()),
+                expectedAction = "schedule"
+            )
+        )
+    }
+
     private fun claim() = com.avitoohband.nutrun.reminders.SupplementDeliveryClaimRequest(
         id = "user:SUPPLEMENT:480:2026-08-10",
         userId = "user",
@@ -814,11 +1049,13 @@ class SupplementReminderWorkerTest {
         private var state = SupplementDeliveryClaim.Available
         private var claimedAtMillis = 0L
         var releaseCalls = 0
+        var acquireCalls = 0
 
         override suspend fun acquire(
             claim: com.avitoohband.nutrun.reminders.SupplementDeliveryClaimRequest,
             nowMillis: Long
         ): SupplementDeliveryClaim {
+            acquireCalls += 1
             if (state == SupplementDeliveryClaim.Pending && nowMillis - claimedAtMillis >= 15 * 60_000) {
                 state = SupplementDeliveryClaim.Available
             }

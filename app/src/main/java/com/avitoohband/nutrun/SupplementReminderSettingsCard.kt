@@ -252,6 +252,7 @@ fun SupplementReminderSettingsCard(
 
             TextButton(
                 onClick = onManageSupplements,
+                enabled = !loading,
                 modifier = Modifier.testTag("manage-supplements-from-notifications")
             ) {
                 Text("Manage supplements")

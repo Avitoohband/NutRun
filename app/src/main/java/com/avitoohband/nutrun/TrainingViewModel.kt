@@ -16,8 +16,10 @@ import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingStateEntity
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
+import com.avitoohband.nutrun.reminders.ReminderSystem
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
+import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsWithRecovery
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -56,6 +58,7 @@ internal interface TrainingViewModelRuntime {
     suspend fun currentSupplementReminderSettings(userId: String): SupplementReminderSettingsEntity?
     fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity)
     suspend fun scheduleSupplement(userId: String, settings: SupplementReminderSettingsEntity)
+    suspend fun scheduleRecovery(userId: String, system: ReminderSystem)
 }
 
 private class ProductionTrainingViewModelRuntime(
@@ -100,6 +103,10 @@ private class ProductionTrainingViewModelRuntime(
                     reminderRescheduleRecoveryScheduler
                 )
             }
+    }
+
+    override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) {
+        reminderRescheduleRecoveryScheduler?.schedule(userId, setOf(system))
     }
 }
 
@@ -154,6 +161,13 @@ class TrainingViewModel private constructor(
         private set
     var supplementReminderUpdatesReady by mutableStateOf(runtime == null)
         private set
+    val trainingMutationsReady: Boolean
+        get() = runtime == null || (
+            supplementReminderUpdatesReady &&
+                currentUserId != null &&
+                restoredUserId == currentUserId
+            )
+
     var isAuthenticated by mutableStateOf(false)
         private set
     var notificationPermissionGranted by mutableStateOf(false)
@@ -231,12 +245,14 @@ class TrainingViewModel private constructor(
     }
 
     fun updateUsesMetricUnits(metric: Boolean) {
+        if (!trainingMutationsReady) return
         if (usesMetricUnits == metric) return
         usesMetricUnits = metric
         persistTrainingState()
     }
 
     fun toggleSupplement(id: String, checked: Boolean) {
+        if (!trainingMutationsReady) return
         val index = supplements.indexOfFirst { it.id == id }
         if (index >= 0) {
             supplements[index] = supplements[index].copy(
@@ -253,6 +269,7 @@ class TrainingViewModel private constructor(
         reminderEnabled: Boolean = true,
         reminderMinute: Int = 480
     ) {
+        if (!trainingMutationsReady) return
         requireValidReminderMinute(reminderMinute)
         supplements += Supplement(
             id = id("supplement"),
@@ -266,6 +283,7 @@ class TrainingViewModel private constructor(
     }
 
     fun removeSupplement(id: String) {
+        if (!trainingMutationsReady) return
         if (supplements.removeAll { it.id == id }) {
             persistTrainingState(rescheduleSupplementReminders = true)
         }
@@ -277,6 +295,7 @@ class TrainingViewModel private constructor(
         dose: String,
         schedule: SupplementSchedule
     ) {
+        if (!trainingMutationsReady) return
         val existing = supplements.firstOrNull { it.id == id } ?: return
         updateSupplement(
             id = id,
@@ -296,6 +315,7 @@ class TrainingViewModel private constructor(
         reminderEnabled: Boolean,
         reminderMinute: Int
     ) {
+        if (!trainingMutationsReady) return
         requireValidReminderMinute(reminderMinute)
         val index = supplements.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -310,6 +330,7 @@ class TrainingViewModel private constructor(
     }
 
     fun updateSupplementReminder(id: String, enabled: Boolean, minute: Int) {
+        if (!trainingMutationsReady) return
         requireValidReminderMinute(minute)
         val index = supplements.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -321,6 +342,7 @@ class TrainingViewModel private constructor(
     }
 
     fun setAllSupplementReminders(enabled: Boolean) {
+        if (!trainingMutationsReady) return
         supplements.indices.forEach { index ->
             supplements[index] = supplements[index].copy(reminderEnabled = enabled)
         }
@@ -328,6 +350,7 @@ class TrainingViewModel private constructor(
     }
 
     internal fun updateSupplementReminders(configurations: Map<String, SupplementReminderConfig>) {
+        if (!trainingMutationsReady) return
         configurations.values.forEach { requireValidReminderMinute(it.minute) }
         supplements.indices.forEach { index ->
             configurations[supplements[index].id]?.let { config ->
@@ -497,6 +520,7 @@ class TrainingViewModel private constructor(
     }
 
     fun addSession(name: String, weekday: DayOfWeek) {
+        if (!trainingMutationsReady) return
         val session = TrainingSession(id("session"), name.trim(), weekday)
         sessions += session
         selectedSessionId = session.id
@@ -504,6 +528,7 @@ class TrainingViewModel private constructor(
     }
 
     fun selectSession(id: String) {
+        if (!trainingMutationsReady) return
         selectedSessionId = id
         persistTrainingState()
     }
@@ -516,6 +541,7 @@ class TrainingViewModel private constructor(
         durationMinutes: Int? = exercise.defaultDurationMinutes,
         distanceKm: Double? = exercise.defaultDistanceKm
     ) {
+        if (!trainingMutationsReady) return
         val sessionId = selectedSessionId ?: return
         val index = sessions.indexOfFirst { it.id == sessionId }
         if (index < 0) return
@@ -534,6 +560,7 @@ class TrainingViewModel private constructor(
     }
 
     fun removeExerciseFromSelectedSession(targetId: String) {
+        if (!trainingMutationsReady) return
         val sessionId = selectedSessionId ?: return
         val index = sessions.indexOfFirst { it.id == sessionId }
         if (index < 0) return
@@ -544,6 +571,7 @@ class TrainingViewModel private constructor(
     }
 
     fun updateSelectedExercise(targetId: String, sets: Int, reps: Int, weightKg: Double?, durationMinutes: Int?, distanceKm: Double?) {
+        if (!trainingMutationsReady) return
         val sessionId = selectedSessionId ?: return
         val index = sessions.indexOfFirst { it.id == sessionId }
         if (index < 0) return
@@ -554,6 +582,7 @@ class TrainingViewModel private constructor(
     }
 
     fun startWorkout(sessionId: String) {
+        if (!trainingMutationsReady) return
         val session = sessions.firstOrNull { it.id == sessionId } ?: return
         if (session.exercises.isEmpty()) return
         val startedAt = System.currentTimeMillis()
@@ -587,6 +616,7 @@ class TrainingViewModel private constructor(
         rpe: Double?,
         completed: Boolean
     ) {
+        if (!trainingMutationsReady) return
         require(reps == null || reps in 0..1_000)
         require(weightKg == null || weightKg in 0.0..2_000.0)
         require(durationSeconds == null || durationSeconds in 0..86_400)
@@ -647,24 +677,29 @@ class TrainingViewModel private constructor(
         }
 
     fun updateDefaultRestTimerSeconds(seconds: Int) {
+        if (!trainingMutationsReady) return
         defaultRestTimerSeconds = seconds.coerceIn(15, 600)
         persistTrainingState()
     }
 
     fun startRestTimer(seconds: Int = defaultRestTimerSeconds) {
+        if (!trainingMutationsReady) return
         restTimerEndAtMillis = System.currentTimeMillis() + seconds.coerceAtLeast(1) * 1_000L
     }
 
     fun addRestTime(seconds: Int = 30) {
+        if (!trainingMutationsReady) return
         restTimerEndAtMillis = (restTimerEndAtMillis ?: System.currentTimeMillis()) +
             seconds.coerceAtLeast(1) * 1_000L
     }
 
     fun skipRestTimer() {
+        if (!trainingMutationsReady) return
         restTimerEndAtMillis = null
     }
 
     fun toggleExerciseComplete(targetId: String, completed: Boolean) {
+        if (!trainingMutationsReady) return
         val session = activeSession()
         val target = session?.exercises?.firstOrNull { it.id == targetId }
         if (completed && target?.alternativeGroupId != null) {
@@ -680,6 +715,7 @@ class TrainingViewModel private constructor(
     }
 
     fun finishWorkout() {
+        if (!trainingMutationsReady) return
         val session = activeSession() ?: return
         val completed = session.completedLogicalTargetCount(completedExerciseIds)
         val total = session.logicalTargetCount()
@@ -712,6 +748,7 @@ class TrainingViewModel private constructor(
     }
 
     fun cancelWorkout() {
+        if (!trainingMutationsReady) return
         activeWorkoutSessionId = null
         activeWorkoutStartedAtMillis = null
         completedExerciseIds.clear()
@@ -721,6 +758,7 @@ class TrainingViewModel private constructor(
     }
 
     fun updateWorkoutRecord(updated: WorkoutRecord) {
+        if (!trainingMutationsReady) return
         val index = workoutHistory.indexOfFirst { it.id == updated.id }
         if (index < 0) return
         val previous = workoutHistory[index]
@@ -743,6 +781,7 @@ class TrainingViewModel private constructor(
     }
 
     fun deleteWorkoutRecord(id: String) {
+        if (!trainingMutationsReady) return
         val index = workoutHistory.indexOfFirst { it.id == id }
         if (index < 0) return
         val removed = workoutHistory.removeAt(index)
@@ -774,6 +813,7 @@ class TrainingViewModel private constructor(
     fun activeSession(): TrainingSession? = sessions.firstOrNull { it.id == activeWorkoutSessionId }
 
     fun dismissWorkoutSummary() {
+        if (!trainingMutationsReady) return
         lastWorkoutSummary = null
         persistTrainingState()
     }
@@ -792,6 +832,7 @@ class TrainingViewModel private constructor(
         }
 
     fun rescheduleSession(sessionId: String, originalDate: LocalDate, scheduledDate: LocalDate) {
+        if (!trainingMutationsReady) return
         require(!scheduledDate.isBefore(LocalDate.now().minusYears(1)))
         scheduleOverrides.removeAll {
             it.sessionId == sessionId && it.originalDate == originalDate
@@ -805,6 +846,7 @@ class TrainingViewModel private constructor(
     }
 
     fun skipSession(sessionId: String, originalDate: LocalDate) {
+        if (!trainingMutationsReady) return
         scheduleOverrides.removeAll {
             it.sessionId == sessionId && it.originalDate == originalDate
         }
@@ -823,6 +865,7 @@ class TrainingViewModel private constructor(
         weeklyTrainingVolume(workoutHistory, weekStart)
 
     fun decideSuggestion(decision: SuggestionDecision, editedWeightKg: Double = suggestedWeightKg) {
+        if (!trainingMutationsReady) return
         suggestionDecision = decision
         suggestedWeightKg = editedWeightKg
         if (decision == SuggestionDecision.ACCEPTED) {
@@ -881,25 +924,43 @@ class TrainingViewModel private constructor(
                     return@withLock
                 }
 
-                targetRuntime.currentTrainingReminderSettings(userId)?.let { settings ->
-                    targetRuntime.scheduleTraining(userId, settings)
+                val scheduleSupplements =
+                    supplementReschedulePending && !operation.supplementRescheduleCompleted
+                val systems = if (scheduleSupplements) {
+                    setOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS)
+                } else {
+                    setOf(ReminderSystem.TRAINING)
                 }
-                if (supplementReschedulePending) {
-                    if (!operation.supplementRescheduleCompleted) {
+                val scheduling = rescheduleReminderSystemsWithRecovery(
+                    userId = userId,
+                    hydration = {},
+                    training = {
+                        val settings = targetRuntime.currentTrainingReminderSettings(userId)
+                            ?: TrainingReminderSettingsEntity(userId = userId)
+                        targetRuntime.scheduleTraining(userId, settings)
+                    },
+                    supplements = {
                         rescheduleSupplementReminders(userId, targetRuntime)
-                        if (
-                            generation != persistenceGeneration ||
-                            targetRuntime.currentUserId() != userId ||
-                            currentUserId != userId
-                        ) {
-                            return@withLock
-                        }
-                        operation = operation.copy(supplementRescheduleCompleted = true)
-                        retainPersistenceOperation(operation)
-                    }
-                    if (generation == persistenceGeneration) {
-                        supplementReschedulePending = false
-                    }
+                    },
+                    scheduleRecovery = targetRuntime::scheduleRecovery,
+                    systems = systems
+                )
+                if (
+                    generation != persistenceGeneration ||
+                    targetRuntime.currentUserId() != userId ||
+                    currentUserId != userId
+                ) {
+                    return@withLock
+                }
+                if (
+                    scheduleSupplements &&
+                    ReminderSystem.SUPPLEMENTS !in scheduling.failedSystems
+                ) {
+                    operation = operation.copy(supplementRescheduleCompleted = true)
+                    retainPersistenceOperation(operation)
+                }
+                if (supplementReschedulePending && operation.supplementRescheduleCompleted) {
+                    supplementReschedulePending = false
                 }
             }
         }

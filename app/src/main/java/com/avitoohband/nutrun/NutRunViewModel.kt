@@ -32,6 +32,7 @@ import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
 import com.avitoohband.nutrun.reminders.ReminderSystem
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
+import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsWithRecovery
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.util.concurrent.CancellationException
@@ -84,6 +85,17 @@ data class NutRunUiState(
     val walks: List<WalkSessionEntity> = emptyList(),
     val activeWalk: WalkSessionEntity? = null
 ) {
+    val notificationSettingsReadyAccountId: String?
+        get() {
+            if (!sessionResolved) return null
+            val accountId = session.authenticatedUserId ?: return null
+            return accountId.takeIf {
+                hydrationPlan.userId == accountId &&
+                    trainingReminderSettings.userId == accountId &&
+                    supplementReminderSettings.userId == accountId
+            }
+        }
+
     val nutrition = DailyNutritionSummary(
         calories = food.sumOf { it.calories },
         proteinGrams = food.sumOf { it.proteinGrams },
@@ -138,6 +150,7 @@ internal interface NutRunViewModelReminderRuntime {
     fun scheduleHydration(plan: HydrationPlanEntity)
     fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity)
     suspend fun rescheduleSupplementReminders(userId: String)
+    suspend fun scheduleReminderRecovery(userId: String, system: ReminderSystem)
     suspend fun currentSession(): SessionPreferences
 
     suspend fun saveHydrationPlan(userId: String, plan: HydrationPlanEntity)
@@ -161,6 +174,7 @@ private class ProductionNutRunViewModelReminderRuntime(
     private val preferences: AppPreferences,
     private val hydrationScheduler: HydrationScheduler,
     private val trainingReminderScheduler: TrainingReminderScheduler,
+    private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler,
     private val supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator,
     private val authenticationGateway: AuthenticationGateway
 ) : NutRunViewModelReminderRuntime {
@@ -192,6 +206,10 @@ private class ProductionNutRunViewModelReminderRuntime(
 
     override suspend fun rescheduleSupplementReminders(userId: String) {
         supplementReminderSchedulingCoordinator.reschedule(userId)
+    }
+
+    override suspend fun scheduleReminderRecovery(userId: String, system: ReminderSystem) {
+        reminderRescheduleRecoveryScheduler.schedule(userId, setOf(system))
     }
 
     override suspend fun currentSession(): SessionPreferences = preferences.currentSession()
@@ -320,7 +338,7 @@ class NutRunViewModel internal constructor(
         viewModelScope.launch {
             state.map {
                 ReminderSettingsSnapshot(
-                    it.session.authenticatedUserId,
+                    it.notificationSettingsReadyAccountId,
                     it.hydrationPlan,
                     it.trainingReminderSettings,
                     it.supplementReminderSettings
@@ -328,15 +346,24 @@ class NutRunViewModel internal constructor(
             }.distinctUntilChanged().collect { snapshot ->
                 val userId = snapshot.userId
                 if (userId != null) {
-                    reminderRuntime.scheduleHydration(snapshot.hydration.copy(userId = userId))
-                    reminderRuntime.scheduleTraining(
-                        userId,
-                        snapshot.training.copy(
-                            userId = userId,
-                            timezoneId = java.time.ZoneId.systemDefault().id
-                        )
+                    rescheduleReminderSystemsWithRecovery(
+                        userId = userId,
+                        hydration = {
+                            reminderRuntime.scheduleHydration(snapshot.hydration)
+                        },
+                        training = {
+                            reminderRuntime.scheduleTraining(
+                                userId,
+                                snapshot.training.copy(
+                                    timezoneId = java.time.ZoneId.systemDefault().id
+                                )
+                            )
+                        },
+                        supplements = {
+                            reminderRuntime.rescheduleSupplementReminders(userId)
+                        },
+                        scheduleRecovery = reminderRuntime::scheduleReminderRecovery
                     )
-                    reminderRuntime.rescheduleSupplementReminders(userId)
                 }
             }
         }
@@ -361,6 +388,7 @@ class NutRunViewModel internal constructor(
             preferences,
             hydrationScheduler,
             trainingReminderScheduler,
+            reminderRescheduleRecoveryScheduler,
             supplementReminderSchedulingCoordinator,
             authenticationGateway
         ),

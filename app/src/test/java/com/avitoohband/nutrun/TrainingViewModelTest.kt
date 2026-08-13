@@ -5,6 +5,7 @@ import com.avitoohband.nutrun.data.SessionPreferences
 import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingStateEntity
+import com.avitoohband.nutrun.reminders.ReminderSystem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -380,6 +381,124 @@ class TrainingViewModelTest {
         assertEquals("account-a", runtime.supplementSchedules.single().first)
         assertEquals(1, runtime.savedPayloads.size)
     }
+
+    @Test
+    fun ordinaryPersistenceRecoversTrainingFailureAndStillSchedulesSupplements() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(null)
+        runtime.trainingScheduleFailure = IllegalStateException("training scheduler failed")
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+
+        model.addSupplement(
+            "Magnesium",
+            "200 mg",
+            SupplementSchedule(RecurrenceType.DAILY)
+        )
+
+        withTimeout(5_000) {
+            while (
+                runtime.recoverySchedules.isEmpty() ||
+                runtime.supplementSchedules.isEmpty()
+            ) yield()
+        }
+        assertEquals(
+            listOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS),
+            runtime.scheduleAttempts
+        )
+        assertEquals(listOf("account-a" to ReminderSystem.TRAINING), runtime.recoverySchedules)
+        assertEquals(1, runtime.supplementSchedules.size)
+    }
+
+    @Test
+    fun ordinaryPersistenceRecoversSupplementFailureAfterTrainingScheduling() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(null)
+        runtime.supplementScheduleFailure = IllegalStateException("supplement scheduler failed")
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+
+        model.addSupplement(
+            "Magnesium",
+            "200 mg",
+            SupplementSchedule(RecurrenceType.DAILY)
+        )
+
+        withTimeout(5_000) {
+            while (runtime.recoverySchedules.isEmpty()) yield()
+        }
+        assertEquals(
+            listOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS),
+            runtime.scheduleAttempts
+        )
+        assertEquals(1, runtime.trainingSchedules.size)
+        assertEquals(listOf("account-a" to ReminderSystem.SUPPLEMENTS), runtime.recoverySchedules)
+    }
+
+    @Test
+    fun addSupplementIsRejectedBeforeNullOrStoredFirstPayload() {
+        assertMutationRejectedBeforeNullAndStoredFirstPayload(
+            snapshot = { it.supplements.toList() },
+            mutate = {
+                it.addSupplement(
+                    "Pre-restore magnesium",
+                    "200 mg",
+                    SupplementSchedule(RecurrenceType.DAILY)
+                )
+            }
+        )
+    }
+
+    @Test
+    fun editSupplementIsRejectedBeforeNullOrStoredFirstPayload() {
+        assertMutationRejectedBeforeNullAndStoredFirstPayload(
+            snapshot = { it.supplements.toList() },
+            mutate = { model ->
+                val target = model.supplements.first()
+                model.updateSupplement(
+                    target.id,
+                    "${target.name} edited",
+                    target.dose,
+                    target.schedule
+                )
+            }
+        )
+    }
+
+    @Test
+    fun removeSupplementIsRejectedBeforeNullOrStoredFirstPayload() {
+        assertMutationRejectedBeforeNullAndStoredFirstPayload(
+            snapshot = { it.supplements.toList() },
+            mutate = { model -> model.removeSupplement(model.supplements.first().id) }
+        )
+    }
+
+    @Test
+    fun supplementCompletionIsRejectedBeforeNullOrStoredFirstPayload() {
+        assertMutationRejectedBeforeNullAndStoredFirstPayload(
+            snapshot = { it.supplements.toList() },
+            mutate = { model ->
+                val target = model.supplements.first()
+                model.toggleSupplement(
+                    target.id,
+                    checked = !target.isCompletedOn(LocalDate.now())
+                )
+            }
+        )
+    }
+
+    @Test
+    fun trainingMutationIsRejectedBeforeNullOrStoredFirstPayload() {
+        assertMutationRejectedBeforeNullAndStoredFirstPayload(
+            snapshot = { it.sessions.toList() },
+            mutate = { model ->
+                model.addSession("Pre-restore session", java.time.DayOfWeek.FRIDAY)
+            }
+        )
+    }
+
     @Test
     fun bulkReminderTogglePreservesTimes() {
         val model = TrainingViewModel(null, null)
@@ -761,6 +880,41 @@ class TrainingViewModelTest {
         assertNull(model.restTimerEndAtMillis)
     }
 
+    private fun <T> assertMutationRejectedBeforeNullAndStoredFirstPayload(
+        snapshot: (TrainingViewModel) -> T,
+        mutate: (TrainingViewModel) -> Unit
+    ) {
+        runBlocking {
+            val firstPayloads = listOf(
+                null,
+                TrainingStateEntity("account-a", trainingPayload("Stored"), 1L)
+            )
+            firstPayloads.forEach { firstPayload ->
+                val runtime = FakeTrainingViewModelRuntime(
+                    session = SessionPreferences(authenticatedUserId = "account-a")
+                )
+                val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+                val before = snapshot(model)
+
+                assertFalse(model.trainingMutationsReady)
+                mutate(model)
+
+                assertEquals(before, snapshot(model))
+                assertTrue(runtime.savedPayloads.isEmpty())
+                runtime.trainingStates.emit(firstPayload)
+                withTimeout(5_000) {
+                    while (!model.trainingMutationsReady) yield()
+                }
+
+                mutate(model)
+                withTimeout(5_000) {
+                    while (runtime.savedPayloads.isEmpty()) yield()
+                }
+                assertTrue(model.trainingMutationsReady)
+            }
+        }
+    }
+
     private fun weightedTargetFixture(): Triple<TrainingViewModel, TrainingSession, ExerciseTarget> {
         val model = TrainingViewModel(null, null)
         val session = model.sessions.first { it.id == "session-monday-push-biceps" }
@@ -841,6 +995,9 @@ class TrainingViewModelTest {
         val attemptedPayloads = mutableListOf<String>()
         val savedPayloads = mutableListOf<String>()
         val supplementSchedules = mutableListOf<Pair<String, SupplementReminderSettingsEntity>>()
+        val trainingSchedules = mutableListOf<Pair<String, TrainingReminderSettingsEntity>>()
+        val recoverySchedules = mutableListOf<Pair<String, ReminderSystem>>()
+        val scheduleAttempts = mutableListOf<ReminderSystem>()
         var saveGate: CompletableDeferred<Unit>? = null
         val saveStarted = CompletableDeferred<Unit>()
         var scheduleGate: CompletableDeferred<Unit>? = null
@@ -848,6 +1005,8 @@ class TrainingViewModelTest {
         private val saveControls = mutableListOf<SaveControl>()
         private var saveCallCount = 0
         var saveFailure: Throwable? = null
+        var trainingScheduleFailure: Throwable? = null
+        var supplementScheduleFailure: Throwable? = null
 
         fun prepareSave(
             gate: CompletableDeferred<Unit>? = null,
@@ -896,20 +1055,31 @@ class TrainingViewModelTest {
             sessionState.value = SessionPreferences(authenticatedUserId = accountId)
         }
 
-        override suspend fun currentTrainingReminderSettings(userId: String) = null
+        override suspend fun currentTrainingReminderSettings(userId: String) =
+            TrainingReminderSettingsEntity(userId = userId)
 
         override suspend fun currentSupplementReminderSettings(userId: String) =
             SupplementReminderSettingsEntity(userId = userId)
 
-        override fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) = Unit
+        override fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity) {
+            scheduleAttempts += ReminderSystem.TRAINING
+            trainingScheduleFailure?.let { throw it }
+            trainingSchedules += userId to settings
+        }
 
         override suspend fun scheduleSupplement(
             userId: String,
             settings: SupplementReminderSettingsEntity
         ) {
+            scheduleAttempts += ReminderSystem.SUPPLEMENTS
+            supplementScheduleFailure?.let { throw it }
             scheduleStarted.complete(Unit)
             scheduleGate?.await()
             supplementSchedules += userId to settings
+        }
+
+        override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) {
+            recoverySchedules += userId to system
         }
 
         private data class SaveControl(

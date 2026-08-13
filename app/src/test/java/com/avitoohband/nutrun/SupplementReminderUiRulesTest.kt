@@ -9,6 +9,57 @@ import org.junit.Test
 
 class SupplementReminderUiRulesTest {
     @Test
+    fun notificationSettingsReadinessRequiresEverySnapshotToMatchTheActiveAccount() {
+        val accountId = "account-b"
+
+        assertFalse(
+            notificationSettingsAccountReady(
+                accountId = accountId,
+                hydrationAccountId = "account-a",
+                trainingAccountId = accountId,
+                supplementAccountId = accountId,
+                trainingPayloadAccountId = accountId
+            )
+        )
+        assertFalse(
+            notificationSettingsAccountReady(
+                accountId = accountId,
+                hydrationAccountId = accountId,
+                trainingAccountId = "account-a",
+                supplementAccountId = accountId,
+                trainingPayloadAccountId = accountId
+            )
+        )
+        assertFalse(
+            notificationSettingsAccountReady(
+                accountId = accountId,
+                hydrationAccountId = accountId,
+                trainingAccountId = accountId,
+                supplementAccountId = "account-a",
+                trainingPayloadAccountId = accountId
+            )
+        )
+        assertFalse(
+            notificationSettingsAccountReady(
+                accountId = accountId,
+                hydrationAccountId = accountId,
+                trainingAccountId = accountId,
+                supplementAccountId = accountId,
+                trainingPayloadAccountId = "account-a"
+            )
+        )
+        assertTrue(
+            notificationSettingsAccountReady(
+                accountId = accountId,
+                hydrationAccountId = accountId,
+                trainingAccountId = accountId,
+                supplementAccountId = accountId,
+                trainingPayloadAccountId = accountId
+            )
+        )
+    }
+
+    @Test
     fun draftReconciliationRetainsExistingIdsAndOnlyAddsOrRemovesMembershipChanges() {
         val retained = Supplement(
             id = "retained",
