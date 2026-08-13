@@ -135,7 +135,7 @@ class TrainingViewModelTest {
         val reminderStarted = runtime.prepareSave()
         val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
 
-        model.updateUsesMetricUnits(false)
+        model.updateDefaultRestTimerSeconds(120)
         olderStarted.await()
         val reminderSave = async {
             model.persistSupplementReminders(
@@ -155,7 +155,7 @@ class TrainingViewModelTest {
 
         assertEquals(NotificationSettingsSaveResult.Success("account-a"), reminderSave.await())
         val persisted = decodeTrainingState(runtime.savedPayloads.last(), model.exerciseLibrary)!!
-        assertFalse(persisted.usesMetricUnits)
+        assertEquals(120, persisted.defaultRestTimerSeconds)
         assertTrue(persisted.supplements.single().reminderEnabled)
     }
 
@@ -287,7 +287,7 @@ class TrainingViewModelTest {
             )
         }
         reminderStarted.await()
-        model.updateUsesMetricUnits(false)
+        model.updateDefaultRestTimerSeconds(120)
         yield()
 
         try {
@@ -302,7 +302,7 @@ class TrainingViewModelTest {
         }
 
         val persisted = decodeTrainingState(runtime.savedPayloads.last(), model.exerciseLibrary)!!
-        assertFalse(persisted.usesMetricUnits)
+        assertEquals(120, persisted.defaultRestTimerSeconds)
         assertTrue(persisted.supplements.single().reminderEnabled)
     }
 
@@ -990,6 +990,74 @@ class TrainingViewModelTest {
         minute = reminderMinute
     )
 
+    @Test
+    fun unitPreferenceChangeDoesNotPersistTrainingStateV2() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) {
+            while (!model.trainingMutationsReady) yield()
+        }
+
+        model.updateUsesMetricUnits(false)
+        yield()
+
+        assertFalse(model.usesMetricUnits)
+        assertTrue(runtime.savedPayloads.isEmpty())
+    }
+    @Test
+    fun restoringV2CanonicalTrainingStatePreservesItAcrossCurrentViewModelSave() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val custom = Exercise(
+            id = "exercise-00000000-0000-0000-0000-000000000010",
+            name = "Custom carry",
+            category = "Custom",
+            primaryMuscles = "Grip",
+            secondaryMuscles = "",
+            instructions = "Carry steadily.",
+            safetyNote = ""
+        )
+        val assigned = WorkoutTemplate(
+            id = "assigned-template",
+            name = "Assigned",
+            exercises = listOf(ExerciseTarget("assigned-target", custom, sets = 3, reps = 12))
+        )
+        val unassigned = WorkoutTemplate("unassigned-template", "Unassigned")
+        val plans = listOf(
+            WeeklyDayPlan(java.time.DayOfWeek.MONDAY, listOf(assigned.id)),
+            WeeklyDayPlan(java.time.DayOfWeek.WEDNESDAY, listOf(assigned.id)),
+            WeeklyDayPlan(java.time.DayOfWeek.SATURDAY, isRestDay = true)
+        )
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity(
+                "account-a",
+                encodeTrainingState(
+                    customExercises = listOf(custom),
+                    workoutTemplates = listOf(assigned, unassigned),
+                    weeklyDayPlans = plans
+                ),
+                1L
+            )
+        )
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) {
+            while (!model.trainingMutationsReady) yield()
+        }
+
+        model.updateDefaultRestTimerSeconds(120)
+        withTimeout(5_000) {
+            while (runtime.savedPayloads.isEmpty()) yield()
+        }
+        val restored = requireNotNull(decodeTrainingState(runtime.savedPayloads.last(), model.exerciseLibrary))
+
+        assertEquals(listOf(custom), restored.customExercises)
+        assertEquals(listOf(assigned, unassigned), restored.workoutTemplates)
+        assertEquals(plans, restored.weeklyDayPlans)
+    }
     private fun trainingPayload(supplementName: String): String = encodeTrainingState(
         supplements = listOf(
             Supplement(

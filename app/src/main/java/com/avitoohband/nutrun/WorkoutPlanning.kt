@@ -17,7 +17,7 @@ data class WorkoutTemplate(
         get() = origin == WorkoutTemplateOrigin.USER_CREATED
 
     init {
-        require(!isUserCreated || id.isCanonicalUuid()) { "User-created workout IDs must be UUIDs" }
+        require(!isUserCreated || id.isTypedUuid("workout-")) { "User-created workout IDs must be workout-UUIDs" }
     }
 
     companion object {
@@ -25,7 +25,7 @@ data class WorkoutTemplate(
             name: String,
             exercises: List<ExerciseTarget> = emptyList(),
             guidance: List<String> = emptyList(),
-            id: String = UUID.randomUUID().toString()
+            id: String = "workout-${UUID.randomUUID()}"
         ): WorkoutTemplate = WorkoutTemplate(
             id = id,
             name = name,
@@ -36,8 +36,10 @@ data class WorkoutTemplate(
     }
 }
 
-private fun String.isCanonicalUuid(): Boolean =
-    runCatching { UUID.fromString(this).toString() == this }.getOrDefault(false)
+internal fun String.isTypedUuid(prefix: String): Boolean =
+    removePrefix(prefix).takeIf { startsWith(prefix) }
+        ?.let { value -> runCatching { UUID.fromString(value).toString() == value }.getOrDefault(false) }
+        ?: false
 
 data class WeeklyDayPlan(
     val weekday: DayOfWeek,

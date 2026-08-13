@@ -196,6 +196,13 @@ class TrainingViewModel private constructor(
     val exerciseLibrary = builtInExerciseCatalog()
     val supplements = mutableStateListOf<Supplement>().apply { addAll(defaultSupplements()) }
     val sessions = mutableStateListOf<TrainingSession>().apply { addAll(defaultSessions(exerciseLibrary)) }
+    val customExercises = mutableStateListOf<Exercise>()
+    val workoutTemplates = mutableStateListOf<WorkoutTemplate>().apply {
+        addAll(sessions.map { it.toCanonicalTemplate() })
+    }
+    val weeklyDayPlans = mutableStateListOf<WeeklyDayPlan>().apply {
+        addAll(sessions.toCanonicalWeeklyDayPlans())
+    }
     val completedExerciseIds = mutableStateMapOf<String, Boolean>()
     val history = mutableStateListOf<String>()
     val workoutHistory = mutableStateListOf<WorkoutRecord>()
@@ -248,7 +255,6 @@ class TrainingViewModel private constructor(
         if (!trainingMutationsReady) return
         if (usesMetricUnits == metric) return
         usesMetricUnits = metric
-        persistTrainingState()
     }
 
     fun toggleSupplement(id: String, checked: Boolean) {
@@ -969,7 +975,6 @@ class TrainingViewModel private constructor(
     private fun currentTrainingPayload(supplements: List<Supplement>): String =
         encodeTrainingState(
             supplements = supplements,
-            sessions = sessions,
             history = history,
             selectedSessionId = selectedSessionId,
             activeWorkoutSessionId = activeWorkoutSessionId,
@@ -982,7 +987,9 @@ class TrainingViewModel private constructor(
             activeSetLogs = activeSetLogs,
             activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis,
             defaultRestTimerSeconds = defaultRestTimerSeconds,
-            usesMetricUnits = usesMetricUnits
+            customExercises = customExercises,
+            workoutTemplates = workoutTemplates,
+            weeklyDayPlans = weeklyDayPlans
         )
 
     private suspend fun rescheduleSupplementReminders(
@@ -1002,6 +1009,12 @@ class TrainingViewModel private constructor(
         decodeTrainingState(payload, exerciseLibrary)?.let { restored ->
             supplements.clear()
             supplements.addAll(restored.supplements)
+            customExercises.clear()
+            customExercises.addAll(restored.customExercises)
+            workoutTemplates.clear()
+            workoutTemplates.addAll(restored.workoutTemplates)
+            weeklyDayPlans.clear()
+            weeklyDayPlans.addAll(restored.weeklyDayPlans)
             sessions.clear()
             sessions.addAll(restored.sessions)
             history.clear()
@@ -1020,15 +1033,27 @@ class TrainingViewModel private constructor(
             activeSetLogs.putAll(restored.activeSetLogs)
             activeWorkoutStartedAtMillis = restored.activeWorkoutStartedAtMillis
             defaultRestTimerSeconds = restored.defaultRestTimerSeconds
-            usesMetricUnits = restored.usesMetricUnits
+            restored.legacyUsesMetricUnits?.let { usesMetricUnits = it }
         }
     }
+
+    private fun TrainingSession.toCanonicalTemplate() = WorkoutTemplate(id, name, exercises, guidance)
+
+    private fun List<TrainingSession>.toCanonicalWeeklyDayPlans(): List<WeeklyDayPlan> =
+        groupBy(TrainingSession::weekday).map { (weekday, sameDay) ->
+            WeeklyDayPlan(weekday, sameDay.map(TrainingSession::id).distinct())
+        }
 
     private fun resetTrainingState() {
         supplements.clear()
         supplements.addAll(defaultSupplements())
         sessions.clear()
         sessions.addAll(defaultSessions(exerciseLibrary))
+        customExercises.clear()
+        workoutTemplates.clear()
+        workoutTemplates.addAll(sessions.map { it.toCanonicalTemplate() })
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(sessions.toCanonicalWeeklyDayPlans())
         history.clear()
         history.addAll(defaultTrainingHistory())
         workoutHistory.clear()

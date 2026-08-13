@@ -174,7 +174,15 @@ class DefaultTrainingProgramTest {
 
         assertFalse(restored.isWorkoutPaused)
         assertTrue(restored.sessions.all { it.guidance.isEmpty() })
-        assertEquals(listOf("Genuine workout - completed 4/5 exercises"), restored.history)
+        assertEquals(
+            listOf(
+                "Pull + Triceps - completed",
+                "Genuine workout - completed 4/5 exercises",
+                "Easy run - 4.2 km",
+                "Push + Biceps - completed"
+            ),
+            restored.history
+        )
         assertNull(restored.sessions.first().exercises.first().maximumDurationMinutes)
     }
 

@@ -92,13 +92,14 @@ class WorkoutPlanningTest {
         val workout = WorkoutTemplate.userCreated("Custom workout")
 
         assertTrue(workout.isUserCreated)
-        assertEquals(workout.id, java.util.UUID.fromString(workout.id).toString())
+        assertTrue(workout.id.startsWith("workout-"))
+        assertEquals(workout.id.removePrefix("workout-"), java.util.UUID.fromString(workout.id.removePrefix("workout-")).toString())
     }
 
     @Test
     fun userCreatedWorkoutRejectsNonUuidId() {
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
-            WorkoutTemplate.userCreated(name = "Custom workout", id = "not-a-uuid")
+            WorkoutTemplate.userCreated(name = "Custom workout", id = "workout-not-a-uuid")
         }
     }
 

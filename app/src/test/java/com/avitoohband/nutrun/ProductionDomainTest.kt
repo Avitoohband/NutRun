@@ -150,7 +150,7 @@ class ProductionDomainTest {
         assertEquals(135, restored.defaultRestTimerSeconds)
         assertEquals(2, JSONObject(payload).getInt("schemaVersion"))
         assertFalse(JSONObject(payload).has("usesMetricUnits"))
-        assertFalse(restored.legacyUsesMetricUnits ?: true)
+        assertNull(restored.legacyUsesMetricUnits)
     }
 
     @Test

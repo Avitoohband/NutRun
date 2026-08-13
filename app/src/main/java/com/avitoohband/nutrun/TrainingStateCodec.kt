@@ -141,16 +141,9 @@ private fun legacyDefaultSessions(exercises: List<Exercise>): List<TrainingSessi
     )
 }
 
-private val legacySampleHistory = setOf(
-    "Pull + Triceps - completed",
-    "Easy run - 4.2 km",
-    "Push + Biceps - completed"
-)
-
 fun defaultTrainingHistory(): List<String> = emptyList()
 
-fun sanitizeTrainingHistory(history: List<String>): List<String> =
-    history.filterNot(legacySampleHistory::contains)
+fun sanitizeTrainingHistory(history: List<String>): List<String> = history
 
 fun encodeTrainingState(
     supplements: List<Supplement> = emptyList(),
@@ -167,7 +160,7 @@ fun encodeTrainingState(
     activeSetLogs: Map<String, List<WorkoutSetLog>> = emptyMap(),
     activeWorkoutStartedAtMillis: Long? = null,
     defaultRestTimerSeconds: Int = 90,
-    usesMetricUnits: Boolean = true,
+    @Suppress("UNUSED_PARAMETER") usesMetricUnits: Boolean = true,
     customExercises: List<Exercise> = emptyList(),
     workoutTemplates: List<WorkoutTemplate> = emptyList(),
     weeklyDayPlans: List<WeeklyDayPlan> = emptyList()
@@ -194,7 +187,6 @@ fun encodeTrainingState(
         })
         .putNullable("activeWorkoutStartedAtMillis", activeWorkoutStartedAtMillis)
         .put("defaultRestTimerSeconds", defaultRestTimerSeconds.coerceIn(15, 600))
-        .put("legacyUsesMetricUnits", usesMetricUnits)
         .toString()
 }
 
@@ -204,13 +196,18 @@ fun decodeTrainingState(
 ): PersistedTrainingState? = runCatching {
     val root = JSONObject(payload)
     val isVersion2 = root.optInt("schemaVersion", 1) >= 2
-    val customExercises = root.optJSONArray("customExercises")?.objects()?.map(JSONObject::toExercise).orEmpty()
+    val builtInExerciseIds = exerciseLibrary.map(Exercise::id).toSet()
+    val customExercises = root.optJSONArray("customExercises")?.objects()?.map(JSONObject::toExercise)
+        ?.filter { it.id.isTypedUuid("exercise-") && it.id !in builtInExerciseIds }
+        ?.distinctBy(Exercise::id)
+        .orEmpty()
     val exerciseById = (exerciseLibrary + customExercises).associateBy(Exercise::id)
-    val legacyUsesMetricUnits = root.nullableBoolean("legacyUsesMetricUnits")
-        ?: root.takeIf { !isVersion2 }?.optBoolean("usesMetricUnits", true)
+    val legacyUsesMetricUnits = root.takeIf { !isVersion2 }?.nullableBoolean("usesMetricUnits")
     val supplements = root.optJSONArray("supplements")?.objects()?.map(JSONObject::toSupplement).orEmpty()
     val decodedTemplates = if (isVersion2) {
-        root.optJSONArray("workoutTemplates")?.objects()?.map { it.toWorkoutTemplate(exerciseById) }.orEmpty()
+        root.optJSONArray("workoutTemplates")?.objects()?.mapNotNull { item ->
+            runCatching { item.toWorkoutTemplate(exerciseById) }.getOrNull()
+        }.orEmpty()
     } else {
         root.optJSONArray("sessions")?.objects()?.map { it.toTrainingSession(exerciseById).toTemplate() }.orEmpty()
     }
@@ -243,7 +240,7 @@ fun decodeTrainingState(
     PersistedTrainingState(
         supplements = supplements,
         sessions = sessions,
-        history = sanitizeTrainingHistory(root.optJSONArray("history")?.strings().orEmpty()),
+        history = root.optJSONArray("history")?.strings().orEmpty(),
         selectedSessionId = root.nullableString("selectedSessionId"),
         activeWorkoutSessionId = root.nullableString("activeWorkoutSessionId")
             ?.takeIf { activeId -> workoutTemplates.any { it.id == activeId && it.exercises.isNotEmpty() } },

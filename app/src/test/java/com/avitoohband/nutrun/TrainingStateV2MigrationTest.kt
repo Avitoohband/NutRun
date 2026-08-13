@@ -10,7 +10,7 @@ class TrainingStateV2MigrationTest {
     @Test
     fun v2RoundTripPreservesTemplatesPlansAndCustomExercises() {
         val custom = Exercise(
-            id = "custom-1",
+            id = "exercise-00000000-0000-0000-0000-000000000001",
             name = "My carry",
             category = "Custom",
             primaryMuscles = "Grip",
@@ -71,6 +71,82 @@ class TrainingStateV2MigrationTest {
         assertEquals("valid", restored.workoutTemplates.single().id)
     }
 
+    @Test
+    fun v2OmitsUnitKeysAndOnlyLegacyPayloadsRestoreTheirValue() {
+        val v2Payload = encodeTrainingState(usesMetricUnits = false)
+        val v2Root = JSONObject(v2Payload)
+
+        assertEquals(false, v2Root.has("usesMetricUnits"))
+        assertEquals(false, v2Root.has("legacyUsesMetricUnits"))
+        assertEquals(null, requireNotNull(decodeTrainingState(v2Payload, builtInExerciseCatalog())).legacyUsesMetricUnits)
+
+        val legacyWithoutUnits = JSONObject(legacyPayload()).apply { remove("usesMetricUnits") }.toString()
+        assertEquals(null, requireNotNull(decodeTrainingState(legacyWithoutUnits, builtInExerciseCatalog())).legacyUsesMetricUnits)
+        assertEquals(false, requireNotNull(decodeTrainingState(legacyPayload(), builtInExerciseCatalog())).legacyUsesMetricUnits)
+    }
+
+    @Test
+    fun historyRoundTripsLosslesslyAcrossSchemaV2() {
+        val history = listOf("Pull + Triceps - completed", "Genuine workout - completed 4/5 exercises")
+
+        val restored = requireNotNull(decodeTrainingState(encodeTrainingState(history = history), builtInExerciseCatalog()))
+
+        assertEquals(history, restored.history)
+    }
+
+    @Test
+    fun v2RejectsMalformedCustomIdsAndBuiltInCollisions() {
+        val validCustom = Exercise(
+            "exercise-00000000-0000-0000-0000-000000000002",
+            "Valid custom",
+            "Custom",
+            "Grip",
+            "",
+            "Carry it.",
+            ""
+        )
+        val payload = JSONObject(encodeTrainingState(customExercises = listOf(validCustom)))
+        payload.getJSONArray("customExercises").put(
+            Exercise("exercise-invalid", "Bad", "Custom", "", "", "", "").toJsonForTest()
+        ).put(
+            Exercise("bench-press", "Replaced", "Custom", "", "", "", "").toJsonForTest()
+        )
+        payload.put("workoutTemplates", JSONArray().put(
+            JSONObject()
+                .put("id", "built-in-target")
+                .put("name", "Built in target")
+                .put("guidance", JSONArray())
+                .put("origin", WorkoutTemplateOrigin.BUILT_IN.name)
+                .put("exercises", JSONArray().put(
+                    JSONObject().put("id", "target").put("exerciseId", "bench-press").put("sets", 3).put("reps", 10)
+                ))
+        ))
+
+        val restored = requireNotNull(decodeTrainingState(payload.toString(), builtInExerciseCatalog()))
+
+        assertEquals(listOf(validCustom), restored.customExercises)
+        assertEquals(
+            builtInExerciseCatalog().first { it.id == "bench-press" }.name,
+            restored.workoutTemplates.single().exercises.single().exercise.name
+        )
+    }
+
+    @Test
+    fun v2RoundTripPreservesRepeatedAssignmentsAndRestDays() {
+        val template = WorkoutTemplate("repeatable", "Repeatable")
+        val plans = listOf(
+            WeeklyDayPlan(DayOfWeek.MONDAY, listOf(template.id)),
+            WeeklyDayPlan(DayOfWeek.WEDNESDAY, listOf(template.id)),
+            WeeklyDayPlan(DayOfWeek.SATURDAY, isRestDay = true)
+        )
+
+        val restored = requireNotNull(decodeTrainingState(
+            encodeTrainingState(workoutTemplates = listOf(template), weeklyDayPlans = plans),
+            builtInExerciseCatalog()
+        ))
+
+        assertEquals(plans, restored.weeklyDayPlans)
+    }
     private fun legacyPayload(): String = JSONObject()
         .put("supplements", JSONArray())
         .put("sessions", JSONArray().apply {
@@ -134,6 +210,14 @@ class TrainingStateV2MigrationTest {
         ))
         .toString()
 
+    private fun Exercise.toJsonForTest() = JSONObject()
+        .put("id", id)
+        .put("name", name)
+        .put("category", category)
+        .put("primaryMuscles", primaryMuscles)
+        .put("secondaryMuscles", secondaryMuscles)
+        .put("instructions", instructions)
+        .put("safetyNote", safetyNote)
     private fun legacySession(id: String, name: String, exerciseId: String): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
