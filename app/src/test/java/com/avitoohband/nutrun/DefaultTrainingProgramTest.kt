@@ -6,6 +6,7 @@ import com.avitoohband.nutrun.domain.HealthGoal
 import com.avitoohband.nutrun.domain.UnitSystem
 import java.time.DayOfWeek
 import java.time.LocalDate
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -118,8 +119,42 @@ class DefaultTrainingProgramTest {
                 suggestedWeightKg = 42.5
             )
         )
+        val legacySessions = JSONArray().apply {
+            sessions.forEach { session ->
+                put(
+                    JSONObject()
+                        .put("id", session.id)
+                        .put("name", session.name)
+                        .put("weekday", session.weekday.name)
+                        .put("guidance", JSONArray(session.guidance))
+                        .put("exercises", JSONArray().apply {
+                            session.exercises.forEach { target ->
+                                put(
+                                    JSONObject()
+                                        .put("id", target.id)
+                                        .put("exerciseId", target.exercise.id)
+                                        .put("sets", target.sets)
+                                        .put("reps", target.reps)
+                                        .put("maximumReps", target.maximumReps)
+                                        .put("weightKg", target.weightKg)
+                                        .put("durationMinutes", target.durationMinutes)
+                                        .put("maximumDurationMinutes", target.maximumDurationMinutes)
+                                        .put("intensityGuidance", target.intensityGuidance)
+                                        .put("alternativeGroupId", target.alternativeGroupId)
+                                        .put("distanceKm", target.distanceKm)
+                                )
+                            }
+                        })
+                )
+            }
+        }
+        payload.remove("schemaVersion")
+        payload.remove("customExercises")
+        payload.remove("workoutTemplates")
+        payload.remove("weeklyDayPlans")
+        payload.put("sessions", legacySessions)
         payload.put("isWorkoutPaused", true)
-        payload.getJSONArray("sessions").let { encodedSessions ->
+        legacySessions.let { encodedSessions ->
             repeat(encodedSessions.length()) { sessionIndex ->
                 val encodedSession = encodedSessions.getJSONObject(sessionIndex)
                 encodedSession.remove("guidance")

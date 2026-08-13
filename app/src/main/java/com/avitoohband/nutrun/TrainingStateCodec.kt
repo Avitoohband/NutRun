@@ -20,6 +20,10 @@ data class PersistedTrainingState(
     val activeSetLogs: Map<String, List<WorkoutSetLog>>,
     val activeWorkoutStartedAtMillis: Long?,
     val defaultRestTimerSeconds: Int,
+    val customExercises: List<Exercise>,
+    val workoutTemplates: List<WorkoutTemplate>,
+    val weeklyDayPlans: List<WeeklyDayPlan>,
+    val legacyUsesMetricUnits: Boolean?,
     val usesMetricUnits: Boolean
 )
 
@@ -149,231 +153,291 @@ fun sanitizeTrainingHistory(history: List<String>): List<String> =
     history.filterNot(legacySampleHistory::contains)
 
 fun encodeTrainingState(
-    supplements: List<Supplement>,
-    sessions: List<TrainingSession>,
-    history: List<String>,
-    selectedSessionId: String?,
-    activeWorkoutSessionId: String?,
-    @Suppress("UNUSED_PARAMETER") isWorkoutPaused: Boolean,
-    completedExerciseIds: Map<String, Boolean>,
-    suggestionDecision: SuggestionDecision,
-    suggestedWeightKg: Double,
+    supplements: List<Supplement> = emptyList(),
+    sessions: List<TrainingSession> = emptyList(),
+    history: List<String> = emptyList(),
+    selectedSessionId: String? = null,
+    activeWorkoutSessionId: String? = null,
+    @Suppress("UNUSED_PARAMETER") isWorkoutPaused: Boolean = false,
+    completedExerciseIds: Map<String, Boolean> = emptyMap(),
+    suggestionDecision: SuggestionDecision = SuggestionDecision.PENDING,
+    suggestedWeightKg: Double = 42.5,
     workoutHistory: List<WorkoutRecord> = emptyList(),
     scheduleOverrides: List<TrainingScheduleOverride> = emptyList(),
     activeSetLogs: Map<String, List<WorkoutSetLog>> = emptyMap(),
     activeWorkoutStartedAtMillis: Long? = null,
     defaultRestTimerSeconds: Int = 90,
-    usesMetricUnits: Boolean = true
-): String = JSONObject()
-    .put("supplements", JSONArray().apply {
-        supplements.forEach { supplement ->
-            put(
-                JSONObject()
-                    .put("id", supplement.id)
-                    .put("name", supplement.name)
-                    .put("dose", supplement.dose)
-                    .putNullable("completedOn", supplement.completedOn?.toString())
-                    .put("reminderEnabled", supplement.reminderEnabled)
-                    .put("reminderMinute", supplement.reminderMinute)
-                    .put("scheduleType", supplement.schedule.type.name)
-                    .put("startDate", supplement.schedule.startDate.toString())
-                    .put("intervalDays", supplement.schedule.intervalDays)
-                    .put(
-                        "weekdays",
-                        JSONArray(supplement.schedule.weekdays.map(DayOfWeek::name))
-                    )
-            )
-        }
-    })
-    .put("sessions", JSONArray().apply {
-        sessions.forEach { session ->
-            put(
-                JSONObject()
-                    .put("id", session.id)
-                    .put("name", session.name)
-                    .put("weekday", session.weekday.name)
-                    .put("guidance", JSONArray(session.guidance))
-                    .put("exercises", JSONArray().apply {
-                        session.exercises.forEach { target ->
-                            put(
-                                JSONObject()
-                                    .put("id", target.id)
-                                    .put("exerciseId", target.exercise.id)
-                                    .put("sets", target.sets)
-                                    .put("reps", target.reps)
-                                    .putNullable("maximumReps", target.maximumReps)
-                                    .putNullable("weightKg", target.weightKg)
-                                    .putNullable("durationMinutes", target.durationMinutes)
-                                    .putNullable("maximumDurationMinutes", target.maximumDurationMinutes)
-                                    .putNullable("intensityGuidance", target.intensityGuidance)
-                                    .putNullable("alternativeGroupId", target.alternativeGroupId)
-                                    .putNullable("distanceKm", target.distanceKm)
-                            )
-                        }
-                    })
-            )
-        }
-    })
-    .put("history", JSONArray(history))
-    .putNullable("selectedSessionId", selectedSessionId)
-    .putNullable("activeWorkoutSessionId", activeWorkoutSessionId)
-    .put("isWorkoutPaused", false)
-    .put("completedExerciseIds", JSONObject(completedExerciseIds))
-    .put("suggestionDecision", suggestionDecision.name)
-    .put("suggestedWeightKg", suggestedWeightKg)
-    .put("workoutHistory", JSONArray().apply {
-        workoutHistory.forEach { workout ->
-            put(
-                JSONObject()
-                    .put("id", workout.id)
-                    .put("sessionId", workout.sessionId)
-                    .put("sessionName", workout.sessionName)
-                    .put("performedOn", workout.performedOn.toString())
-                    .put("startedAtMillis", workout.startedAtMillis)
-                    .put("finishedAtMillis", workout.finishedAtMillis)
-                    .put("completedTargetIds", JSONArray(workout.completedTargetIds.toList()))
-                    .put("completedLogicalTargets", workout.completedLogicalTargets)
-                    .put("totalLogicalTargets", workout.totalLogicalTargets)
-                    .put("sets", JSONArray(workout.sets.map(WorkoutSetLog::toJson)))
-            )
-        }
-    })
-    .put("scheduleOverrides", JSONArray().apply {
-        scheduleOverrides.forEach { override ->
-            put(
-                JSONObject()
-                    .put("sessionId", override.sessionId)
-                    .put("originalDate", override.originalDate.toString())
-                    .putNullable("scheduledDate", override.scheduledDate?.toString())
-                    .put("skipped", override.skipped)
-            )
-        }
-    })
-    .put("activeSetLogs", JSONObject().apply {
-        activeSetLogs.forEach { (targetId, sets) ->
-            put(targetId, JSONArray(sets.map(WorkoutSetLog::toJson)))
-        }
-    })
-    .putNullable("activeWorkoutStartedAtMillis", activeWorkoutStartedAtMillis)
-    .put("defaultRestTimerSeconds", defaultRestTimerSeconds.coerceIn(15, 600))
-    .put("usesMetricUnits", usesMetricUnits)
-    .toString()
+    usesMetricUnits: Boolean = true,
+    customExercises: List<Exercise> = emptyList(),
+    workoutTemplates: List<WorkoutTemplate> = emptyList(),
+    weeklyDayPlans: List<WeeklyDayPlan> = emptyList()
+): String {
+    val templates = workoutTemplates.ifEmpty { sessions.map(TrainingSession::toTemplate) }
+    val plans = weeklyDayPlans.ifEmpty { sessions.toWeeklyDayPlans() }
+    return JSONObject()
+        .put("schemaVersion", 2)
+        .put("supplements", JSONArray().apply { supplements.forEach { put(it.toJson()) } })
+        .put("customExercises", JSONArray().apply { customExercises.forEach { put(it.toJson()) } })
+        .put("workoutTemplates", JSONArray().apply { templates.forEach { put(it.toJson()) } })
+        .put("weeklyDayPlans", JSONArray().apply { plans.forEach { put(it.toJson()) } })
+        .put("history", JSONArray(history))
+        .putNullable("selectedSessionId", selectedSessionId)
+        .putNullable("activeWorkoutSessionId", activeWorkoutSessionId)
+        .put("isWorkoutPaused", false)
+        .put("completedExerciseIds", JSONObject(completedExerciseIds))
+        .put("suggestionDecision", suggestionDecision.name)
+        .put("suggestedWeightKg", suggestedWeightKg)
+        .put("workoutHistory", JSONArray().apply { workoutHistory.forEach { put(it.toJson()) } })
+        .put("scheduleOverrides", JSONArray().apply { scheduleOverrides.forEach { put(it.toJson()) } })
+        .put("activeSetLogs", JSONObject().apply {
+            activeSetLogs.forEach { (targetId, sets) -> put(targetId, JSONArray(sets.map(WorkoutSetLog::toJson))) }
+        })
+        .putNullable("activeWorkoutStartedAtMillis", activeWorkoutStartedAtMillis)
+        .put("defaultRestTimerSeconds", defaultRestTimerSeconds.coerceIn(15, 600))
+        .put("legacyUsesMetricUnits", usesMetricUnits)
+        .toString()
+}
 
 fun decodeTrainingState(
     payload: String,
     exerciseLibrary: List<Exercise>
 ): PersistedTrainingState? = runCatching {
     val root = JSONObject(payload)
-    val exerciseById = exerciseLibrary.associateBy(Exercise::id)
-    val supplements = root.getJSONArray("supplements").objects().map { item ->
-        Supplement(
-            id = item.getString("id"),
-            name = item.getString("name"),
-            dose = item.getString("dose"),
-            schedule = SupplementSchedule(
-                type = RecurrenceType.valueOf(item.getString("scheduleType")),
-                startDate = LocalDate.parse(item.getString("startDate")),
-                intervalDays = item.optInt("intervalDays", 1),
-                weekdays = item.optJSONArray("weekdays")
-                    ?.strings()
-                    ?.map(DayOfWeek::valueOf)
-                    ?.toSet()
-                    .orEmpty()
-            ),
-            completedOn = item.nullableString("completedOn")?.let(LocalDate::parse),
-            reminderEnabled = item.optBoolean("reminderEnabled", false),
-            reminderMinute = item.optInt("reminderMinute", 8 * 60).takeIf { it in 0 until 24 * 60 }
-                ?: 8 * 60
-        )
+    val isVersion2 = root.optInt("schemaVersion", 1) >= 2
+    val customExercises = root.optJSONArray("customExercises")?.objects()?.map(JSONObject::toExercise).orEmpty()
+    val exerciseById = (exerciseLibrary + customExercises).associateBy(Exercise::id)
+    val legacyUsesMetricUnits = root.nullableBoolean("legacyUsesMetricUnits")
+        ?: root.takeIf { !isVersion2 }?.optBoolean("usesMetricUnits", true)
+    val supplements = root.optJSONArray("supplements")?.objects()?.map(JSONObject::toSupplement).orEmpty()
+    val decodedTemplates = if (isVersion2) {
+        root.optJSONArray("workoutTemplates")?.objects()?.map { it.toWorkoutTemplate(exerciseById) }.orEmpty()
+    } else {
+        root.optJSONArray("sessions")?.objects()?.map { it.toTrainingSession(exerciseById).toTemplate() }.orEmpty()
     }
-    val sessions = root.getJSONArray("sessions").objects().map { item ->
-        TrainingSession(
-            id = item.getString("id"),
-            name = item.getString("name"),
-            weekday = DayOfWeek.valueOf(item.getString("weekday")),
-            exercises = item.getJSONArray("exercises").objects().mapNotNull { target ->
-                val exercise = exerciseById[target.getString("exerciseId")] ?: return@mapNotNull null
-                ExerciseTarget(
-                    id = target.getString("id"),
-                    exercise = exercise,
-                    sets = target.optInt("sets", exercise.defaultSets),
-                    reps = target.optInt("reps", exercise.defaultReps),
-                    maximumReps = target.nullableInt("maximumReps"),
-                    weightKg = target.nullableDouble("weightKg"),
-                    durationMinutes = target.nullableInt("durationMinutes"),
-                    maximumDurationMinutes = target.nullableInt("maximumDurationMinutes"),
-                    intensityGuidance = target.nullableString("intensityGuidance"),
-                    alternativeGroupId = target.nullableString("alternativeGroupId"),
-                    distanceKm = target.nullableDouble("distanceKm")
-                )
-            },
-            guidance = item.optJSONArray("guidance")?.strings().orEmpty()
-        )
-    }
-    val completed = root.optJSONObject("completedExerciseIds")
-        ?.let { objectValue ->
-            objectValue.keys().asSequence().associateWith(objectValue::getBoolean)
-        }
-        .orEmpty()
-    val workoutHistory = root.optJSONArray("workoutHistory")?.objects()?.map { workout ->
-        WorkoutRecord(
-            id = workout.getString("id"),
-            sessionId = workout.getString("sessionId"),
-            sessionName = workout.getString("sessionName"),
-            performedOn = LocalDate.parse(workout.getString("performedOn")),
-            startedAtMillis = workout.getLong("startedAtMillis"),
-            finishedAtMillis = workout.getLong("finishedAtMillis"),
-            completedTargetIds = workout.optJSONArray("completedTargetIds")
-                ?.strings()
-                ?.toSet()
-                .orEmpty(),
-            completedLogicalTargets = workout.optInt("completedLogicalTargets"),
-            totalLogicalTargets = workout.optInt("totalLogicalTargets"),
-            sets = workout.optJSONArray("sets")?.objects()?.map(JSONObject::toWorkoutSet).orEmpty()
-        )
-    }.orEmpty()
-    val scheduleOverrides = root.optJSONArray("scheduleOverrides")?.objects()?.map { override ->
-        TrainingScheduleOverride(
-            sessionId = override.getString("sessionId"),
-            originalDate = LocalDate.parse(override.getString("originalDate")),
-            scheduledDate = override.nullableString("scheduledDate")?.let(LocalDate::parse),
-            skipped = override.optBoolean("skipped", false)
-        )
-    }.orEmpty()
-    val activeSetLogs = root.optJSONObject("activeSetLogs")
-        ?.let { logs ->
-            logs.keys().asSequence().associateWith { targetId ->
-                logs.getJSONArray(targetId).objects().map(JSONObject::toWorkoutSet)
+    val workoutTemplates = decodedTemplates.distinctBy(WorkoutTemplate::id)
+    val weeklyDayPlans = if (isVersion2) {
+        root.optJSONArray("weeklyDayPlans")?.objects()
+            ?.mapNotNull { it.toWeeklyDayPlan(workoutTemplates.map(WorkoutTemplate::id).toSet()) }
+            ?.distinctBy(WeeklyDayPlan::weekday)
+            .orEmpty()
+    } else {
+        root.optJSONArray("sessions")?.objects()
+            ?.mapNotNull { item ->
+                item.nullableString("weekday")?.let { DayOfWeek.valueOf(it) to item.getString("id") }
             }
+            ?.groupBy({ it.first }, { it.second })
+            ?.map { (weekday, templateIds) -> WeeklyDayPlan(weekday, templateIds.distinct()) }
+            .orEmpty()
+    }
+    val sessions = workoutTemplates.toCompatibilitySessions(weeklyDayPlans)
+    val completed = root.optJSONObject("completedExerciseIds")?.let { objectValue ->
+        objectValue.keys().asSequence().associateWith(objectValue::getBoolean)
+    }.orEmpty()
+    val workoutHistory = root.optJSONArray("workoutHistory")?.objects()?.map(JSONObject::toWorkoutRecord).orEmpty()
+    val scheduleOverrides = root.optJSONArray("scheduleOverrides")?.objects()?.map(JSONObject::toScheduleOverride).orEmpty()
+    val activeSetLogs = root.optJSONObject("activeSetLogs")?.let { logs ->
+        logs.keys().asSequence().associateWith { targetId ->
+            logs.getJSONArray(targetId).objects().map(JSONObject::toWorkoutSet)
         }
-        .orEmpty()
+    }.orEmpty()
     PersistedTrainingState(
         supplements = supplements,
         sessions = sessions,
         history = sanitizeTrainingHistory(root.optJSONArray("history")?.strings().orEmpty()),
         selectedSessionId = root.nullableString("selectedSessionId"),
         activeWorkoutSessionId = root.nullableString("activeWorkoutSessionId")
-            ?.takeIf { activeId ->
-                sessions.any { session ->
-                    session.id == activeId && session.exercises.isNotEmpty()
-                }
-            },
+            ?.takeIf { activeId -> workoutTemplates.any { it.id == activeId && it.exercises.isNotEmpty() } },
         isWorkoutPaused = false,
         completedExerciseIds = completed,
-        suggestionDecision = SuggestionDecision.valueOf(
-            root.optString("suggestionDecision", SuggestionDecision.PENDING.name)
-        ),
+        suggestionDecision = SuggestionDecision.valueOf(root.optString("suggestionDecision", SuggestionDecision.PENDING.name)),
         suggestedWeightKg = root.optDouble("suggestedWeightKg", 42.5),
         workoutHistory = workoutHistory,
         scheduleOverrides = scheduleOverrides,
         activeSetLogs = activeSetLogs,
         activeWorkoutStartedAtMillis = root.nullableLong("activeWorkoutStartedAtMillis"),
-        defaultRestTimerSeconds = root.optInt("defaultRestTimerSeconds", 90)
-            .coerceIn(15, 600),
-        usesMetricUnits = root.optBoolean("usesMetricUnits", true)
+        defaultRestTimerSeconds = root.optInt("defaultRestTimerSeconds", 90).coerceIn(15, 600),
+        customExercises = customExercises,
+        workoutTemplates = workoutTemplates,
+        weeklyDayPlans = weeklyDayPlans,
+        legacyUsesMetricUnits = legacyUsesMetricUnits,
+        usesMetricUnits = legacyUsesMetricUnits ?: true
     )
 }.getOrNull()
 
+private fun Supplement.toJson() = JSONObject()
+    .put("id", id)
+    .put("name", name)
+    .put("dose", dose)
+    .putNullable("completedOn", completedOn?.toString())
+    .put("reminderEnabled", reminderEnabled)
+    .put("reminderMinute", reminderMinute)
+    .put("scheduleType", schedule.type.name)
+    .put("startDate", schedule.startDate.toString())
+    .put("intervalDays", schedule.intervalDays)
+    .put("weekdays", JSONArray(schedule.weekdays.map(DayOfWeek::name)))
+
+private fun JSONObject.toSupplement() = Supplement(
+    id = getString("id"),
+    name = getString("name"),
+    dose = getString("dose"),
+    schedule = SupplementSchedule(
+        type = RecurrenceType.valueOf(getString("scheduleType")),
+        startDate = LocalDate.parse(getString("startDate")),
+        intervalDays = optInt("intervalDays", 1),
+        weekdays = optJSONArray("weekdays")?.strings()?.map(DayOfWeek::valueOf)?.toSet().orEmpty()
+    ),
+    completedOn = nullableString("completedOn")?.let(LocalDate::parse),
+    reminderEnabled = optBoolean("reminderEnabled", false),
+    reminderMinute = optInt("reminderMinute", 8 * 60).takeIf { it in 0 until 24 * 60 } ?: 8 * 60
+)
+
+private fun Exercise.toJson() = JSONObject()
+    .put("id", id)
+    .put("name", name)
+    .put("category", category)
+    .put("primaryMuscles", primaryMuscles)
+    .put("secondaryMuscles", secondaryMuscles)
+    .put("instructions", instructions)
+    .put("safetyNote", safetyNote)
+    .put("defaultSets", defaultSets)
+    .put("defaultReps", defaultReps)
+    .putNullable("defaultWeightKg", defaultWeightKg)
+    .putNullable("defaultDurationMinutes", defaultDurationMinutes)
+    .putNullable("defaultDistanceKm", defaultDistanceKm)
+
+private fun JSONObject.toExercise() = Exercise(
+    id = getString("id"),
+    name = getString("name"),
+    category = getString("category"),
+    primaryMuscles = getString("primaryMuscles"),
+    secondaryMuscles = getString("secondaryMuscles"),
+    instructions = getString("instructions"),
+    safetyNote = getString("safetyNote"),
+    defaultSets = optInt("defaultSets", 3),
+    defaultReps = optInt("defaultReps", 10),
+    defaultWeightKg = nullableDouble("defaultWeightKg"),
+    defaultDurationMinutes = nullableInt("defaultDurationMinutes"),
+    defaultDistanceKm = nullableDouble("defaultDistanceKm")
+)
+
+private fun TrainingSession.toTemplate() = WorkoutTemplate(id, name, exercises, guidance)
+
+private fun List<TrainingSession>.toWeeklyDayPlans(): List<WeeklyDayPlan> =
+    groupBy(TrainingSession::weekday).map { (weekday, sameDay) -> WeeklyDayPlan(weekday, sameDay.map(TrainingSession::id).distinct()) }
+
+private fun WorkoutTemplate.toJson() = JSONObject()
+    .put("id", id)
+    .put("name", name)
+    .put("guidance", JSONArray(guidance))
+    .put("origin", origin.name)
+    .put("exercises", JSONArray().apply { exercises.forEach { put(it.toJson()) } })
+
+private fun ExerciseTarget.toJson() = JSONObject()
+    .put("id", id)
+    .put("exerciseId", exercise.id)
+    .put("sets", sets)
+    .put("reps", reps)
+    .putNullable("maximumReps", maximumReps)
+    .putNullable("weightKg", weightKg)
+    .putNullable("durationMinutes", durationMinutes)
+    .putNullable("maximumDurationMinutes", maximumDurationMinutes)
+    .putNullable("intensityGuidance", intensityGuidance)
+    .putNullable("alternativeGroupId", alternativeGroupId)
+    .putNullable("distanceKm", distanceKm)
+
+private fun JSONObject.toWorkoutTemplate(exerciseById: Map<String, Exercise>) = WorkoutTemplate(
+    id = getString("id"),
+    name = getString("name"),
+    exercises = optJSONArray("exercises")?.objects()?.mapNotNull { it.toExerciseTarget(exerciseById) }.orEmpty(),
+    guidance = optJSONArray("guidance")?.strings().orEmpty(),
+    origin = optString("origin", WorkoutTemplateOrigin.BUILT_IN.name)
+        .let(WorkoutTemplateOrigin::valueOf)
+)
+
+private fun JSONObject.toTrainingSession(exerciseById: Map<String, Exercise>) = TrainingSession(
+    id = getString("id"),
+    name = getString("name"),
+    weekday = DayOfWeek.valueOf(getString("weekday")),
+    exercises = optJSONArray("exercises")?.objects()?.mapNotNull { it.toExerciseTarget(exerciseById) }.orEmpty(),
+    guidance = optJSONArray("guidance")?.strings().orEmpty()
+)
+
+private fun JSONObject.toExerciseTarget(exerciseById: Map<String, Exercise>): ExerciseTarget? {
+    val exercise = exerciseById[getString("exerciseId")] ?: return null
+    return ExerciseTarget(
+        id = getString("id"),
+        exercise = exercise,
+        sets = optInt("sets", exercise.defaultSets).coerceIn(1, 20),
+        reps = optInt("reps", exercise.defaultReps),
+        maximumReps = nullableInt("maximumReps"),
+        weightKg = nullableDouble("weightKg"),
+        durationMinutes = nullableInt("durationMinutes"),
+        maximumDurationMinutes = nullableInt("maximumDurationMinutes"),
+        intensityGuidance = nullableString("intensityGuidance"),
+        alternativeGroupId = nullableString("alternativeGroupId"),
+        distanceKm = nullableDouble("distanceKm")
+    )
+}
+
+private fun WeeklyDayPlan.toJson() = JSONObject()
+    .put("weekday", weekday.name)
+    .put("templateIds", JSONArray(templateIds))
+    .put("isRestDay", isRestDay)
+
+private fun JSONObject.toWeeklyDayPlan(templateIds: Set<String>): WeeklyDayPlan? = runCatching {
+    val isRestDay = optBoolean("isRestDay", false)
+    val validIds = optJSONArray("templateIds")?.strings()?.filter(templateIds::contains)?.distinct().orEmpty()
+    WeeklyDayPlan(DayOfWeek.valueOf(getString("weekday")), if (isRestDay) emptyList() else validIds, isRestDay)
+}.getOrNull()
+
+private fun List<WorkoutTemplate>.toCompatibilitySessions(plans: List<WeeklyDayPlan>): List<TrainingSession> {
+    val weekdayByTemplateId = plans.filterNot(WeeklyDayPlan::isRestDay)
+        .flatMap { plan -> plan.templateIds.map { it to plan.weekday } }
+        .toMap()
+    return mapNotNull { template ->
+        weekdayByTemplateId[template.id]?.let { weekday ->
+            TrainingSession(template.id, template.name, weekday, template.exercises, template.guidance)
+        }
+    }
+}
+
+private fun WorkoutRecord.toJson() = JSONObject()
+    .put("id", id)
+    .put("sessionId", sessionId)
+    .put("sessionName", sessionName)
+    .put("performedOn", performedOn.toString())
+    .put("startedAtMillis", startedAtMillis)
+    .put("finishedAtMillis", finishedAtMillis)
+    .put("completedTargetIds", JSONArray(completedTargetIds.toList()))
+    .put("completedLogicalTargets", completedLogicalTargets)
+    .put("totalLogicalTargets", totalLogicalTargets)
+    .put("sets", JSONArray(sets.map(WorkoutSetLog::toJson)))
+
+private fun JSONObject.toWorkoutRecord() = WorkoutRecord(
+    id = getString("id"),
+    sessionId = getString("sessionId"),
+    sessionName = getString("sessionName"),
+    performedOn = LocalDate.parse(getString("performedOn")),
+    startedAtMillis = getLong("startedAtMillis"),
+    finishedAtMillis = getLong("finishedAtMillis"),
+    completedTargetIds = optJSONArray("completedTargetIds")?.strings()?.toSet().orEmpty(),
+    completedLogicalTargets = optInt("completedLogicalTargets"),
+    totalLogicalTargets = optInt("totalLogicalTargets"),
+    sets = optJSONArray("sets")?.objects()?.map(JSONObject::toWorkoutSet).orEmpty()
+)
+
+private fun TrainingScheduleOverride.toJson() = JSONObject()
+    .put("sessionId", sessionId)
+    .put("originalDate", originalDate.toString())
+    .putNullable("scheduledDate", scheduledDate?.toString())
+    .put("skipped", skipped)
+
+private fun JSONObject.toScheduleOverride() = TrainingScheduleOverride(
+    sessionId = getString("sessionId"),
+    originalDate = LocalDate.parse(getString("originalDate")),
+    scheduledDate = nullableString("scheduledDate")?.let(LocalDate::parse),
+    skipped = optBoolean("skipped", false)
+)
 private fun WorkoutSetLog.toJson() = JSONObject()
     .put("id", id)
     .put("targetId", targetId)
@@ -404,6 +468,9 @@ private fun JSONObject.putNullable(key: String, value: Any?): JSONObject =
 
 private fun JSONObject.nullableString(key: String): String? =
     if (!has(key) || isNull(key)) null else getString(key)
+
+private fun JSONObject.nullableBoolean(key: String): Boolean? =
+    if (!has(key) || isNull(key)) null else getBoolean(key)
 
 private fun JSONObject.nullableDouble(key: String): Double? =
     if (!has(key) || isNull(key)) null else getDouble(key)

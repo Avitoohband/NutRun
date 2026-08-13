@@ -18,6 +18,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.DayOfWeek
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -147,7 +148,9 @@ class ProductionDomainTest {
         assertEquals(model.workoutHistory.toList(), restored.workoutHistory)
         assertEquals(listOf(override), restored.scheduleOverrides)
         assertEquals(135, restored.defaultRestTimerSeconds)
-        assertFalse(restored.usesMetricUnits)
+        assertEquals(2, JSONObject(payload).getInt("schemaVersion"))
+        assertFalse(JSONObject(payload).has("usesMetricUnits"))
+        assertFalse(restored.legacyUsesMetricUnits ?: true)
     }
 
     @Test
