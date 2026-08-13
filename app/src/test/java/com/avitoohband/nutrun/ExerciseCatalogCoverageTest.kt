@@ -243,4 +243,19 @@ class ExerciseCatalogCoverageTest {
         assertFalse(exercise("calf-press-machine").primaryMuscles == exercise("calf-press-machine").category)
         assertFalse(exercise("pull-up").instructions == exercise("pike-push-up").instructions)
     }
+
+    @Test
+    fun addedRecordsContainConcreteMetadataAndNoForbiddenPlaceholder() {
+        val added = builtInExerciseCatalog().filter { it.id in addedStableIds }
+
+        assertEquals(addedStableIds.size, added.size)
+        added.forEach { exercise ->
+            assertTrue(exercise.primaryMuscles.isNotBlank())
+            assertTrue(exercise.secondaryMuscles.isNotBlank())
+            assertTrue(exercise.instructions.isNotBlank())
+            assertTrue(exercise.safetyNote.isNotBlank())
+            assertFalse(exercise.primaryMuscles.equals(exercise.category, ignoreCase = true))
+            assertFalse(exercise.instructions.startsWith("Perform ${exercise.name} with a slow, controlled repetition"))
+        }
+    }
 }
