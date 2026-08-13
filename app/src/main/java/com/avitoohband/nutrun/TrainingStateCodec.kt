@@ -40,7 +40,9 @@ fun defaultSupplements() = listOf(
     )
 )
 
-fun defaultSessions(exercises: List<Exercise>): List<TrainingSession> {
+fun defaultSessions(exercises: List<Exercise>): List<TrainingSession> = legacyDefaultSessions(exercises)
+
+private fun legacyDefaultSessions(exercises: List<Exercise>): List<TrainingSession> {
     val byId = exercises.associateBy(Exercise::id)
     fun exercise(id: String) = requireNotNull(byId[id]) { "Missing built-in exercise $id" }
     fun strengthTarget(id: String, exerciseId: String, sets: Int, minimumReps: Int, maximumReps: Int) =

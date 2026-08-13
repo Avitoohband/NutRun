@@ -15,10 +15,15 @@ import org.junit.Test
 
 class DefaultTrainingProgramTest {
     private val catalog = builtInExerciseCatalog()
+    private val program = defaultTrainingProgram(catalog)
+    private val templates = program.templates
+    private val dayPlans = program.dayPlans
     private val sessions = defaultSessions(catalog)
 
     @Test
     fun translatedWeeklyProgramHasExpectedDaysTitlesAndEmptyHistory() {
+        val cardio = templates.single { it.name == "Walk or Swim" }
+
         assertEquals(
             listOf(
                 DayOfWeek.SUNDAY,
@@ -26,15 +31,24 @@ class DefaultTrainingProgramTest {
                 DayOfWeek.TUESDAY,
                 DayOfWeek.WEDNESDAY,
                 DayOfWeek.THURSDAY,
-                DayOfWeek.FRIDAY
+                DayOfWeek.FRIDAY,
+                DayOfWeek.SATURDAY
             ),
-            sessions.map(TrainingSession::weekday)
+            dayPlans.map(WeeklyDayPlan::weekday)
         )
-        assertFalse(sessions.any { it.weekday == DayOfWeek.SATURDAY })
-        assertEquals(3, sessions.count { it.name == "Walk or Swim" })
-        assertEquals("Push + Biceps", sessions.first { it.weekday == DayOfWeek.MONDAY }.name)
-        assertEquals("Pull + Triceps", sessions.first { it.weekday == DayOfWeek.WEDNESDAY }.name)
-        assertEquals("Shoulders + Legs + HIIT", sessions.first { it.weekday == DayOfWeek.FRIDAY }.name)
+        assertEquals(
+            listOf(DayOfWeek.SUNDAY, DayOfWeek.TUESDAY, DayOfWeek.THURSDAY),
+            dayPlans.filter { cardio.id in it.templateIds }.map(WeeklyDayPlan::weekday)
+        )
+        assertEquals(
+            listOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
+            dayPlans.filter { it.templateIds.isNotEmpty() && cardio.id !in it.templateIds }
+                .map(WeeklyDayPlan::weekday)
+        )
+        assertTrue(dayPlans.single { it.weekday == DayOfWeek.SATURDAY }.isRestDay)
+        assertEquals("Push + Biceps", templates.single { it.id == "session-monday-push-biceps" }.name)
+        assertEquals("Pull + Triceps", templates.single { it.id == "session-wednesday-pull-triceps" }.name)
+        assertEquals("Shoulders + Legs + HIIT", templates.single { it.id == "session-friday-shoulders-legs" }.name)
         assertTrue(defaultTrainingHistory().isEmpty())
     }
 

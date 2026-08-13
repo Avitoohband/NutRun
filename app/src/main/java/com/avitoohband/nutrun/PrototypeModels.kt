@@ -115,6 +115,10 @@ data class ExerciseTarget(
     val alternativeGroupId: String? = null,
     val distanceKm: Double? = exercise.defaultDistanceKm
 ) {
+    init {
+        require(sets in 1..20) { "Sets must be between 1 and 20" }
+    }
+
     private fun repLabel(): String =
         maximumReps?.takeIf { it != reps }?.let { "$reps-$it" } ?: reps.toString()
 
