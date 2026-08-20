@@ -1046,6 +1046,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
     var rescheduleRequest by remember {
         mutableStateOf<Pair<TrainingSession, LocalDate>?>(null)
     }
+    var templateDetailsId by remember { mutableStateOf<String?>(null) }
     if (addSession) {
         AddTrainingSessionDialog(
             onDismiss = { addSession = false },
@@ -1106,6 +1107,21 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                 rescheduleRequest = null
             }
         )
+    }
+    templateDetailsId?.let { templateId ->
+        model.workoutTemplates.firstOrNull { it.id == templateId }?.let { template ->
+            WorkoutTemplateDetailsDialog(
+                template = template,
+                usesMetricUnits = model.usesMetricUnits,
+                onStart = { model.startWorkout(template.id); templateDetailsId = null },
+                onEdit = {
+                    model.selectSession(template.id)
+                    editSessionId = template.id
+                    templateDetailsId = null
+                },
+                onDismiss = { templateDetailsId = null }
+            )
+        }
     }
     model.lastWorkoutSummary?.let { summary ->
         AlertDialog(
@@ -1264,6 +1280,26 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         }
         return
     }
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Training",
+                modifier = Modifier.weight(1f).testTag("training-heading"),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold
+            )
+            TextButton(onClick = { editRestTimer = true }, modifier = Modifier.testTag("rest-timer-settings")) {
+                Text("Rest ${model.defaultRestTimerSeconds}s")
+            }
+        }
+        TrainingPlanningContent(
+            model = model,
+            onOpenTemplate = { templateDetailsId = it.id },
+            modifier = Modifier.weight(1f)
+        )
+    }
+    return
+    /* Replaced by TrainingPlanningContent; retained temporarily for targeted migration review.
     LazyColumn(
         Modifier.fillMaxSize().padding(16.dp).testTag("training-list"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1388,6 +1424,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
             }
         }
     }
+    */
 }
 
 @Composable

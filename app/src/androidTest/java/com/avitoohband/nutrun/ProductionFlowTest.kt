@@ -118,12 +118,11 @@ class ProductionFlowTest {
                 .fetchSemanticsNodes()
                 .isEmpty()
         ) {
-            composeRule.onNodeWithText("This week").assertIsDisplayed()
             composeRule.onNodeWithTag("training-list").performScrollToNode(
-                hasTestTag("session-card-session-sunday-cardio")
+                hasTestTag("workout-card-session-sunday-cardio")
             )
             composeRule
-                .onNodeWithTag("session-card-session-sunday-cardio")
+                .onNodeWithTag("start-session-session-sunday-cardio")
                 .performClick()
         }
         composeRule.onNodeWithText("Choose one cardio option.").assertIsDisplayed()
@@ -918,6 +917,36 @@ class SupplementReminderSettingsCardComposeTest {
     }
 }
 
+class TrainingPlanningComposeTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun weeklyScheduleAndWorkoutLibraryUseCalendarOrder() {
+        val model = TrainingViewModel(null, null)
+
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("weekly-schedule").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("day-plan-SUNDAY"))
+        composeRule.onNodeWithTag("day-plan-SUNDAY").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("day-plan-MONDAY"))
+        composeRule.onNodeWithTag("day-plan-MONDAY").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("day-plan-SATURDAY"))
+        composeRule.onNodeWithTag("day-plan-SATURDAY").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("workout-library"))
+        composeRule.onNodeWithTag("workout-library").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-list").performScrollToNode(
+            hasTestTag("workout-card-session-monday-push-biceps")
+        )
+        composeRule.onNodeWithTag("workout-card-session-monday-push-biceps").assertIsDisplayed()
+    }
+}
+
 class ProgressionSuggestionComposeTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -935,7 +964,7 @@ class ProgressionSuggestionComposeTest {
         }
 
         composeRule.onNodeWithTag("training-list").performScrollToNode(
-            hasTestTag("session-card-${emptySession.id}")
+            hasTestTag("workout-card-${emptySession.id}")
         )
         composeRule.onNodeWithTag("start-session-${emptySession.id}").assertIsNotEnabled()
         composeRule.onNodeWithText("Add exercises to start").assertIsDisplayed()
