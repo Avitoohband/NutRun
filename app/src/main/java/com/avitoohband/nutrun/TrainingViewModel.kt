@@ -271,6 +271,11 @@ class TrainingViewModel private constructor(
                         runtime.trainingState(userId).collectLatest { state ->
                             state?.payloadJson?.let {
                                 if (it != restoredPayload) {
+                                    persistJob?.cancel()
+                                    persistenceGeneration += 1
+                                    persistenceOperation = null
+                                    supplementReschedulePending = false
+                                    mutationError = null
                                     restoredPayload = it
                                     restoreTrainingState(it)
                                 }
@@ -663,6 +668,15 @@ class TrainingViewModel private constructor(
         if (draft.defaultReps < 1) {
             return TrainingMutationResult.ValidationError("Repetitions must be at least 1.")
         }
+        if (draft.defaultWeightKg?.let { !it.isFinite() || it < 0.0 } == true) {
+            return TrainingMutationResult.ValidationError("Weight must be finite and non-negative.")
+        }
+        if (draft.defaultDurationMinutes?.let { it <= 0 } == true) {
+            return TrainingMutationResult.ValidationError("Duration must be greater than zero.")
+        }
+        if (draft.defaultDistanceKm?.let { !it.isFinite() || it <= 0.0 } == true) {
+            return TrainingMutationResult.ValidationError("Distance must be finite and greater than zero.")
+        }
         if (exerciseLibrary.any { it.name.trim().equals(trimmedName, ignoreCase = true) }) {
             return TrainingMutationResult.ValidationError("An exercise with this name already exists.")
         }
@@ -753,15 +767,17 @@ class TrainingViewModel private constructor(
         }
         val templateId = selectedSessionId
             ?: return TrainingMutationResult.ValidationError("No workout is selected.")
+        val canonicalExercise = exerciseLibrary.firstOrNull { it.id == exercise.id }
+            ?: return TrainingMutationResult.ValidationError("Exercise is not in the current library.")
         val index = workoutTemplates.indexOfFirst { it.id == templateId }
         if (index < 0) return TrainingMutationResult.ValidationError("Workout not found.")
-        if (workoutTemplates[index].exercises.any { it.exercise.id == exercise.id }) {
+        if (workoutTemplates[index].exercises.any { it.exercise.id == canonicalExercise.id }) {
             return TrainingMutationResult.ValidationError("Exercise is already in this workout.")
         }
         val snapshot = trainingMutationSnapshot()
         val target = ExerciseTarget(
             id = id("target"),
-            exercise = exercise,
+            exercise = canonicalExercise,
             sets = sets,
             reps = reps,
             weightKg = weightKg,
@@ -1190,84 +1206,90 @@ class TrainingViewModel private constructor(
         persistJob?.cancel()
         persistJob = modelScope.launch {
             persistenceMutex.withLock {
-                if (
-                    generation != persistenceGeneration ||
-                    currentUserId != userId ||
-                    restoredUserId != userId
-                ) {
-                    return@withLock
-                }
-                val payload = currentTrainingPayload(supplements)
-                var operation = persistenceOperationFor(userId, payload)
+            if (
+                generation != persistenceGeneration ||
+                currentUserId != userId ||
+                restoredUserId != userId
+            ) {
+                return@withLock
+            }
+
+            var payload: String? = null
+            val previousRestoredPayload = restoredPayload
+            var operation: TrainingPersistenceOperation
+            try {
+                payload = currentTrainingPayload(supplements)
+                operation = persistenceOperationFor(userId, payload)
                 if (!operation.repositoryCompleted) {
-                    val previousRestoredPayload = restoredPayload
                     restoredPayload = payload
-                    try {
-                        targetRuntime.saveTrainingState(userId, payload)
-                    } catch (error: Exception) {
-                        if (restoredPayload == payload) restoredPayload = previousRestoredPayload
-                        val persistedAccount = runCatching { targetRuntime.currentUserId() }.getOrNull()
-                        if (
-                            rollbackSnapshot != null &&
-                            generation == persistenceGeneration &&
-                            currentUserId == userId &&
-                            restoredUserId == userId &&
-                            persistedAccount == userId
-                        ) {
-                            restoreMutationSnapshot(rollbackSnapshot)
-                            mutationError = error.message ?: "Training state persistence failed."
-                        }
-                        return@withLock
-                    }
+                    targetRuntime.saveTrainingState(userId, payload)
                     operation = operation.copy(repositoryCompleted = true)
                     retainPersistenceOperation(operation)
                 }
-                if (generation != persistenceGeneration) return@withLock
-                if (
-                    targetRuntime.currentUserId() != userId ||
-                    currentUserId != userId
-                ) {
-                    return@withLock
+            } catch (error: Exception) {
+                if (payload != null && restoredPayload == payload) {
+                    restoredPayload = previousRestoredPayload
                 }
+                val persistedAccount = runCatching { targetRuntime.currentUserId() }.getOrNull()
+                if (
+                    rollbackSnapshot != null &&
+                    generation == persistenceGeneration &&
+                    currentUserId == userId &&
+                    restoredUserId == userId &&
+                    persistedAccount == userId
+                ) {
+                    restoreMutationSnapshot(rollbackSnapshot)
+                    mutationError = error.message ?: "Training state persistence failed."
+                }
+                return@withLock
+            }
 
-                val scheduleSupplements =
-                    supplementReschedulePending && !operation.supplementRescheduleCompleted
-                val systems = if (scheduleSupplements) {
-                    setOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS)
-                } else {
-                    setOf(ReminderSystem.TRAINING)
-                }
-                val scheduling = rescheduleReminderSystemsWithRecovery(
-                    userId = userId,
-                    hydration = {},
-                    training = {
-                        val settings = targetRuntime.currentTrainingReminderSettings(userId)
-                            ?: TrainingReminderSettingsEntity(userId = userId)
-                        targetRuntime.scheduleTraining(userId, settings)
-                    },
-                    supplements = {
-                        rescheduleSupplementReminders(userId, targetRuntime)
-                    },
-                    scheduleRecovery = targetRuntime::scheduleRecovery,
-                    systems = systems
-                )
-                if (
-                    generation != persistenceGeneration ||
-                    targetRuntime.currentUserId() != userId ||
-                    currentUserId != userId
-                ) {
-                    return@withLock
-                }
-                if (
-                    scheduleSupplements &&
-                    ReminderSystem.SUPPLEMENTS !in scheduling.failedSystems
-                ) {
-                    operation = operation.copy(supplementRescheduleCompleted = true)
-                    retainPersistenceOperation(operation)
-                }
-                if (supplementReschedulePending && operation.supplementRescheduleCompleted) {
-                    supplementReschedulePending = false
-                }
+            if (generation != persistenceGeneration) return@withLock
+            if (
+                targetRuntime.currentUserId() != userId ||
+                currentUserId != userId
+            ) {
+                return@withLock
+            }
+
+            val scheduleSupplements =
+                supplementReschedulePending && !operation.supplementRescheduleCompleted
+            val systems = if (scheduleSupplements) {
+                setOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS)
+            } else {
+                setOf(ReminderSystem.TRAINING)
+            }
+            val scheduling = rescheduleReminderSystemsWithRecovery(
+                userId = userId,
+                hydration = {},
+                training = {
+                    val settings = targetRuntime.currentTrainingReminderSettings(userId)
+                        ?: TrainingReminderSettingsEntity(userId = userId)
+                    targetRuntime.scheduleTraining(userId, settings)
+                },
+                supplements = {
+                    rescheduleSupplementReminders(userId, targetRuntime)
+                },
+                scheduleRecovery = targetRuntime::scheduleRecovery,
+                systems = systems
+            )
+            if (
+                generation != persistenceGeneration ||
+                targetRuntime.currentUserId() != userId ||
+                currentUserId != userId
+            ) {
+                return@withLock
+            }
+            if (
+                scheduleSupplements &&
+                ReminderSystem.SUPPLEMENTS !in scheduling.failedSystems
+            ) {
+                operation = operation.copy(supplementRescheduleCompleted = true)
+                retainPersistenceOperation(operation)
+            }
+            if (supplementReschedulePending && operation.supplementRescheduleCompleted) {
+                supplementReschedulePending = false
+            }
             }
         }
     }

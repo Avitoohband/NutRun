@@ -199,14 +199,14 @@ fun decodeTrainingState(
 ): PersistedTrainingState? = runCatching {
     val root = JSONObject(payload)
     val isVersion2 = root.optInt("schemaVersion", 1) >= 2
-    val builtInExerciseIds = exerciseLibrary
+    val builtInExercises = exerciseLibrary
         .filterNot { it.id.isTypedUuid("exercise-") }
-        .map(Exercise::id).toSet()
+    val builtInExerciseIds = builtInExercises.map(Exercise::id).toSet()
     val customExercises = root.optJSONArray("customExercises")?.objects()?.map(JSONObject::toExercise)
         ?.filter { it.id.isTypedUuid("exercise-") && it.id !in builtInExerciseIds }
         ?.distinctBy(Exercise::id)
         .orEmpty()
-    val exerciseById = (exerciseLibrary + customExercises).associateBy(Exercise::id)
+    val exerciseById = (builtInExercises + customExercises).associateBy(Exercise::id)
     val legacyUsesMetricUnits = root.takeIf { !isVersion2 }?.nullableBoolean("usesMetricUnits")
     val supplements = root.optJSONArray("supplements")?.objects()?.map(JSONObject::toSupplement).orEmpty()
     val decodedTemplates = if (isVersion2) {
