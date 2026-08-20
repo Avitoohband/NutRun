@@ -18,6 +18,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.DayOfWeek
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -25,6 +26,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProductionDomainTest {
+    @Test
+    fun profileUnitOverridesLegacyTrainingUnitAndMissingProfileFallsBackSafely() {
+        val imperial = profileEntity(com.avitoohband.nutrun.domain.UnitSystem.IMPERIAL)
+        val metric = profileEntity(com.avitoohband.nutrun.domain.UnitSystem.METRIC)
+        assertFalse(resolveMetricUnits(imperial, true))
+        assertTrue(resolveMetricUnits(metric, false))
+        assertFalse(resolveMetricUnits(null, false))
+        assertTrue(resolveMetricUnits(null, true))
+        assertTrue(resolveMetricUnits(null, null))
+    }
+
+    private fun profileEntity(unitSystem: com.avitoohband.nutrun.domain.UnitSystem) =
+        com.avitoohband.nutrun.data.UserProfileEntity("profile:test", "test", "test@example.com", "1990-01-01", "MALE", 175.0, 75.0, "MODERATE", "MAINTAIN", unitSystem.name, 2_000, 0L)
+
     @Test
     fun healthEstimateUsesMifflinStJeorAndGoalAdjustment() {
         val estimate = calculateHealthEstimate(
@@ -147,15 +162,15 @@ class ProductionDomainTest {
         assertEquals(model.workoutHistory.toList(), restored.workoutHistory)
         assertEquals(listOf(override), restored.scheduleOverrides)
         assertEquals(135, restored.defaultRestTimerSeconds)
-        assertFalse(restored.usesMetricUnits)
+        assertEquals(2, JSONObject(payload).getInt("schemaVersion"))
+        assertFalse(JSONObject(payload).has("usesMetricUnits"))
+        assertNull(restored.legacyUsesMetricUnits)
     }
 
     @Test
-    fun exerciseCatalogHasEightyOneStableUniqueEntriesAndSearchesAllMetadata() {
+    fun exerciseCatalogSearchesAllMetadata() {
         val catalog = builtInExerciseCatalog()
 
-        assertEquals(81, catalog.size)
-        assertEquals(81, catalog.map { it.id }.distinct().size)
         assertTrue(setOf("lat-pulldown", "push-up", "goblet-squat", "easy-run", "freestyle-swim", "pistol-squat").all {
             id -> catalog.any { it.id == id }
         })

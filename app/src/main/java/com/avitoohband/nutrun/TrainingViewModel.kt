@@ -12,6 +12,8 @@ import androidx.lifecycle.viewModelScope
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunRepository
 import com.avitoohband.nutrun.data.SessionPreferences
+import com.avitoohband.nutrun.data.UserProfileEntity
+import com.avitoohband.nutrun.domain.UnitSystem
 import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingStateEntity
@@ -30,6 +32,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -37,10 +41,49 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+internal fun resolveMetricUnits(profile: UserProfileEntity?, legacyMetric: Boolean?): Boolean =
+    profile?.unitSystem?.let { UnitSystem.valueOf(it) == UnitSystem.METRIC }
+        ?: legacyMetric
+        ?: true
+
 data class SupplementReminderConfig(
     val enabled: Boolean,
     val minute: Int
 )
+sealed interface TrainingMutationResult {
+    data object Success : TrainingMutationResult
+    data object NotReady : TrainingMutationResult
+    data object ActiveWorkoutConflict : TrainingMutationResult
+    data class ValidationError(val message: String) : TrainingMutationResult
+}
+
+data class CustomExerciseDraft(
+    val name: String,
+    val category: String = "Custom",
+    val primaryMuscles: String = "",
+    val secondaryMuscles: String = "",
+    val instructions: String = "",
+    val safetyNote: String = "",
+    val defaultSets: Int = 3,
+    val defaultReps: Int = 10,
+    val defaultWeightKg: Double? = null,
+    val defaultDurationMinutes: Int? = null,
+    val defaultDistanceKm: Double? = null
+)
+
+private data class TrainingMutationSnapshot(
+    val workoutTemplates: List<WorkoutTemplate>,
+    val weeklyDayPlans: List<WeeklyDayPlan>,
+    val customExercises: List<Exercise>,
+    val scheduleOverrides: List<TrainingScheduleOverride>,
+    val selectedSessionId: String?,
+    val activeWorkoutSessionId: String?,
+    val activeWorkoutStartedAtMillis: Long?,
+    val completedExerciseIds: Map<String, Boolean>,
+    val activeSetLogs: Map<String, List<WorkoutSetLog>>,
+    val restTimerEndAtMillis: Long?
+)
+
 
 private data class TrainingPersistenceOperation(
     val accountId: String,
@@ -52,6 +95,7 @@ private data class TrainingPersistenceOperation(
 internal interface TrainingViewModelRuntime {
     val session: Flow<SessionPreferences>
     fun trainingState(userId: String): Flow<TrainingStateEntity?>
+    fun profile(userId: String): Flow<UserProfileEntity?> = flowOf(null)
     suspend fun currentUserId(): String?
     suspend fun saveTrainingState(userId: String, payload: String)
     suspend fun currentTrainingReminderSettings(userId: String): TrainingReminderSettingsEntity?
@@ -72,6 +116,8 @@ private class ProductionTrainingViewModelRuntime(
     override val session: Flow<SessionPreferences> = preferences.session
 
     override fun trainingState(userId: String): Flow<TrainingStateEntity?> = repository.trainingState(userId)
+    override fun profile(userId: String): Flow<UserProfileEntity?> = repository.profileEntity(userId)
+
 
     override suspend fun currentUserId(): String? = preferences.currentSession().authenticatedUserId
 
@@ -152,8 +198,11 @@ class TrainingViewModel private constructor(
     private var persistJob: Job? = null
     private val persistenceMutex = Mutex()
     private var persistenceGeneration = 0L
+    private var legacyUsesMetricUnits: Boolean? = null
     private var supplementReschedulePending = false
     private var restoredPayload: String? = null
+    var profileUnitReadyAccountId by mutableStateOf<String?>(null)
+        private set
     private var restoredUserId: String? = null
     private var persistenceOperation: TrainingPersistenceOperation? = null
 
@@ -163,7 +212,7 @@ class TrainingViewModel private constructor(
         private set
     val trainingMutationsReady: Boolean
         get() = runtime == null || (
-            supplementReminderUpdatesReady &&
+            supplementReminderUpdatesReady && profileUnitReadyAccountId == currentUserId &&
                 currentUserId != null &&
                 restoredUserId == currentUserId
             )
@@ -193,9 +242,25 @@ class TrainingViewModel private constructor(
     var defaultRestTimerSeconds by mutableIntStateOf(90)
         private set
 
-    val exerciseLibrary = builtInExerciseCatalog()
+    var mutationError by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissMutationError() {
+        mutationError = null
+    }
+
+    private val builtInExercises = builtInExerciseCatalog()
+    private val defaultProgram = defaultTrainingProgram(builtInExercises)
     val supplements = mutableStateListOf<Supplement>().apply { addAll(defaultSupplements()) }
-    val sessions = mutableStateListOf<TrainingSession>().apply { addAll(defaultSessions(exerciseLibrary)) }
+    val customExercises = mutableStateListOf<Exercise>()
+    val exerciseLibrary: List<Exercise>
+        get() = builtInExercises + customExercises
+    val workoutTemplates = mutableStateListOf<WorkoutTemplate>().apply {
+        addAll(defaultProgram.templates)
+    }
+    val weeklyDayPlans = mutableStateListOf<WeeklyDayPlan>().apply {
+        addAll(defaultProgram.dayPlans)
+    }
     val completedExerciseIds = mutableStateMapOf<String, Boolean>()
     val history = mutableStateListOf<String>()
     val workoutHistory = mutableStateListOf<WorkoutRecord>()
@@ -211,24 +276,35 @@ class TrainingViewModel private constructor(
                     supplementReschedulePending = false
                     currentUserId = session.authenticatedUserId
                     restoredPayload = null
+                    mutationError = null
                     restoredUserId = null
                     persistenceOperation = null
                     supplementReminderReadyAccountId = null
                     supplementReminderUpdatesReady = false
+                    profileUnitReadyAccountId = null
                     resetTrainingState()
                     session.authenticatedUserId?.let { userId ->
-                        runtime.trainingState(userId).collectLatest { state ->
+                        runtime.trainingState(userId)
+                            .combine(runtime.profile(userId)) { state, profile -> state to profile }
+                            .collectLatest { (state, profile) ->
                             state?.payloadJson?.let {
                                 if (it != restoredPayload) {
+                                    persistJob?.cancel()
+                                    persistenceGeneration += 1
+                                    persistenceOperation = null
+                                    supplementReschedulePending = false
+                                    mutationError = null
                                     restoredPayload = it
                                     restoreTrainingState(it)
                                 }
                             }
                             if (currentUserId == userId) {
+                            usesMetricUnits = resolveMetricUnits(profile, legacyUsesMetricUnits)
                                 restoredUserId = userId
                                 supplementReminderReadyAccountId = userId
                                 supplementReminderUpdatesReady = true
                             }
+                                profileUnitReadyAccountId = userId
                         }
                     }
                 }
@@ -242,13 +318,6 @@ class TrainingViewModel private constructor(
 
     fun setNotificationPermission(granted: Boolean) {
         notificationPermissionGranted = granted
-    }
-
-    fun updateUsesMetricUnits(metric: Boolean) {
-        if (!trainingMutationsReady) return
-        if (usesMetricUnits == metric) return
-        usesMetricUnits = metric
-        persistTrainingState()
     }
 
     fun toggleSupplement(id: String, checked: Boolean) {
@@ -519,18 +588,183 @@ class TrainingViewModel private constructor(
         }
     }
 
+    fun createWorkout(name: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty()) {
+            return TrainingMutationResult.ValidationError("Workout name cannot be blank.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        val template = WorkoutTemplate.userCreated(trimmedName)
+        workoutTemplates += template
+        selectedSessionId = template.id
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun renameWorkout(templateId: String, name: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty()) {
+            return TrainingMutationResult.ValidationError("Workout name cannot be blank.")
+        }
+        val index = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (index < 0) return TrainingMutationResult.ValidationError("Workout not found.")
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates[index] = workoutTemplates[index].copy(name = trimmedName)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun deleteWorkout(
+        templateId: String,
+        today: LocalDate = LocalDate.now()
+    ): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        if (activeWorkoutSessionId == templateId) return TrainingMutationResult.ActiveWorkoutConflict
+        if (workoutTemplates.none { it.id == templateId }) {
+            return TrainingMutationResult.ValidationError("Workout not found.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates.removeAll { it.id == templateId }
+        weeklyDayPlans.indices.forEach { index ->
+            val plan = weeklyDayPlans[index]
+            weeklyDayPlans[index] = plan.copy(templateIds = plan.templateIds.filterNot { it == templateId })
+        }
+        scheduleOverrides.removeAll {
+            it.sessionId == templateId && !it.originalDate.isBefore(today)
+        }
+        if (selectedSessionId == templateId) selectedSessionId = null
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun replaceAssignments(
+        day: DayOfWeek,
+        templateIds: List<String>
+    ): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val distinctIds = templateIds.distinct()
+        val knownIds = workoutTemplates.map(WorkoutTemplate::id).toSet()
+        if (distinctIds.any { it !in knownIds }) {
+            return TrainingMutationResult.ValidationError("One or more workouts were not found.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        val plans = replaceDayAssignments(weeklyDayPlans, day, distinctIds)
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(plans)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun setRestDay(day: DayOfWeek): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val snapshot = trainingMutationSnapshot()
+        val plans = markRestDay(weeklyDayPlans, day)
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(plans)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun createCustomExerciseAndAdd(
+        templateId: String,
+        draft: CustomExerciseDraft
+    ): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val trimmedName = draft.name.trim()
+        if (trimmedName.isEmpty()) {
+            return TrainingMutationResult.ValidationError("Exercise name cannot be blank.")
+        }
+        if (draft.defaultSets !in 1..20) {
+            return TrainingMutationResult.ValidationError("Sets must be between 1 and 20.")
+        }
+        if (draft.defaultReps < 1) {
+            return TrainingMutationResult.ValidationError("Repetitions must be at least 1.")
+        }
+        if (draft.defaultWeightKg?.let { !it.isFinite() || it < 0.0 } == true) {
+            return TrainingMutationResult.ValidationError("Weight must be finite and non-negative.")
+        }
+        if (draft.defaultDurationMinutes?.let { it <= 0 } == true) {
+            return TrainingMutationResult.ValidationError("Duration must be greater than zero.")
+        }
+        if (draft.defaultDistanceKm?.let { !it.isFinite() || it <= 0.0 } == true) {
+            return TrainingMutationResult.ValidationError("Distance must be finite and greater than zero.")
+        }
+        if (exerciseLibrary.any { it.name.trim().equals(trimmedName, ignoreCase = true) }) {
+            return TrainingMutationResult.ValidationError("An exercise with this name already exists.")
+        }
+        val templateIndex = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (templateIndex < 0) return TrainingMutationResult.ValidationError("Workout not found.")
+
+        val snapshot = trainingMutationSnapshot()
+        val exercise = Exercise(
+            id = id("exercise"),
+            name = trimmedName,
+            category = draft.category.trim().ifEmpty { "Custom" },
+            primaryMuscles = draft.primaryMuscles.trim(),
+            secondaryMuscles = draft.secondaryMuscles.trim(),
+            instructions = draft.instructions.trim(),
+            safetyNote = draft.safetyNote.trim(),
+            defaultSets = draft.defaultSets,
+            defaultReps = draft.defaultReps,
+            defaultWeightKg = draft.defaultWeightKg,
+            defaultDurationMinutes = draft.defaultDurationMinutes,
+            defaultDistanceKm = draft.defaultDistanceKm
+        )
+        customExercises += exercise
+        val target = ExerciseTarget(id = id("target"), exercise = exercise)
+        workoutTemplates[templateIndex] = workoutTemplates[templateIndex].copy(
+            exercises = workoutTemplates[templateIndex].exercises + target
+        )
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun updateTargetSets(
+        templateId: String,
+        targetId: String,
+        sets: Int
+    ): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        if (sets !in 1..20) {
+            return TrainingMutationResult.ValidationError("Sets must be between 1 and 20.")
+        }
+        val templateIndex = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (templateIndex < 0) return TrainingMutationResult.ValidationError("Workout not found.")
+        if (workoutTemplates[templateIndex].exercises.none { it.id == targetId }) {
+            return TrainingMutationResult.ValidationError("Exercise target not found.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates[templateIndex] = workoutTemplates[templateIndex].copy(
+            exercises = workoutTemplates[templateIndex].exercises.map { target ->
+                if (target.id == targetId) target.copy(sets = sets) else target
+            }
+        )
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
     fun addSession(name: String, weekday: DayOfWeek) {
         if (!trainingMutationsReady) return
-        val session = TrainingSession(id("session"), name.trim(), weekday)
-        sessions += session
-        selectedSessionId = session.id
-        persistTrainingState()
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty()) return
+        val snapshot = trainingMutationSnapshot()
+        val template = WorkoutTemplate.userCreated(trimmedName)
+        workoutTemplates += template
+        val existingIds = weeklyDayPlans.firstOrNull { it.weekday == weekday }?.templateIds.orEmpty()
+        val plans = replaceDayAssignments(weeklyDayPlans, weekday, existingIds + template.id)
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(plans)
+        selectedSessionId = template.id
+        persistTrainingState(rollbackSnapshot = snapshot)
     }
 
     fun selectSession(id: String) {
-        if (!trainingMutationsReady) return
+        if (!trainingMutationsReady || workoutTemplates.none { it.id == id }) return
+        val snapshot = trainingMutationSnapshot()
         selectedSessionId = id
-        persistTrainingState()
+        persistTrainingState(rollbackSnapshot = snapshot)
     }
 
     fun addExerciseToSelectedSession(
@@ -540,50 +774,83 @@ class TrainingViewModel private constructor(
         weightKg: Double? = exercise.defaultWeightKg,
         durationMinutes: Int? = exercise.defaultDurationMinutes,
         distanceKm: Double? = exercise.defaultDistanceKm
-    ) {
-        if (!trainingMutationsReady) return
-        val sessionId = selectedSessionId ?: return
-        val index = sessions.indexOfFirst { it.id == sessionId }
-        if (index < 0) return
-        if (sessions[index].exercises.any { it.exercise.id == exercise.id }) return
+    ): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        if (sets !in 1..20) {
+            return TrainingMutationResult.ValidationError("Sets must be between 1 and 20.")
+        }
+        val templateId = selectedSessionId
+            ?: return TrainingMutationResult.ValidationError("No workout is selected.")
+        val canonicalExercise = exerciseLibrary.firstOrNull { it.id == exercise.id }
+            ?: return TrainingMutationResult.ValidationError("Exercise is not in the current library.")
+        val index = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (index < 0) return TrainingMutationResult.ValidationError("Workout not found.")
+        if (workoutTemplates[index].exercises.any { it.exercise.id == canonicalExercise.id }) {
+            return TrainingMutationResult.ValidationError("Exercise is already in this workout.")
+        }
+        val snapshot = trainingMutationSnapshot()
         val target = ExerciseTarget(
             id = id("target"),
-            exercise = exercise,
+            exercise = canonicalExercise,
             sets = sets,
             reps = reps,
             weightKg = weightKg,
             durationMinutes = durationMinutes,
             distanceKm = distanceKm
         )
-        sessions[index] = sessions[index].copy(exercises = sessions[index].exercises + target)
-        persistTrainingState()
+        workoutTemplates[index] = workoutTemplates[index].copy(
+            exercises = workoutTemplates[index].exercises + target
+        )
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
     }
 
     fun removeExerciseFromSelectedSession(targetId: String) {
         if (!trainingMutationsReady) return
-        val sessionId = selectedSessionId ?: return
-        val index = sessions.indexOfFirst { it.id == sessionId }
-        if (index < 0) return
-        sessions[index] = sessions[index].copy(
-            exercises = sessions[index].exercises.filterNot { it.id == targetId }
+        val templateId = selectedSessionId ?: return
+        val index = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (index < 0 || workoutTemplates[index].exercises.none { it.id == targetId }) return
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates[index] = workoutTemplates[index].copy(
+            exercises = workoutTemplates[index].exercises.filterNot { it.id == targetId }
         )
-        persistTrainingState()
+        persistTrainingState(rollbackSnapshot = snapshot)
     }
 
-    fun updateSelectedExercise(targetId: String, sets: Int, reps: Int, weightKg: Double?, durationMinutes: Int?, distanceKm: Double?) {
-        if (!trainingMutationsReady) return
-        val sessionId = selectedSessionId ?: return
-        val index = sessions.indexOfFirst { it.id == sessionId }
-        if (index < 0) return
-        sessions[index] = sessions[index].copy(exercises = sessions[index].exercises.map { target ->
-            if (target.id == targetId) target.copy(sets = sets, reps = reps, weightKg = weightKg, durationMinutes = durationMinutes, distanceKm = distanceKm) else target
-        })
-        persistTrainingState()
+    fun updateSelectedExercise(
+        targetId: String,
+        sets: Int,
+        reps: Int,
+        weightKg: Double?,
+        durationMinutes: Int?,
+        distanceKm: Double?
+    ) {
+        if (!trainingMutationsReady || sets !in 1..20) return
+        val templateId = selectedSessionId ?: return
+        val index = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (index < 0 || workoutTemplates[index].exercises.none { it.id == targetId }) return
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates[index] = workoutTemplates[index].copy(
+            exercises = workoutTemplates[index].exercises.map { target ->
+                if (target.id == targetId) {
+                    target.copy(
+                        sets = sets,
+                        reps = reps,
+                        weightKg = weightKg,
+                        durationMinutes = durationMinutes,
+                        distanceKm = distanceKm
+                    )
+                } else {
+                    target
+                }
+            }
+        )
+        persistTrainingState(rollbackSnapshot = snapshot)
     }
 
     fun startWorkout(sessionId: String) {
         if (!trainingMutationsReady) return
-        val session = sessions.firstOrNull { it.id == sessionId } ?: return
+        val session = workoutTemplates.firstOrNull { it.id == sessionId } ?: return
         if (session.exercises.isEmpty()) return
         val startedAt = System.currentTimeMillis()
         activeWorkoutSessionId = sessionId
@@ -766,7 +1033,7 @@ class TrainingViewModel private constructor(
             .groupBy(WorkoutSetLog::targetId)
             .filterValues { sets -> sets.isNotEmpty() && sets.all(WorkoutSetLog::completed) }
             .keys
-        val session = sessions.firstOrNull { it.id == updated.sessionId }
+        val session = workoutTemplates.firstOrNull { it.id == updated.sessionId }
         val logicalCompleted = session?.completedLogicalTargetCount(
             completedTargets.associateWith { true }
         ) ?: completedTargets.size.coerceAtMost(updated.totalLogicalTargets)
@@ -810,7 +1077,21 @@ class TrainingViewModel private constructor(
         if (index >= 0) history.removeAt(index)
     }
 
-    fun activeSession(): TrainingSession? = sessions.firstOrNull { it.id == activeWorkoutSessionId }
+    fun activeSession(): TrainingSession? = activeWorkoutSessionId?.let(::compatibilitySession)
+    private fun compatibilitySession(templateId: String): TrainingSession? {
+        val template = workoutTemplates.firstOrNull { it.id == templateId } ?: return null
+        val weekday = weeklyDayPlans.firstOrNull {
+            !it.isRestDay && templateId in it.templateIds
+        }?.weekday ?: DayOfWeek.MONDAY
+        return TrainingSession(
+            id = template.id,
+            name = template.name,
+            weekday = weekday,
+            exercises = template.exercises,
+            guidance = template.guidance
+        )
+    }
+
 
     fun dismissWorkoutSummary() {
         if (!trainingMutationsReady) return
@@ -818,10 +1099,18 @@ class TrainingViewModel private constructor(
         persistTrainingState()
     }
 
-    fun selectedSession(): TrainingSession? = sessions.firstOrNull { it.id == selectedSessionId }
+    fun selectedSession(): TrainingSession? = selectedSessionId?.let(::compatibilitySession)
 
     fun sessionsForDate(date: LocalDate): List<TrainingSession> =
-        com.avitoohband.nutrun.sessionsForDate(sessions, scheduleOverrides, date)
+        templatesForDate(workoutTemplates, weeklyDayPlans, scheduleOverrides, date).map { template ->
+            TrainingSession(
+                id = template.id,
+                name = template.name,
+                weekday = date.dayOfWeek,
+                exercises = template.exercises,
+                guidance = template.guidance
+            )
+        }
 
     fun nextScheduledSession(
         fromDate: LocalDate = LocalDate.now()
@@ -869,9 +1158,9 @@ class TrainingViewModel private constructor(
         suggestionDecision = decision
         suggestedWeightKg = editedWeightKg
         if (decision == SuggestionDecision.ACCEPTED) {
-            sessions.indices.forEach { index ->
-                sessions[index] = sessions[index].copy(
-                    exercises = sessions[index].exercises.map { target ->
+            workoutTemplates.indices.forEach { index ->
+                workoutTemplates[index] = workoutTemplates[index].copy(
+                    exercises = workoutTemplates[index].exercises.map { target ->
                         if (target.exercise.id == "lat-pulldown") target.copy(weightKg = editedWeightKg) else target
                     }
                 )
@@ -885,83 +1174,136 @@ class TrainingViewModel private constructor(
         trialState = trialState.copy(isForcedFreePlan = true)
     }
 
-    private fun persistTrainingState(rescheduleSupplementReminders: Boolean = false) {
+    private fun trainingMutationSnapshot() = TrainingMutationSnapshot(
+        workoutTemplates = workoutTemplates.toList(),
+        weeklyDayPlans = weeklyDayPlans.toList(),
+        customExercises = customExercises.toList(),
+        scheduleOverrides = scheduleOverrides.toList(),
+        selectedSessionId = selectedSessionId,
+        activeWorkoutSessionId = activeWorkoutSessionId,
+        activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis,
+        completedExerciseIds = completedExerciseIds.toMap(),
+        activeSetLogs = activeSetLogs.mapValues { (_, sets) -> sets.toList() },
+        restTimerEndAtMillis = restTimerEndAtMillis
+    )
+
+    private fun restoreMutationSnapshot(snapshot: TrainingMutationSnapshot) {
+        workoutTemplates.clear()
+        workoutTemplates.addAll(snapshot.workoutTemplates)
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(snapshot.weeklyDayPlans)
+        customExercises.clear()
+        customExercises.addAll(snapshot.customExercises)
+        scheduleOverrides.clear()
+        scheduleOverrides.addAll(snapshot.scheduleOverrides)
+        selectedSessionId = snapshot.selectedSessionId
+        activeWorkoutSessionId = snapshot.activeWorkoutSessionId
+        activeWorkoutStartedAtMillis = snapshot.activeWorkoutStartedAtMillis
+        completedExerciseIds.clear()
+        completedExerciseIds.putAll(snapshot.completedExerciseIds)
+        activeSetLogs.clear()
+        activeSetLogs.putAll(snapshot.activeSetLogs)
+        restTimerEndAtMillis = snapshot.restTimerEndAtMillis
+    }
+
+    private fun persistTrainingState(
+        rescheduleSupplementReminders: Boolean = false,
+        rollbackSnapshot: TrainingMutationSnapshot? = null
+    ) {
         val userId = currentUserId ?: return
         val targetRuntime = runtime ?: return
         if (restoredUserId != userId) return
         supplementReschedulePending = supplementReschedulePending || rescheduleSupplementReminders
         persistenceGeneration += 1
         val generation = persistenceGeneration
+        if (rollbackSnapshot != null) mutationError = null
         persistJob?.cancel()
         persistJob = modelScope.launch {
             persistenceMutex.withLock {
-                if (
-                    generation != persistenceGeneration ||
-                    currentUserId != userId ||
-                    restoredUserId != userId
-                ) {
-                    return@withLock
-                }
-                val payload = currentTrainingPayload(supplements)
-                var operation = persistenceOperationFor(userId, payload)
+            if (
+                generation != persistenceGeneration ||
+                currentUserId != userId ||
+                restoredUserId != userId
+            ) {
+                return@withLock
+            }
+
+            var payload: String? = null
+            val previousRestoredPayload = restoredPayload
+            var operation: TrainingPersistenceOperation
+            try {
+                payload = currentTrainingPayload(supplements)
+                operation = persistenceOperationFor(userId, payload)
                 if (!operation.repositoryCompleted) {
-                    val previousRestoredPayload = restoredPayload
                     restoredPayload = payload
-                    try {
-                        targetRuntime.saveTrainingState(userId, payload)
-                    } catch (error: Exception) {
-                        if (restoredPayload == payload) restoredPayload = previousRestoredPayload
-                        throw error
-                    }
+                    targetRuntime.saveTrainingState(userId, payload)
                     operation = operation.copy(repositoryCompleted = true)
                     retainPersistenceOperation(operation)
                 }
-                if (generation != persistenceGeneration) return@withLock
-                if (
-                    targetRuntime.currentUserId() != userId ||
-                    currentUserId != userId
-                ) {
-                    return@withLock
+            } catch (error: Exception) {
+                if (payload != null && restoredPayload == payload) {
+                    restoredPayload = previousRestoredPayload
                 }
+                val persistedAccount = runCatching { targetRuntime.currentUserId() }.getOrNull()
+                if (
+                    rollbackSnapshot != null &&
+                    generation == persistenceGeneration &&
+                    currentUserId == userId &&
+                    restoredUserId == userId &&
+                    persistedAccount == userId
+                ) {
+                    restoreMutationSnapshot(rollbackSnapshot)
+                    mutationError = error.message ?: "Training state persistence failed."
+                }
+                return@withLock
+            }
 
-                val scheduleSupplements =
-                    supplementReschedulePending && !operation.supplementRescheduleCompleted
-                val systems = if (scheduleSupplements) {
-                    setOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS)
-                } else {
-                    setOf(ReminderSystem.TRAINING)
-                }
-                val scheduling = rescheduleReminderSystemsWithRecovery(
-                    userId = userId,
-                    hydration = {},
-                    training = {
-                        val settings = targetRuntime.currentTrainingReminderSettings(userId)
-                            ?: TrainingReminderSettingsEntity(userId = userId)
-                        targetRuntime.scheduleTraining(userId, settings)
-                    },
-                    supplements = {
-                        rescheduleSupplementReminders(userId, targetRuntime)
-                    },
-                    scheduleRecovery = targetRuntime::scheduleRecovery,
-                    systems = systems
-                )
-                if (
-                    generation != persistenceGeneration ||
-                    targetRuntime.currentUserId() != userId ||
-                    currentUserId != userId
-                ) {
-                    return@withLock
-                }
-                if (
-                    scheduleSupplements &&
-                    ReminderSystem.SUPPLEMENTS !in scheduling.failedSystems
-                ) {
-                    operation = operation.copy(supplementRescheduleCompleted = true)
-                    retainPersistenceOperation(operation)
-                }
-                if (supplementReschedulePending && operation.supplementRescheduleCompleted) {
-                    supplementReschedulePending = false
-                }
+            if (generation != persistenceGeneration) return@withLock
+            if (
+                targetRuntime.currentUserId() != userId ||
+                currentUserId != userId
+            ) {
+                return@withLock
+            }
+
+            val scheduleSupplements =
+                supplementReschedulePending && !operation.supplementRescheduleCompleted
+            val systems = if (scheduleSupplements) {
+                setOf(ReminderSystem.TRAINING, ReminderSystem.SUPPLEMENTS)
+            } else {
+                setOf(ReminderSystem.TRAINING)
+            }
+            val scheduling = rescheduleReminderSystemsWithRecovery(
+                userId = userId,
+                hydration = {},
+                training = {
+                    val settings = targetRuntime.currentTrainingReminderSettings(userId)
+                        ?: TrainingReminderSettingsEntity(userId = userId)
+                    targetRuntime.scheduleTraining(userId, settings)
+                },
+                supplements = {
+                    rescheduleSupplementReminders(userId, targetRuntime)
+                },
+                scheduleRecovery = targetRuntime::scheduleRecovery,
+                systems = systems
+            )
+            if (
+                generation != persistenceGeneration ||
+                targetRuntime.currentUserId() != userId ||
+                currentUserId != userId
+            ) {
+                return@withLock
+            }
+            if (
+                scheduleSupplements &&
+                ReminderSystem.SUPPLEMENTS !in scheduling.failedSystems
+            ) {
+                operation = operation.copy(supplementRescheduleCompleted = true)
+                retainPersistenceOperation(operation)
+            }
+            if (supplementReschedulePending && operation.supplementRescheduleCompleted) {
+                supplementReschedulePending = false
+            }
             }
         }
     }
@@ -969,7 +1311,6 @@ class TrainingViewModel private constructor(
     private fun currentTrainingPayload(supplements: List<Supplement>): String =
         encodeTrainingState(
             supplements = supplements,
-            sessions = sessions,
             history = history,
             selectedSessionId = selectedSessionId,
             activeWorkoutSessionId = activeWorkoutSessionId,
@@ -982,7 +1323,9 @@ class TrainingViewModel private constructor(
             activeSetLogs = activeSetLogs,
             activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis,
             defaultRestTimerSeconds = defaultRestTimerSeconds,
-            usesMetricUnits = usesMetricUnits
+            customExercises = customExercises,
+            workoutTemplates = workoutTemplates,
+            weeklyDayPlans = weeklyDayPlans
         )
 
     private suspend fun rescheduleSupplementReminders(
@@ -999,11 +1342,15 @@ class TrainingViewModel private constructor(
     }
 
     private fun restoreTrainingState(payload: String) {
-        decodeTrainingState(payload, exerciseLibrary)?.let { restored ->
+        decodeTrainingState(payload, builtInExercises)?.let { restored ->
             supplements.clear()
             supplements.addAll(restored.supplements)
-            sessions.clear()
-            sessions.addAll(restored.sessions)
+            customExercises.clear()
+            customExercises.addAll(restored.customExercises)
+            workoutTemplates.clear()
+            workoutTemplates.addAll(restored.workoutTemplates)
+            weeklyDayPlans.clear()
+            weeklyDayPlans.addAll(restored.weeklyDayPlans)
             history.clear()
             history.addAll(restored.history)
             selectedSessionId = restored.selectedSessionId
@@ -1020,15 +1367,18 @@ class TrainingViewModel private constructor(
             activeSetLogs.putAll(restored.activeSetLogs)
             activeWorkoutStartedAtMillis = restored.activeWorkoutStartedAtMillis
             defaultRestTimerSeconds = restored.defaultRestTimerSeconds
-            usesMetricUnits = restored.usesMetricUnits
+            legacyUsesMetricUnits = restored.legacyUsesMetricUnits
         }
     }
 
     private fun resetTrainingState() {
         supplements.clear()
         supplements.addAll(defaultSupplements())
-        sessions.clear()
-        sessions.addAll(defaultSessions(exerciseLibrary))
+        customExercises.clear()
+        workoutTemplates.clear()
+        workoutTemplates.addAll(defaultProgram.templates)
+        weeklyDayPlans.clear()
+        weeklyDayPlans.addAll(defaultProgram.dayPlans)
         history.clear()
         history.addAll(defaultTrainingHistory())
         workoutHistory.clear()
@@ -1038,6 +1388,7 @@ class TrainingViewModel private constructor(
         activeWorkoutSessionId = null
         activeWorkoutStartedAtMillis = null
         restTimerEndAtMillis = null
+        legacyUsesMetricUnits = null
         defaultRestTimerSeconds = 90
         usesMetricUnits = true
         completedExerciseIds.clear()

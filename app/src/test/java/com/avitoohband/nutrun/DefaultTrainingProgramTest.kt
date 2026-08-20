@@ -6,6 +6,7 @@ import com.avitoohband.nutrun.domain.HealthGoal
 import com.avitoohband.nutrun.domain.UnitSystem
 import java.time.DayOfWeek
 import java.time.LocalDate
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,10 +16,15 @@ import org.junit.Test
 
 class DefaultTrainingProgramTest {
     private val catalog = builtInExerciseCatalog()
+    private val program = defaultTrainingProgram(catalog)
+    private val templates = program.templates
+    private val dayPlans = program.dayPlans
     private val sessions = defaultSessions(catalog)
 
     @Test
     fun translatedWeeklyProgramHasExpectedDaysTitlesAndEmptyHistory() {
+        val cardio = templates.single { it.name == "Walk or Swim" }
+
         assertEquals(
             listOf(
                 DayOfWeek.SUNDAY,
@@ -26,15 +32,24 @@ class DefaultTrainingProgramTest {
                 DayOfWeek.TUESDAY,
                 DayOfWeek.WEDNESDAY,
                 DayOfWeek.THURSDAY,
-                DayOfWeek.FRIDAY
+                DayOfWeek.FRIDAY,
+                DayOfWeek.SATURDAY
             ),
-            sessions.map(TrainingSession::weekday)
+            dayPlans.map(WeeklyDayPlan::weekday)
         )
-        assertFalse(sessions.any { it.weekday == DayOfWeek.SATURDAY })
-        assertEquals(3, sessions.count { it.name == "Walk or Swim" })
-        assertEquals("Push + Biceps", sessions.first { it.weekday == DayOfWeek.MONDAY }.name)
-        assertEquals("Pull + Triceps", sessions.first { it.weekday == DayOfWeek.WEDNESDAY }.name)
-        assertEquals("Shoulders + Legs + HIIT", sessions.first { it.weekday == DayOfWeek.FRIDAY }.name)
+        assertEquals(
+            listOf(DayOfWeek.SUNDAY, DayOfWeek.TUESDAY, DayOfWeek.THURSDAY),
+            dayPlans.filter { cardio.id in it.templateIds }.map(WeeklyDayPlan::weekday)
+        )
+        assertEquals(
+            listOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
+            dayPlans.filter { it.templateIds.isNotEmpty() && cardio.id !in it.templateIds }
+                .map(WeeklyDayPlan::weekday)
+        )
+        assertTrue(dayPlans.single { it.weekday == DayOfWeek.SATURDAY }.isRestDay)
+        assertEquals("Push + Biceps", templates.single { it.id == "session-monday-push-biceps" }.name)
+        assertEquals("Pull + Triceps", templates.single { it.id == "session-wednesday-pull-triceps" }.name)
+        assertEquals("Shoulders + Legs + HIIT", templates.single { it.id == "session-friday-shoulders-legs" }.name)
         assertTrue(defaultTrainingHistory().isEmpty())
     }
 
@@ -104,8 +119,42 @@ class DefaultTrainingProgramTest {
                 suggestedWeightKg = 42.5
             )
         )
+        val legacySessions = JSONArray().apply {
+            sessions.forEach { session ->
+                put(
+                    JSONObject()
+                        .put("id", session.id)
+                        .put("name", session.name)
+                        .put("weekday", session.weekday.name)
+                        .put("guidance", JSONArray(session.guidance))
+                        .put("exercises", JSONArray().apply {
+                            session.exercises.forEach { target ->
+                                put(
+                                    JSONObject()
+                                        .put("id", target.id)
+                                        .put("exerciseId", target.exercise.id)
+                                        .put("sets", target.sets)
+                                        .put("reps", target.reps)
+                                        .put("maximumReps", target.maximumReps)
+                                        .put("weightKg", target.weightKg)
+                                        .put("durationMinutes", target.durationMinutes)
+                                        .put("maximumDurationMinutes", target.maximumDurationMinutes)
+                                        .put("intensityGuidance", target.intensityGuidance)
+                                        .put("alternativeGroupId", target.alternativeGroupId)
+                                        .put("distanceKm", target.distanceKm)
+                                )
+                            }
+                        })
+                )
+            }
+        }
+        payload.remove("schemaVersion")
+        payload.remove("customExercises")
+        payload.remove("workoutTemplates")
+        payload.remove("weeklyDayPlans")
+        payload.put("sessions", legacySessions)
         payload.put("isWorkoutPaused", true)
-        payload.getJSONArray("sessions").let { encodedSessions ->
+        legacySessions.let { encodedSessions ->
             repeat(encodedSessions.length()) { sessionIndex ->
                 val encodedSession = encodedSessions.getJSONObject(sessionIndex)
                 encodedSession.remove("guidance")
@@ -125,7 +174,15 @@ class DefaultTrainingProgramTest {
 
         assertFalse(restored.isWorkoutPaused)
         assertTrue(restored.sessions.all { it.guidance.isEmpty() })
-        assertEquals(listOf("Genuine workout - completed 4/5 exercises"), restored.history)
+        assertEquals(
+            listOf(
+                "Pull + Triceps - completed",
+                "Genuine workout - completed 4/5 exercises",
+                "Easy run - 4.2 km",
+                "Push + Biceps - completed"
+            ),
+            restored.history
+        )
         assertNull(restored.sessions.first().exercises.first().maximumDurationMinutes)
     }
 

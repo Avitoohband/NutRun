@@ -139,6 +139,8 @@ class NutRunRepository @Inject constructor(
     }
 
     fun trainingState(userId: String): Flow<TrainingStateEntity?> = dao.observeTrainingState(userId)
+    fun profileEntity(userId: String): Flow<UserProfileEntity?> = dao.observeProfile(userId)
+
 
     suspend fun claimLegacyData(userId: String, email: String) {
         val legacyEmail = dao.legacyProfileEmail()

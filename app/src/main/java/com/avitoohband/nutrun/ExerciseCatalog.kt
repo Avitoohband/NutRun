@@ -2,100 +2,19 @@ package com.avitoohband.nutrun
 
 fun builtInExerciseCatalog(): List<Exercise> {
     val originals = listOf(
-        Exercise("lat-pulldown", "Lat pulldown", "Strength", "Lats", "Biceps, upper back", "Pull toward the upper chest with control.", "Keep the shoulders down.", defaultWeightKg = 40.0),
+        Exercise("lat-pulldown", "Lat pulldown", "Machine", "Lats", "Biceps, upper back", "Pull toward the upper chest with control.", "Keep the shoulders down.", defaultWeightKg = 40.0),
         Exercise("push-up", "Push-up", "Bodyweight", "Chest, triceps", "Shoulders, core", "Keep a straight line and lower with control.", "Elevate the hands if form breaks."),
-        Exercise("goblet-squat", "Goblet squat", "Strength", "Quads, glutes", "Core, calves", "Sit between the hips and stand through the feet.", "Keep knees tracking naturally.", defaultWeightKg = 18.0),
+        Exercise("goblet-squat", "Goblet squat", "Free weights", "Quads, glutes", "Core, calves", "Sit between the hips and stand through the feet.", "Keep knees tracking naturally.", defaultWeightKg = 18.0),
         Exercise("easy-run", "Easy run", "Cardio", "Cardiovascular system", "Calves, glutes", "Run at a conversational effort.", "Slow down if you feel unwell.", defaultDurationMinutes = 30, defaultDistanceKm = 4.0),
         Exercise("freestyle-swim", "Freestyle swim", "Cardio", "Shoulders, back", "Core, hips", "Rotate through the torso with a relaxed stroke.", "Use a supervised environment.", defaultDurationMinutes = 20)
     )
     val entries = listOf(
-        "bench-press|Barbell bench press|Strength|Chest",
-        "incline-dumbbell-press|Incline dumbbell press|Strength|Upper chest",
-        "overhead-press|Barbell overhead press|Strength|Shoulders",
-        "dumbbell-shoulder-press|Dumbbell shoulder press|Strength|Shoulders",
-        "cable-fly|Cable fly|Strength|Chest",
-        "pec-deck|Pec deck|Strength|Chest",
-        "triceps-pushdown|Triceps pushdown|Strength|Triceps",
-        "overhead-triceps-extension|Overhead triceps extension|Strength|Triceps",
-        "barbell-curl|Barbell curl|Strength|Biceps",
-        "dumbbell-curl|Dumbbell curl|Strength|Biceps",
-        "hammer-curl|Hammer curl|Strength|Biceps, forearms",
-        "seated-cable-row|Seated cable row|Strength|Mid back",
-        "barbell-row|Barbell row|Strength|Upper back, lats",
-        "one-arm-dumbbell-row|One-arm dumbbell row|Strength|Lats",
-        "assisted-pull-up|Assisted pull-up|Strength|Lats, biceps",
-        "deadlift|Deadlift|Strength|Glutes, hamstrings",
-        "romanian-deadlift|Romanian deadlift|Strength|Hamstrings, glutes",
-        "hip-thrust|Hip thrust|Strength|Glutes",
-        "leg-press|Leg press|Strength|Quads, glutes",
-        "back-squat|Back squat|Strength|Quads, glutes",
-        "front-squat|Front squat|Strength|Quads, core",
-        "bulgarian-split-squat|Bulgarian split squat|Strength|Quads, glutes",
-        "walking-lunge|Walking lunge|Strength|Quads, glutes",
-        "leg-extension|Leg extension|Strength|Quads",
-        "leg-curl|Leg curl|Strength|Hamstrings",
-        "standing-calf-raise|Standing calf raise|Strength|Calves",
-        "cable-lateral-raise|Cable lateral raise|Strength|Shoulders",
-        "face-pull|Face pull|Strength|Rear shoulders, upper back",
-        "reverse-fly|Reverse fly|Strength|Rear shoulders",
-        "dumbbell-shrug|Dumbbell shrug|Strength|Trapezius",
-        "farmer-carry|Farmer carry|Strength|Grip, core",
-        "kettlebell-swing|Kettlebell swing|Strength|Glutes, hamstrings",
-        "landmine-press|Landmine press|Strength|Shoulders, chest",
-        "chest-supported-row|Chest-supported row|Strength|Upper back",
-        "hack-squat|Hack squat|Strength|Quads, glutes",
-        "cable-glute-kickback|Cable glute kickback|Strength|Glutes",
-        "hip-abduction|Hip abduction machine|Strength|Outer glutes",
-        "hip-adduction|Hip adduction machine|Strength|Inner thighs",
-        "cable-woodchop|Cable woodchop|Strength|Obliques, core",
-        "weighted-crunch|Weighted crunch|Strength|Abdominals",
-        "back-extension|Back extension|Strength|Lower back, glutes",
-        "machine-chest-press|Machine chest press|Strength|Chest",
-        "machine-shoulder-press|Machine shoulder press|Strength|Shoulders",
-        "bodyweight-squat|Bodyweight squat|Bodyweight|Quads, glutes",
-        "plank|Plank|Bodyweight|Core",
-        "side-plank|Side plank|Bodyweight|Obliques",
-        "glute-bridge|Glute bridge|Bodyweight|Glutes",
-        "reverse-lunge|Reverse lunge|Bodyweight|Quads, glutes",
-        "step-up|Step-up|Bodyweight|Quads, glutes",
-        "bench-dip|Bench dip|Bodyweight|Triceps",
-        "chin-up|Chin-up|Bodyweight|Lats, biceps",
-        "mountain-climber|Mountain climber|Bodyweight|Core, hip flexors",
-        "burpee|Burpee|Bodyweight|Full body",
-        "dead-bug|Dead bug|Bodyweight|Core",
-        "bird-dog|Bird dog|Bodyweight|Core, lower back",
-        "single-leg-calf-raise|Single-leg calf raise|Bodyweight|Calves",
-        "wall-sit|Wall sit|Bodyweight|Quads",
-        "brisk-walk|Brisk walk|Cardio|Cardiovascular system",
-        "cycling|Cycling|Cardio|Quads, cardiovascular system",
-        "rowing-ergometer|Rowing machine|Cardio|Back, cardiovascular system",
-        "elliptical|Elliptical|Cardio|Cardiovascular system",
-        "stair-climber|Stair climber|Cardio|Glutes, cardiovascular system",
-        "jump-rope|Jump rope|Cardio|Calves, cardiovascular system",
-        "interval-run|Interval run|Cardio|Cardiovascular system",
-        "indoor-march|Indoor march|Cardio|Hip flexors, calves",
-        "cat-cow|Cat-cow|Mobility|Spine",
-        "thoracic-rotation|Thoracic rotation|Mobility|Upper back",
-        "hip-flexor-stretch|Hip flexor stretch|Mobility|Hip flexors",
-        "hamstring-stretch|Hamstring stretch|Mobility|Hamstrings",
-        "calf-stretch|Calf stretch|Mobility|Calves",
-        "ankle-rocks|Ankle rocks|Mobility|Ankles",
-        "shoulder-circles|Shoulder circles|Mobility|Shoulders",
-        "band-shoulder-pass|Band shoulder pass-through|Mobility|Shoulders",
-        "deep-squat-hold|Deep squat hold|Mobility|Hips, ankles",
-        "child-pose|Child's pose|Mobility|Back, hips"
+        "bench-press|Barbell bench press|Free weights|Chest","incline-dumbbell-press|Incline dumbbell press|Free weights|Upper chest","overhead-press|Barbell overhead press|Free weights|Shoulders","dumbbell-shoulder-press|Dumbbell shoulder press|Free weights|Shoulders","cable-fly|Cable fly|Cable|Chest","pec-deck|Pec deck|Machine|Chest","triceps-pushdown|Triceps pushdown|Cable|Triceps","overhead-triceps-extension|Overhead triceps extension|Cable|Triceps","barbell-curl|Barbell curl|Free weights|Biceps","dumbbell-curl|Dumbbell curl|Free weights|Biceps","hammer-curl|Hammer curl|Free weights|Biceps, forearms","seated-cable-row|Seated cable row|Cable|Mid back","barbell-row|Barbell row|Free weights|Upper back, lats","one-arm-dumbbell-row|One-arm dumbbell row|Free weights|Lats","assisted-pull-up|Assisted pull-up|Machine|Lats, biceps","deadlift|Deadlift|Free weights|Glutes, hamstrings","romanian-deadlift|Romanian deadlift|Free weights|Hamstrings, glutes","hip-thrust|Hip thrust|Free weights|Glutes","leg-press|Leg press|Machine|Quads, glutes","back-squat|Back squat|Free weights|Quads, glutes","front-squat|Front squat|Free weights|Quads, core","bulgarian-split-squat|Bulgarian split squat|Free weights|Quads, glutes","walking-lunge|Walking lunge|Free weights|Quads, glutes","leg-extension|Leg extension|Machine|Quads","leg-curl|Leg curl|Machine|Hamstrings","standing-calf-raise|Standing calf raise|Free weights|Calves","cable-lateral-raise|Cable lateral raise|Cable|Shoulders","face-pull|Face pull|Cable|Rear shoulders, upper back","reverse-fly|Reverse fly|Free weights|Rear shoulders","dumbbell-shrug|Dumbbell shrug|Free weights|Trapezius","farmer-carry|Farmer carry|Free weights|Grip, core","kettlebell-swing|Kettlebell swing|Free weights|Glutes, hamstrings","landmine-press|Landmine press|Free weights|Shoulders, chest","chest-supported-row|Chest-supported row|Free weights|Upper back","hack-squat|Hack squat|Machine|Quads, glutes","cable-glute-kickback|Cable glute kickback|Cable|Glutes","hip-abduction|Hip abduction machine|Machine|Outer glutes","hip-adduction|Hip adduction machine|Machine|Inner thighs","cable-woodchop|Cable woodchop|Cable|Obliques, core","weighted-crunch|Weighted crunch|Machine|Abdominals","back-extension|Back extension|Machine|Lower back, glutes","machine-chest-press|Machine chest press|Machine|Chest","machine-shoulder-press|Machine shoulder press|Machine|Shoulders","bodyweight-squat|Bodyweight squat|Bodyweight|Quads, glutes","plank|Plank|Bodyweight|Core","side-plank|Side plank|Bodyweight|Obliques","glute-bridge|Glute bridge|Bodyweight|Glutes","reverse-lunge|Reverse lunge|Bodyweight|Quads, glutes","step-up|Step-up|Bodyweight|Quads, glutes","bench-dip|Bench dip|Bodyweight|Triceps","chin-up|Chin-up|Bodyweight|Lats, biceps","mountain-climber|Mountain climber|Bodyweight|Core, hip flexors","burpee|Burpee|Bodyweight|Full body","dead-bug|Dead bug|Bodyweight|Core","bird-dog|Bird dog|Bodyweight|Core, lower back","single-leg-calf-raise|Single-leg calf raise|Bodyweight|Calves","wall-sit|Wall sit|Bodyweight|Quads","brisk-walk|Brisk walk|Cardio|Cardiovascular system","cycling|Cycling|Cardio|Quads, cardiovascular system","rowing-ergometer|Rowing machine|Cardio|Back, cardiovascular system","elliptical|Elliptical|Cardio|Cardiovascular system","stair-climber|Stair climber|Cardio|Glutes, cardiovascular system","jump-rope|Jump rope|Cardio|Calves, cardiovascular system","interval-run|Interval run|Cardio|Cardiovascular system","indoor-march|Indoor march|Cardio|Hip flexors, calves","cat-cow|Cat-cow|Mobility|Spine","thoracic-rotation|Thoracic rotation|Mobility|Upper back","hip-flexor-stretch|Hip flexor stretch|Mobility|Hip flexors","hamstring-stretch|Hamstring stretch|Mobility|Hamstrings","calf-stretch|Calf stretch|Mobility|Calves","ankle-rocks|Ankle rocks|Mobility|Ankles","shoulder-circles|Shoulder circles|Mobility|Shoulders","band-shoulder-pass|Band shoulder pass-through|Mobility|Shoulders","deep-squat-hold|Deep squat hold|Mobility|Hips, ankles","child-pose|Child's pose|Mobility|Back, hips","pistol-squat|Pistol squat|Bodyweight|Quads, glutes"
     )
-    val expandedEntries = entries + "pistol-squat|Pistol squat|Bodyweight|Quads, glutes"
-    return originals + expandedEntries.map { row ->
-        val (id, name, category, muscles) = row.split('|')
-        Exercise(
-            id = id,
-            name = name,
-            category = category,
-            primaryMuscles = muscles,
-            secondaryMuscles = "",
-            instructions = "Use a controlled range of motion and steady breathing.",
-            safetyNote = "Stop if you feel sharp pain or cannot maintain good form."
-        )
-    }
+    val legacy = originals + entries.map { row -> val (id, name, category, muscles) = row.split('|'); Exercise(id, name, category, muscles, "", "Use a controlled range of motion and steady breathing.", "Stop if you feel sharp pain or cannot maintain good form.") }
+    return requireUniqueExerciseIds(legacy + builtInExerciseSeeds())
 }
+internal fun requireUniqueExerciseIds(catalog: List<Exercise>): List<Exercise> =
+    catalog.also { exercises ->
+        require(exercises.map(Exercise::id).distinct().size == exercises.size) { "Built-in exercise catalog contains duplicate IDs" }
+    }
