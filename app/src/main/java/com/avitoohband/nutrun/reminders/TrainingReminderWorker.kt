@@ -18,12 +18,13 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.avitoohband.nutrun.MainActivity
 import com.avitoohband.nutrun.builtInExerciseCatalog
+import com.avitoohband.nutrun.PersistedTrainingState
+import com.avitoohband.nutrun.templatesForDate
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunDatabase
 import com.avitoohband.nutrun.data.ReminderDeliveryEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.decodeTrainingState
-import com.avitoohband.nutrun.sessionsForDate
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Duration
 import java.time.LocalDate
@@ -36,6 +37,14 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 
 enum class TrainingReminderType { PREVIOUS_DAY, SAME_DAY }
+
+fun trainingReminderNames(
+    state: PersistedTrainingState?,
+    date: LocalDate
+): List<String> = state?.let {
+    templatesForDate(it.workoutTemplates, it.weeklyDayPlans, it.scheduleOverrides, date)
+        .map { template -> template.name }
+}.orEmpty()
 
 class TrainingReminderWorker(
     appContext: Context,
@@ -64,12 +73,7 @@ class TrainingReminderWorker(
             }
             val state = dao.observeTrainingState(userId).first()
                 ?.let { decodeTrainingState(it.payloadJson, builtInExerciseCatalog()) }
-            val names = sessionsForDate(
-                sessions = state?.sessions.orEmpty(),
-                overrides = state?.scheduleOverrides.orEmpty(),
-                date = trainingDate
-            )
-                .map { it.name }
+            val names = trainingReminderNames(state, trainingDate)
             if (names.isEmpty()) return Result.success()
             if (dao.reminderDelivered(userId, type.name, trainingDate.toString())) {
                 return Result.success()
