@@ -12,6 +12,8 @@ import androidx.lifecycle.viewModelScope
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunRepository
 import com.avitoohband.nutrun.data.SessionPreferences
+import com.avitoohband.nutrun.data.UserProfileEntity
+import com.avitoohband.nutrun.domain.UnitSystem
 import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingStateEntity
@@ -30,12 +32,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+internal fun resolveMetricUnits(profile: UserProfileEntity?, legacyMetric: Boolean?): Boolean =
+    profile?.unitSystem?.let { UnitSystem.valueOf(it) == UnitSystem.METRIC }
+        ?: legacyMetric
+        ?: true
 
 data class SupplementReminderConfig(
     val enabled: Boolean,
@@ -86,6 +95,7 @@ private data class TrainingPersistenceOperation(
 internal interface TrainingViewModelRuntime {
     val session: Flow<SessionPreferences>
     fun trainingState(userId: String): Flow<TrainingStateEntity?>
+    fun profile(userId: String): Flow<UserProfileEntity?> = flowOf(null)
     suspend fun currentUserId(): String?
     suspend fun saveTrainingState(userId: String, payload: String)
     suspend fun currentTrainingReminderSettings(userId: String): TrainingReminderSettingsEntity?
@@ -106,6 +116,8 @@ private class ProductionTrainingViewModelRuntime(
     override val session: Flow<SessionPreferences> = preferences.session
 
     override fun trainingState(userId: String): Flow<TrainingStateEntity?> = repository.trainingState(userId)
+    override fun profile(userId: String): Flow<UserProfileEntity?> = repository.profileEntity(userId)
+
 
     override suspend fun currentUserId(): String? = preferences.currentSession().authenticatedUserId
 
@@ -186,8 +198,11 @@ class TrainingViewModel private constructor(
     private var persistJob: Job? = null
     private val persistenceMutex = Mutex()
     private var persistenceGeneration = 0L
+    private var legacyUsesMetricUnits: Boolean? = null
     private var supplementReschedulePending = false
     private var restoredPayload: String? = null
+    var profileUnitReadyAccountId by mutableStateOf<String?>(null)
+        private set
     private var restoredUserId: String? = null
     private var persistenceOperation: TrainingPersistenceOperation? = null
 
@@ -197,7 +212,7 @@ class TrainingViewModel private constructor(
         private set
     val trainingMutationsReady: Boolean
         get() = runtime == null || (
-            supplementReminderUpdatesReady &&
+            supplementReminderUpdatesReady && profileUnitReadyAccountId == currentUserId &&
                 currentUserId != null &&
                 restoredUserId == currentUserId
             )
@@ -266,9 +281,12 @@ class TrainingViewModel private constructor(
                     persistenceOperation = null
                     supplementReminderReadyAccountId = null
                     supplementReminderUpdatesReady = false
+                    profileUnitReadyAccountId = null
                     resetTrainingState()
                     session.authenticatedUserId?.let { userId ->
-                        runtime.trainingState(userId).collectLatest { state ->
+                        runtime.trainingState(userId)
+                            .combine(runtime.profile(userId)) { state, profile -> state to profile }
+                            .collectLatest { (state, profile) ->
                             state?.payloadJson?.let {
                                 if (it != restoredPayload) {
                                     persistJob?.cancel()
@@ -281,10 +299,12 @@ class TrainingViewModel private constructor(
                                 }
                             }
                             if (currentUserId == userId) {
+                            usesMetricUnits = resolveMetricUnits(profile, legacyUsesMetricUnits)
                                 restoredUserId = userId
                                 supplementReminderReadyAccountId = userId
                                 supplementReminderUpdatesReady = true
                             }
+                                profileUnitReadyAccountId = userId
                         }
                     }
                 }
@@ -298,12 +318,6 @@ class TrainingViewModel private constructor(
 
     fun setNotificationPermission(granted: Boolean) {
         notificationPermissionGranted = granted
-    }
-
-    fun updateUsesMetricUnits(metric: Boolean) {
-        if (!trainingMutationsReady) return
-        if (usesMetricUnits == metric) return
-        usesMetricUnits = metric
     }
 
     fun toggleSupplement(id: String, checked: Boolean) {
@@ -1353,7 +1367,7 @@ class TrainingViewModel private constructor(
             activeSetLogs.putAll(restored.activeSetLogs)
             activeWorkoutStartedAtMillis = restored.activeWorkoutStartedAtMillis
             defaultRestTimerSeconds = restored.defaultRestTimerSeconds
-            restored.legacyUsesMetricUnits?.let { usesMetricUnits = it }
+            legacyUsesMetricUnits = restored.legacyUsesMetricUnits
         }
     }
 
@@ -1374,6 +1388,7 @@ class TrainingViewModel private constructor(
         activeWorkoutSessionId = null
         activeWorkoutStartedAtMillis = null
         restTimerEndAtMillis = null
+        legacyUsesMetricUnits = null
         defaultRestTimerSeconds = 90
         usesMetricUnits = true
         completedExerciseIds.clear()

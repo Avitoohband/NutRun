@@ -1166,12 +1166,6 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                     }
                 }
             }
-            item {
-                WeightUnitSelector(
-                    metric = model.usesMetricUnits,
-                    onSelected = model::updateUsesMetricUnits
-                )
-            }
             if (session.exercises.any { it.alternativeGroupId != null }) {
                 item {
                     Text(
@@ -1289,12 +1283,6 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                     Text("Rest ${model.defaultRestTimerSeconds}s")
                 }
             }
-        }
-        item {
-            WeightUnitSelector(
-                metric = model.usesMetricUnits,
-                onSelected = model::updateUsesMetricUnits
-            )
         }
         item { SectionHeading("This week") }
         items(trainingWeek(), key = { it.toString() }) { date ->
@@ -2196,7 +2184,6 @@ private fun ProgressScreen(
                 exerciseLibrary = training.exerciseLibrary,
                 metric = training.usesMetricUnits,
                 onBack = { selectedWorkoutId = null },
-                onUnitChange = training::updateUsesMetricUnits,
                 onSave = training::updateWorkoutRecord,
                 onDelete = {
                     training.deleteWorkoutRecord(workout.id)
@@ -2382,7 +2369,6 @@ private fun WorkoutDetailsScreen(
     exerciseLibrary: List<Exercise>,
     metric: Boolean,
     onBack: () -> Unit,
-    onUnitChange: (Boolean) -> Unit,
     onSave: (WorkoutRecord) -> Unit,
     onDelete: () -> Unit
 ) {
@@ -2393,7 +2379,6 @@ private fun WorkoutDetailsScreen(
             workout = workout,
             exerciseLibrary = exerciseLibrary,
             metric = metric,
-            onUnitChange = onUnitChange,
             onCancel = { editing = false },
             onSave = {
                 onSave(it)
@@ -2492,9 +2477,6 @@ private fun WorkoutDetailsScreen(
                 )
             }
         }
-        item {
-            WeightUnitSelector(metric = metric, onSelected = onUnitChange)
-        }
         item { SectionHeading("Exercises") }
         if (setsByExercise.isEmpty()) {
             item {
@@ -2553,7 +2535,6 @@ private fun WorkoutHistoryEditScreen(
     workout: WorkoutRecord,
     exerciseLibrary: List<Exercise>,
     metric: Boolean,
-    onUnitChange: (Boolean) -> Unit,
     onCancel: () -> Unit,
     onSave: (WorkoutRecord) -> Unit
 ) {
@@ -2590,9 +2571,6 @@ private fun WorkoutHistoryEditScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
-        }
-        item {
-            WeightUnitSelector(metric = metric, onSelected = onUnitChange)
         }
         item {
             OutlinedTextField(
@@ -3827,33 +3805,6 @@ private fun RestTimerBar(
             }
             TextButton(onClick = onAddTime) { Text("+30 sec") }
             TextButton(onClick = onSkip) { Text("Skip") }
-        }
-    }
-}
-
-@Composable
-private fun WeightUnitSelector(
-    metric: Boolean,
-    onSelected: (Boolean) -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text("Weight unit", fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = metric,
-                onClick = { onSelected(true) },
-                modifier = Modifier.testTag("weight-unit-kg"),
-                label = { Text("Kilograms (kg)") }
-            )
-            FilterChip(
-                selected = !metric,
-                onClick = { onSelected(false) },
-                modifier = Modifier.testTag("weight-unit-lb"),
-                label = { Text("Pounds (lb)") }
-            )
         }
     }
 }

@@ -1209,18 +1209,15 @@ class TrainingViewModelTest {
     }
 
     @Test
-    fun progressionSuggestionRecalculatesForUnitChangesWithoutChangingActiveLogs() {
+    fun progressionSuggestionUsesTheProfileDerivedDisplayUnitWithoutChangingActiveLogs() {
         val (model, session, target) = weightedTargetFixture()
         finishSuccessfulWorkout(model, session, target)
         model.startWorkout(session.id)
         val prefilledLogs = model.activeSetLogs[target.id].orEmpty()
 
-        val metricSuggestion = requireNotNull(model.progressionSuggestion(target))
-        model.updateUsesMetricUnits(false)
-        val imperialSuggestion = requireNotNull(model.progressionSuggestion(target))
+        val suggestion = requireNotNull(model.progressionSuggestion(target))
 
-        assertEquals(62.5, metricSuggestion.suggestedWeightKg, 0.001)
-        assertEquals(62.268, imperialSuggestion.suggestedWeightKg, 0.001)
+        assertEquals(62.5, suggestion.suggestedWeightKg, 0.001)
         assertEquals(prefilledLogs, model.activeSetLogs[target.id])
         assertEquals(60.0, sessionTarget(model, session, target).weightKg!!, 0.001)
     }
@@ -1373,21 +1370,6 @@ class TrainingViewModelTest {
         val remaining = model.restTimerEndAtMillis!! - beforeStart
         assertEquals(120, model.defaultRestTimerSeconds)
         assertTrue(remaining in 119_000L..121_000L)
-    }
-
-    @Test
-    fun weightUnitCanSwitchBetweenKilogramsAndPounds() {
-        val model = TrainingViewModel(null, null)
-
-        model.updateUsesMetricUnits(false)
-
-        assertFalse(model.usesMetricUnits)
-        assertEquals("132.3 lb", displayWeight(60.0, model.usesMetricUnits))
-
-        model.updateUsesMetricUnits(true)
-
-        assertTrue(model.usesMetricUnits)
-        assertEquals("60 kg", displayWeight(60.0, model.usesMetricUnits))
     }
 
     @Test
@@ -1549,23 +1531,6 @@ class TrainingViewModelTest {
         minute = reminderMinute
     )
 
-    @Test
-    fun unitPreferenceChangeDoesNotPersistTrainingStateV2() = runBlocking {
-        val runtime = FakeTrainingViewModelRuntime(
-            session = SessionPreferences(authenticatedUserId = "account-a")
-        )
-        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", trainingPayload("Stored"), 1L))
-        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
-        withTimeout(5_000) {
-            while (!model.trainingMutationsReady) yield()
-        }
-
-        model.updateUsesMetricUnits(false)
-        yield()
-
-        assertFalse(model.usesMetricUnits)
-        assertTrue(runtime.savedPayloads.isEmpty())
-    }
     @Test
     fun restoringV2CanonicalTrainingStatePreservesItAcrossCurrentViewModelSave() = runBlocking {
         val runtime = FakeTrainingViewModelRuntime(

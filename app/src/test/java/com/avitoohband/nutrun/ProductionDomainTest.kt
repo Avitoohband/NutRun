@@ -27,6 +27,20 @@ import org.junit.Test
 
 class ProductionDomainTest {
     @Test
+    fun profileUnitOverridesLegacyTrainingUnitAndMissingProfileFallsBackSafely() {
+        val imperial = profileEntity(com.avitoohband.nutrun.domain.UnitSystem.IMPERIAL)
+        val metric = profileEntity(com.avitoohband.nutrun.domain.UnitSystem.METRIC)
+        assertFalse(resolveMetricUnits(imperial, true))
+        assertTrue(resolveMetricUnits(metric, false))
+        assertFalse(resolveMetricUnits(null, false))
+        assertTrue(resolveMetricUnits(null, true))
+        assertTrue(resolveMetricUnits(null, null))
+    }
+
+    private fun profileEntity(unitSystem: com.avitoohband.nutrun.domain.UnitSystem) =
+        com.avitoohband.nutrun.data.UserProfileEntity("profile:test", "test", "test@example.com", "1990-01-01", "MALE", 175.0, 75.0, "MODERATE", "MAINTAIN", unitSystem.name, 2_000, 0L)
+
+    @Test
     fun healthEstimateUsesMifflinStJeorAndGoalAdjustment() {
         val estimate = calculateHealthEstimate(
             birthDate = LocalDate.of(1996, 1, 1),
