@@ -4,7 +4,7 @@
 
 Task 10 is implemented and validated. Tasks 11-19 remain planned and have not started.
 
-Task 10 starts from `2b0189d52c5d5a32509e0b11c482db68de998d1d` on `origin/main`. Its implementation is committed locally on:
+Task 10 starts from `2b0189d52c5d5a32509e0b11c482db68de998d1d` on `origin/main`. Its implementation was developed on:
 
 ```text
 Worktree: C:\Users\Avi_OP_PC\Documents\FitnessApp\.issue-2-worktree
@@ -12,7 +12,7 @@ Branch: codex/task-10-active-workout-focus
 Upstream: origin/main
 ```
 
-Nothing from Task 10 has been pushed. Inspect `git status --short --branch` and `git log --oneline origin/main..HEAD` before resuming or integrating this branch.
+Task 10 is integrated into `main` and pushed to `origin/main` after the validation recorded below. Inspect `git status --short --branch` and confirm local and remote heads match before resuming.
 
 Customer acceptance issue #5 remains open and must not be closed as part of Tasks 10-19 engineering work.
 
@@ -109,8 +109,8 @@ Do not run Task 10 and Task 11 in parallel. Both own the Training screen and `Ma
 When the user says to start Task 11:
 
 1. Read the Task 11 plan and this handover completely.
-2. Confirm how the user wants the local Task 10 branch integrated; do not assume it has been pushed or merged.
-3. Create the Task 11 branch from the integrated Task 10 commit.
+2. Confirm local `main` matches `origin/main` and contains Task 10 documentation commit `a61e262`.
+3. Create the Task 11 branch from the current `main` head.
 4. Update this handover with the new branch, starting commit, scope, and baseline result before editing production files.
 5. Run the focused existing Training tests before editing.
 
