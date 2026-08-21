@@ -8,6 +8,8 @@
 
 **Validation record:** See `docs/testing/task-5-9-validation.md`. The complete JVM, lint, APK, Android-test APK, and connected-emulator results are recorded there.
 
+**Post-delivery UX audit:** Tasks 10-19 are documented in `docs/plans/04-ux-ui-improvement-backlog.md`, indexed at `docs/superpowers/plans/2026-08-21-ux-ui-task-index.md`, and handed over in `docs/handovers/2026-08-21-ux-ui-tasks-10-19-handover.md`. Task 10 is complete and validated; Tasks 11-19 remain planned, and customer acceptance remains tracked in issue #5.
+
 **Manual-testing note:** Direct Windows UI automation could not initialize because the desktop helper failed its sandbox ACL setup twice. The outstanding Task 7 operator flows were executed against `emulator-5554` through connected Compose instrumentation using the actual controls and stable UI tags. Customer acceptance remains tracked separately in issue #5.
 
 **Repository state:** The final test tags, interaction tests, handover, and validation record are included in the closing verification commit pushed to `main`.
