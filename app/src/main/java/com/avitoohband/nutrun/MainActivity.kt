@@ -1047,6 +1047,25 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         mutableStateOf<Pair<TrainingSession, LocalDate>?>(null)
     }
     var templateDetailsId by remember { mutableStateOf<String?>(null) }
+    var planningMode by rememberSaveable {
+        mutableStateOf(TrainingPlanningMode.SCHEDULE)
+    }
+    var assignmentDay by remember { mutableStateOf<DayOfWeek?>(null) }
+    assignmentDay?.let { day ->
+        AssignmentDialog(
+            day = day,
+            templates = model.workoutTemplates,
+            initialTemplateIds = model.weeklyDayPlans
+                .firstOrNull { it.weekday == day }
+                ?.templateIds
+                .orEmpty(),
+            onDismiss = { assignmentDay = null },
+            onSave = { templateIds ->
+                model.replaceAssignments(day, templateIds)
+                assignmentDay = null
+            }
+        )
+    }
     if (addSession) {
         AddTrainingSessionDialog(
             onDismiss = { addSession = false },
@@ -1184,7 +1203,10 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         }
         TrainingPlanningContent(
             model = model,
+            mode = planningMode,
+            onModeChange = { planningMode = it },
             onOpenTemplate = { templateDetailsId = it.id },
+            onAssignDay = { assignmentDay = it },
             modifier = Modifier.weight(1f)
         )
     }
