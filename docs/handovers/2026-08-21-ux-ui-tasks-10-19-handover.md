@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Task 10 is implemented and validated. Tasks 11-19 remain planned and have not started.
+Task 10 is implemented, validated, and pushed. Task 11 is in progress. Tasks 12-19 remain planned.
 
 Task 10 starts from `2b0189d52c5d5a32509e0b11c482db68de998d1d` on `origin/main`. Its implementation was developed on:
 
@@ -98,12 +98,45 @@ Known limitations retained intentionally:
 - After a snapshot-free cold boot, the interrupted `assignedWorkoutDetailsOpenEditorWithoutStartingWorkout` test passed alone: 1/1.
 - The complete clean-boot `connectedDebugAndroidTest` rerun passed: 47/47, zero skipped, zero failed, in 1 minute 29 seconds.
 
+## Task 11 In Progress
+
+Task 11 started from pushed `main` commit `1f63df220a043b875a1021695583d2d0bcb6919a` in:
+
+```text
+Worktree: C:\Users\Avi_OP_PC\Documents\FitnessApp\.issue-2-worktree
+Branch: codex/task-11-training-information-architecture
+```
+
+Scope:
+
+- Separate Schedule and Workouts into saveable planning modes with compact weekday rows.
+- Add full-height searchable, ordered workout assignment.
+- Convert workout editing to a full-screen workflow with duplicate and explicit library actions.
+- Preserve Task 10 `ActiveWorkoutContent`, schema version 2, stable IDs, history, unit ownership, and account isolation.
+
+Primary planned files:
+
+- `TrainingPlanningContent.kt`, `WorkoutAssignmentContent.kt`, `WorkoutEditorContent.kt`, `WorkoutPlanning.kt`
+- `TrainingViewModel.kt`, `MainActivity.kt`
+- `WorkoutPlanningTest.kt`, `TrainingViewModelTest.kt`, `TrainingInformationArchitectureTest.kt`, `ProductionFlowTest.kt`
+
+Dependency commits: Task 10 commits `5a151a1` through `b3835e9`, documentation commits `a61e262`, `dcc53a9`, and `1f63df2`.
+
+Baseline on `emulator-5554`, Pixel 10 AVD:
+
+- `TrainingViewModelTest`: passed.
+- `TrainingPlanningComposeTest`, `WorkoutEditorComposeTest`, and `ActiveWorkoutContentTest`: 13/13 passed, zero skipped, zero failed.
+
+Planned completion gate: focused RED/GREEN checks for each slice, then `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`, full `connectedDebugAndroidTest`, Markdown-link validation, and `git diff --check`.
+
+Customer acceptance issue #5 remains open.
+
 ## Execution Order
 
 Recommended order:
 
 1. Task 10 - Active Workout Focus Mode (complete).
-2. Task 11 - Training information architecture and full-screen editor (next).
+2. Task 11 - Training information architecture and full-screen editor (in progress).
 3. Task 12 - Reminder settings and time controls.
 4. Task 13 - Shared forms and validation.
 5. Task 14 - Today dashboard.

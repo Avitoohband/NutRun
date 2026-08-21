@@ -1,6 +1,6 @@
 # NutRun UX/UI Tasks 10-19 Plan Index
 
-**Status:** Task 10 completed and validated; Tasks 11-19 planned.
+**Status:** Task 10 completed and validated; Task 11 in progress; Tasks 12-19 planned.
 
 **Audit/spec:** [`../../plans/04-ux-ui-improvement-backlog.md`](../../plans/04-ux-ui-improvement-backlog.md)
 
@@ -11,7 +11,7 @@
 | Order | Plan | Priority | Estimate | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 10 | [`Task 10 - Active Workout Focus Mode`](2026-08-21-task-10-active-workout-focus-mode.md) | P0 | 4-6 days | Tasks 1-9 baseline | Completed and validated |
-| 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | Ready to start |
+| 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | In progress |
 | 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Tasks 1-9 baseline | Planned |
 | 13 | [`Task 13 - Form Components and Validation`](2026-08-21-task-13-form-components-validation.md) | P1 | 3-4 days | Task 12 may reuse time-input conventions | Planned |
 | 14 | [`Task 14 - Today Dashboard`](2026-08-21-task-14-today-dashboard.md) | P1 | 2-3 days | Stable navigation from Tasks 10-13 | Planned |

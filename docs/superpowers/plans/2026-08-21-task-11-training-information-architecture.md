@@ -10,6 +10,8 @@
 
 **Spec:** `docs/plans/04-ux-ui-improvement-backlog.md`, Task 11.
 
+**Status:** In progress on `codex/task-11-training-information-architecture` from `1f63df2`.
+
 ## Global Constraints
 
 - Preserve training JSON schema version 2 and every stable workout/exercise ID.
