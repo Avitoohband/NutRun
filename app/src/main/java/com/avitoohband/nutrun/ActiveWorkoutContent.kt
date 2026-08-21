@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -63,6 +64,48 @@ internal fun ActiveWorkoutContent(
     LaunchedEffect(session.id, targets.size) {
         focusedIndex = focusedIndex.coerceIn(0, targets.lastIndex)
     }
+    var showFinishReview by rememberSaveable(session.id) { mutableStateOf(false) }
+    val completedLogicalTargets = session.completedLogicalTargetCount(model.completedExerciseIds)
+    val totalLogicalTargets = session.logicalTargetCount()
+    fun requestFinish() {
+        if (completedLogicalTargets < totalLogicalTargets) {
+            showFinishReview = true
+        } else {
+            onFinishRequest()
+        }
+    }
+    if (showFinishReview) {
+        AlertDialog(
+            onDismissRequest = { showFinishReview = false },
+            modifier = Modifier.testTag("incomplete-workout-review"),
+            title = { Text("Finish incomplete workout?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("$completedLogicalTargets of $totalLogicalTargets targets complete.")
+                    Text("Unfinished targets will be saved as incomplete in workout history.")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showFinishReview = false
+                        onFinishRequest()
+                    },
+                    modifier = Modifier.testTag("finish-anyway")
+                ) {
+                    Text("Finish anyway")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showFinishReview = false },
+                    modifier = Modifier.testTag("keep-training")
+                ) {
+                    Text("Keep training")
+                }
+            }
+        )
+    }
     val target = targets[focusedIndex.coerceIn(0, targets.lastIndex)]
 
     Scaffold(
@@ -105,7 +148,7 @@ internal fun ActiveWorkoutContent(
                 onPrevious = { focusedIndex = (focusedIndex - 1).coerceAtLeast(0) },
                 onNext = { focusedIndex = (focusedIndex + 1).coerceAtMost(targets.lastIndex) },
                 onCancelRequest = onCancelRequest,
-                onFinishRequest = onFinishRequest
+                onFinishRequest = ::requestFinish
             )
         }
     ) { innerPadding ->
@@ -203,7 +246,7 @@ private fun ActiveExerciseCard(model: TrainingViewModel, target: ExerciseTarget)
         ) {
             if (target.alternativeGroupId != null) {
                 Text(
-                    "Choose one",
+                    "Choose one cardio option.",
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -341,7 +384,7 @@ private fun WorkoutSetEditor(
         WorkoutDecimalField(
             value = input.rpe,
             onValueChange = { submit(input.copy(rpe = it)) },
-            label = "RPE (0-10)",
+            label = "RPE",
             error = validation.rpeError,
             tag = "workout-effort-${set.id}"
         )

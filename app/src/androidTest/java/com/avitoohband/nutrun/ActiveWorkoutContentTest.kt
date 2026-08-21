@@ -76,4 +76,59 @@ class ActiveWorkoutContentTest {
         composeRule.onNodeWithTag("workout-weight-${firstSet.id}")
             .assertTextContains("75")
     }
+
+    @Test
+    fun incompleteFinishRequiresExplicitConfirmation() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        var finishRequests = 0
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = { finishRequests += 1 }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("finish-workout").performClick()
+
+        composeRule.onNodeWithTag("incomplete-workout-review").assertIsDisplayed()
+        composeRule.onNodeWithText("0 of 6 targets complete.").assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(0, finishRequests) }
+        composeRule.onNodeWithTag("keep-training").performClick()
+        composeRule.onNodeWithTag("incomplete-workout-review").assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(0, finishRequests) }
+
+        composeRule.onNodeWithTag("finish-workout").performClick()
+        composeRule.onNodeWithTag("finish-anyway").performClick()
+        composeRule.runOnIdle { assertEquals(1, finishRequests) }
+    }
+
+    @Test
+    fun completeWorkoutFinishesWithoutReview() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-sunday-cardio" }
+        model.startWorkout(session.id)
+        model.toggleExerciseComplete(session.exercises.first().id, completed = true)
+        var finishRequests = 0
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = { finishRequests += 1 }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("finish-workout").performClick()
+
+        composeRule.onNodeWithTag("incomplete-workout-review").assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(1, finishRequests) }
+    }
 }

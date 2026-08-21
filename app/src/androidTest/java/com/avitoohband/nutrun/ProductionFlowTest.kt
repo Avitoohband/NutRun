@@ -136,6 +136,7 @@ class ProductionFlowTest {
         composeRule.onNodeWithText("120 sec").performClick()
         composeRule.onNodeWithText("Save").performClick()
         composeRule.onNodeWithText("Finish").performClick()
+        composeRule.onNodeWithTag("finish-anyway").performClick()
         composeRule.onNodeWithText("Done").performClick()
         composeRule.onNodeWithTag("bottom-nav-progress").performClick()
         composeRule.onNodeWithTag("recent-training-heading").performScrollTo()
@@ -1238,6 +1239,31 @@ class ProgressionSuggestionComposeTest {
             assertEquals(NotificationManager.IMPORTANCE_HIGH, channel?.importance)
             assertEquals(AudioAttributes.USAGE_ALARM, channel?.audioAttributes?.usage)
             assertTrue(channel?.shouldVibrate() == true)
+        }
+    }
+
+    @Test
+    fun trainingScreenDoesNotSaveIncompleteWorkoutBeforeConfirmation() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingScreen(model)
+            }
+        }
+
+        composeRule.onNodeWithTag("finish-workout").performClick()
+
+        composeRule.onNodeWithTag("incomplete-workout-review").assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertTrue(model.workoutHistory.isEmpty())
+            assertEquals(session.id, model.activeWorkoutSessionId)
+        }
+        composeRule.onNodeWithTag("finish-anyway").performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, model.workoutHistory.size)
+            assertEquals(null, model.activeWorkoutSessionId)
         }
     }
 }
