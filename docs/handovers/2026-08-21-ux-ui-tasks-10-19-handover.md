@@ -90,6 +90,14 @@ Known limitations retained intentionally:
 - Invalid partial text is retained while navigating exercises in the active screen, but invalid UI-only drafts are not persisted across process death. Valid submitted values remain persisted through the existing active-workout state.
 - Task 10 does not change Room, REST, MCP, or training JSON schemas.
 
+### Main Integration Validation
+
+- Local `main` was fast-forwarded to current `origin/main`, then fast-forwarded through the Task 10 commits.
+- `testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest` passed on merged `main` in 1 minute 22 seconds.
+- The first merged connected run was interrupted after 37 passing tests when the Android emulator `system_server` watchdog killed the OS. Logcat identified a 180-second hang in `ScreenCaptureInternal.nativeCaptureLayers` holding the WindowManager global lock; the test report contained no app assertion failure.
+- After a snapshot-free cold boot, the interrupted `assignedWorkoutDetailsOpenEditorWithoutStartingWorkout` test passed alone: 1/1.
+- The complete clean-boot `connectedDebugAndroidTest` rerun passed: 47/47, zero skipped, zero failed, in 1 minute 29 seconds.
+
 ## Execution Order
 
 Recommended order:
