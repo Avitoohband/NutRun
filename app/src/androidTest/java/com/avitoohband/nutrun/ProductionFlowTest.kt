@@ -945,6 +945,79 @@ class TrainingPlanningComposeTest {
         )
         composeRule.onNodeWithTag("workout-card-session-monday-push-biceps").assertIsDisplayed()
     }
+
+    @Test
+    fun assignmentClearsRestDayAndPersistsSelectedWorkout() {
+        val model = TrainingViewModel(null, null)
+        val day = DayOfWeek.SUNDAY
+        val workout = model.workoutTemplates.first { it.id == "session-monday-push-biceps" }
+        model.setRestDay(day)
+        composeRule.setContent {
+            MaterialTheme { TrainingPlanningContent(model, onOpenTemplate = {}) }
+        }
+
+        composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("day-plan-SUNDAY"))
+        composeRule.onNodeWithTag("assign-day-SUNDAY").performClick()
+        composeRule.onNodeWithTag("assignment-option-${workout.id}").performClick()
+        composeRule.onNodeWithText("Save").performClick()
+
+        composeRule.runOnIdle {
+            val plan = model.weeklyDayPlans.single { it.weekday == day }
+            assertFalse(plan.isRestDay)
+            assertEquals(listOf(workout.id), plan.templateIds)
+        }
+    }
+
+    @Test
+    fun assignedWorkoutDetailsOpenEditorWithoutStartingWorkout() {
+        val model = TrainingViewModel(null, null)
+        val workout = model.workoutTemplates.first { it.id == "session-sunday-cardio" }
+        composeRule.setContent { MaterialTheme { TrainingScreen(model) } }
+
+        composeRule.onNodeWithTag("training-list").performScrollToNode(
+            hasTestTag("assigned-workout-SUNDAY-${workout.id}")
+        )
+        composeRule.onNodeWithTag("assigned-workout-SUNDAY-${workout.id}").performClick()
+        composeRule.onNodeWithText("Start").assertIsDisplayed()
+        composeRule.onNodeWithText("Edit").performClick()
+
+        composeRule.onNodeWithTag("workout-editor").assertIsDisplayed()
+        assertEquals(null, model.activeWorkoutSessionId)
+    }
+
+    @Test
+    fun deletingWorkoutThroughLibraryKeepsHistory() {
+        val model = TrainingViewModel(null, null)
+        val workout = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        val record = WorkoutRecord(
+            id = "ui-history",
+            sessionId = workout.id,
+            sessionName = workout.name,
+            performedOn = LocalDate.of(2026, 8, 20),
+            startedAtMillis = 1L,
+            finishedAtMillis = 2L,
+            completedTargetIds = emptySet(),
+            completedLogicalTargets = 0,
+            totalLogicalTargets = workout.logicalTargetCount(),
+            sets = emptyList()
+        )
+        model.workoutHistory += record
+        composeRule.setContent {
+            MaterialTheme { TrainingPlanningContent(model, onOpenTemplate = {}) }
+        }
+
+        composeRule.onNodeWithTag("training-list").performScrollToNode(
+            hasTestTag("delete-workout-${workout.id}")
+        )
+        composeRule.onNodeWithTag("delete-workout-${workout.id}").performClick()
+        composeRule.onNodeWithText("Delete workout?").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete").performClick()
+
+        composeRule.runOnIdle {
+            assertFalse(model.workoutTemplates.any { it.id == workout.id })
+            assertEquals(listOf(record), model.workoutHistory)
+        }
+    }
 }
 
 class WorkoutEditorComposeTest {
@@ -979,6 +1052,63 @@ class WorkoutEditorComposeTest {
             val updated = model.workoutTemplates.first { it.id == template.id }
             assertEquals(target.sets + 1, updated.exercises.first { it.id == target.id }.sets)
             assertEquals(untouched.sets, updated.exercises.first { it.id == untouched.id }.sets)
+        }
+    }
+
+    @Test
+    fun duplicateCustomNameShowsInlineErrorAndKeepsDialogOpen() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
+
+        composeRule.onNodeWithTag("create-custom-exercise").performClick()
+        composeRule.onNodeWithTag("custom-exercise-name").performTextInput("Pull up")
+        composeRule.onNodeWithTag("save-custom-exercise").performClick()
+
+        composeRule.onNodeWithText("An exercise with this name already exists.").assertIsDisplayed()
+        composeRule.onNodeWithTag("custom-exercise-name").assertIsDisplayed()
+    }
+
+    @Test
+    fun blankWorkoutNameShowsInlineError() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
+
+        composeRule.onNodeWithTag("workout-name").performTextClearance()
+        composeRule.onNodeWithText("Done").performClick()
+
+        composeRule.onNodeWithText("Workout name cannot be blank.").assertIsDisplayed()
+        assertEquals(template.name, model.workoutTemplates.first { it.id == template.id }.name)
+    }
+
+    @Test
+    fun searchMatchesMusclesCaseInsensitively() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
+
+        composeRule.onNodeWithTag("exercise-search").performTextInput("ANTERIOR DELTOIDS")
+        composeRule.onNodeWithTag("workout-editor").performScrollToNode(hasText("Pike push-up"))
+        composeRule.onNodeWithText("Pike push-up").assertIsDisplayed()
+    }
+
+    @Test
+    fun removingTargetRequiresConfirmationAndOnlyChangesThisWorkout() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        val target = template.exercises.first()
+        val otherTemplate = model.workoutTemplates.first { it.id != template.id }
+        val otherTargetIds = otherTemplate.exercises.map(ExerciseTarget::id)
+        composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
+
+        composeRule.onNodeWithContentDescription("Remove ${target.exercise.name}").performClick()
+        composeRule.onNodeWithText("This removes it only from this workout.").assertIsDisplayed()
+        composeRule.onNodeWithText("Remove").performClick()
+
+        composeRule.runOnIdle {
+            assertFalse(model.workoutTemplates.first { it.id == template.id }.exercises.any { it.id == target.id })
+            assertEquals(otherTargetIds, model.workoutTemplates.first { it.id == otherTemplate.id }.exercises.map(ExerciseTarget::id))
         }
     }
 }

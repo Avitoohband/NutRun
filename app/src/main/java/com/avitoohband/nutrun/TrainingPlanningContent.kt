@@ -114,7 +114,7 @@ internal fun TrainingPlanningContent(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { onOpenTemplate(template) }
-                                    .testTag("assigned-workout-${template.id}"),
+                                    .testTag("assigned-workout-${day.name}-${template.id}"),
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -238,7 +238,10 @@ private fun AssignmentDialog(
         text = {
             Column {
                 templates.forEach { template ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("assignment-option-${template.id}")
+                        .clickable {
                         selectedIds = if (template.id in selectedIds) selectedIds - template.id else selectedIds + template.id
                     }) {
                         Checkbox(checked = template.id in selectedIds, onCheckedChange = null)

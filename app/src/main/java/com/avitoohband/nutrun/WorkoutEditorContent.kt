@@ -35,7 +35,7 @@ internal fun WorkoutEditorContent(model: TrainingViewModel, templateId: String, 
         onDismissRequest = onDone,
         title = { Text("Edit workout") },
         text = { LazyColumn(Modifier.testTag("workout-editor"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { OutlinedTextField(name, { name = it; nameError = null }, Modifier.fillMaxWidth(), label = { Text("Workout name") }, isError = nameError != null) }
+            item { OutlinedTextField(name, { name = it; nameError = null }, Modifier.fillMaxWidth().testTag("workout-name"), label = { Text("Workout name") }, isError = nameError != null) }
             nameError?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
             item { Text("Current exercises", fontWeight = FontWeight.Bold) }
             items(template.exercises, key = ExerciseTarget::id) { target -> TargetEditorRow(target, model.usesMetricUnits, { sets -> model.updateTargetSets(templateId, target.id, sets) }, { removeTarget = target }) }
