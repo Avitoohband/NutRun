@@ -947,6 +947,42 @@ class TrainingPlanningComposeTest {
     }
 }
 
+class WorkoutEditorComposeTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun customExerciseCanSaveWithOnlyANameAndIsAddedImmediately() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
+
+        composeRule.onNodeWithTag("create-custom-exercise").performClick()
+        composeRule.onNodeWithTag("custom-exercise-name").performTextInput("Suitcase march")
+        composeRule.onNodeWithTag("save-custom-exercise").performClick()
+        composeRule.onNodeWithText("Suitcase march").assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertEquals("Suitcase march", model.workoutTemplates.first { it.id == template.id }.exercises.last().exercise.name)
+        }
+    }
+
+    @Test
+    fun setControlsChangeOnlyTheSelectedTarget() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first { it.exercises.size > 1 }
+        val target = template.exercises.first()
+        val untouched = template.exercises[1]
+        composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
+
+        composeRule.onAllNodesWithContentDescription("More sets")[0].performClick()
+        composeRule.runOnIdle {
+            val updated = model.workoutTemplates.first { it.id == template.id }
+            assertEquals(target.sets + 1, updated.exercises.first { it.id == target.id }.sets)
+            assertEquals(untouched.sets, updated.exercises.first { it.id == untouched.id }.sets)
+        }
+    }
+}
+
 class ProgressionSuggestionComposeTest {
     @get:Rule
     val composeRule = createComposeRule()

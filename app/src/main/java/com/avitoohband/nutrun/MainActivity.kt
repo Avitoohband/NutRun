@@ -1091,10 +1091,10 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         )
     }
     editSessionId?.let { sessionId ->
-        ExercisePickerDialog(
+        WorkoutEditorContent(
             model = model,
-            sessionId = sessionId,
-            onDismiss = { editSessionId = null }
+            templateId = sessionId,
+            onDone = { editSessionId = null }
         )
     }
     rescheduleRequest?.let { (session, originalDate) ->
