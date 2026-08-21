@@ -151,4 +151,31 @@ class WorkoutPlanningTest {
             )
         }
     }
+
+    @Test
+    fun workoutTemplateSearchIsCaseInsensitiveAndStable() {
+        val templates = listOf(
+            WorkoutTemplate.userCreated("Evening Push"),
+            WorkoutTemplate.userCreated("Morning Pull"),
+            WorkoutTemplate.userCreated("Push Accessories")
+        )
+
+        assertEquals(
+            listOf(templates[0], templates[2]),
+            filterWorkoutTemplates(templates, "  PUSH ")
+        )
+        assertEquals(templates, filterWorkoutTemplates(templates, ""))
+    }
+
+    @Test
+    fun assignedWorkoutMovementPreservesOrderAndRemovesDuplicates() {
+        assertEquals(
+            listOf("pull", "push", "legs"),
+            moveAssignedWorkout(listOf("push", "pull", "push", "legs"), 0, 1)
+        )
+        assertEquals(
+            listOf("push", "pull", "legs"),
+            moveAssignedWorkout(listOf("push", "pull", "legs"), -1, 2)
+        )
+    }
 }

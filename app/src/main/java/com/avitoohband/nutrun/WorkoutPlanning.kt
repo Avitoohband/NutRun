@@ -66,6 +66,28 @@ private fun List<WeeklyDayPlan>.requireUniqueWeekdays() {
     }
 }
 
+fun filterWorkoutTemplates(
+    templates: List<WorkoutTemplate>,
+    query: String
+): List<WorkoutTemplate> {
+    val normalizedQuery = query.trim()
+    if (normalizedQuery.isEmpty()) return templates
+    return templates.filter { it.name.contains(normalizedQuery, ignoreCase = true) }
+}
+
+fun moveAssignedWorkout(
+    ids: List<String>,
+    fromIndex: Int,
+    toIndex: Int
+): List<String> {
+    val normalized = ids.distinct()
+    if (fromIndex !in normalized.indices || toIndex !in normalized.indices || fromIndex == toIndex) {
+        return normalized
+    }
+    return normalized.toMutableList().apply {
+        add(toIndex, removeAt(fromIndex))
+    }
+}
 fun replaceDayAssignments(
     plans: List<WeeklyDayPlan>,
     weekday: DayOfWeek,

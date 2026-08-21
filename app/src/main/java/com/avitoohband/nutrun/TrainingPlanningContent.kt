@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -413,53 +412,6 @@ internal fun WorkoutTemplateDetailsDialog(
         dismissButton = {
             TextButton(onClick = onEdit) {
                 Text("Edit")
-            }
-        }
-    )
-}
-
-@Composable
-internal fun AssignmentDialog(
-    day: DayOfWeek,
-    templates: List<WorkoutTemplate>,
-    initialTemplateIds: List<String>,
-    onDismiss: () -> Unit,
-    onSave: (List<String>) -> Unit
-) {
-    var selectedIds by remember(day, initialTemplateIds) { mutableStateOf(initialTemplateIds) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Assign ${day.displayName()} workouts") },
-        text = {
-            Column {
-                templates.forEach { template ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("assignment-option-${template.id}")
-                            .clickable {
-                                selectedIds = if (template.id in selectedIds) {
-                                    selectedIds - template.id
-                                } else {
-                                    selectedIds + template.id
-                                }
-                            }
-                    ) {
-                        Checkbox(checked = template.id in selectedIds, onCheckedChange = null)
-                        Text(template.name)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onSave(selectedIds) }) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
             }
         }
     )

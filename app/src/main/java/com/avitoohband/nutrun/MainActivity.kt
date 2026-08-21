@@ -1052,19 +1052,21 @@ internal fun TrainingScreen(model: TrainingViewModel) {
     }
     var assignmentDay by remember { mutableStateOf<DayOfWeek?>(null) }
     assignmentDay?.let { day ->
-        AssignmentDialog(
+        WorkoutAssignmentContent(
             day = day,
             templates = model.workoutTemplates,
-            initialTemplateIds = model.weeklyDayPlans
+            selectedIds = model.weeklyDayPlans
                 .firstOrNull { it.weekday == day }
                 ?.templateIds
                 .orEmpty(),
-            onDismiss = { assignmentDay = null },
             onSave = { templateIds ->
-                model.replaceAssignments(day, templateIds)
-                assignmentDay = null
-            }
+                if (model.replaceAssignments(day, templateIds) is TrainingMutationResult.Success) {
+                    assignmentDay = null
+                }
+            },
+            onCancel = { assignmentDay = null }
         )
+        return
     }
     if (addSession) {
         AddTrainingSessionDialog(

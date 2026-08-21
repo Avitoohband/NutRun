@@ -939,6 +939,7 @@ class TrainingPlanningComposeTest {
         composeRule.onNodeWithTag("day-plan-MONDAY").assertIsDisplayed()
         composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("day-plan-SATURDAY"))
         composeRule.onNodeWithTag("day-plan-SATURDAY").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-mode-workouts").performClick()
         composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("workout-library"))
         composeRule.onNodeWithTag("workout-library").assertIsDisplayed()
         composeRule.onNodeWithTag("training-list").performScrollToNode(
@@ -954,10 +955,11 @@ class TrainingPlanningComposeTest {
         val workout = model.workoutTemplates.first { it.id == "session-monday-push-biceps" }
         model.setRestDay(day)
         composeRule.setContent {
-            MaterialTheme { TrainingPlanningContent(model, onOpenTemplate = {}) }
+            MaterialTheme { TrainingScreen(model) }
         }
 
         composeRule.onNodeWithTag("training-list").performScrollToNode(hasTestTag("day-plan-SUNDAY"))
+        composeRule.onNodeWithTag("day-actions-SUNDAY").performClick()
         composeRule.onNodeWithTag("assign-day-SUNDAY").performClick()
         composeRule.onNodeWithTag("assignment-option-${workout.id}").performClick()
         composeRule.onNodeWithText("Save").performClick()
@@ -1004,7 +1006,13 @@ class TrainingPlanningComposeTest {
         )
         model.workoutHistory += record
         composeRule.setContent {
-            MaterialTheme { TrainingPlanningContent(model, onOpenTemplate = {}) }
+            MaterialTheme {
+                TrainingPlanningContent(
+                    model = model,
+                    mode = TrainingPlanningMode.WORKOUTS,
+                    onOpenTemplate = {}
+                )
+            }
         }
 
         composeRule.onNodeWithTag("training-list").performScrollToNode(
