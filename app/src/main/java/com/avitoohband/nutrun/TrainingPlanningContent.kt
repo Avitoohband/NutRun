@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
@@ -66,6 +67,8 @@ internal fun TrainingPlanningContent(
     mode: TrainingPlanningMode = TrainingPlanningMode.SCHEDULE,
     onModeChange: (TrainingPlanningMode) -> Unit = {},
     onOpenTemplate: (WorkoutTemplate) -> Unit,
+    onEditTemplate: (WorkoutTemplate) -> Unit = onOpenTemplate,
+    onDuplicateTemplate: (WorkoutTemplate) -> Unit = { model.duplicateWorkout(it.id) },
     onAssignDay: (DayOfWeek) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -102,7 +105,9 @@ internal fun TrainingPlanningContent(
                 )
                 TrainingPlanningMode.WORKOUTS -> WorkoutLibraryContent(
                     model = model,
-                    onOpenTemplate = onOpenTemplate
+                    onOpenTemplate = onOpenTemplate,
+                    onEditTemplate = onEditTemplate,
+                    onDuplicateTemplate = onDuplicateTemplate
                 )
             }
         }
@@ -236,7 +241,9 @@ private fun TrainingScheduleContent(
 @Composable
 private fun WorkoutLibraryContent(
     model: TrainingViewModel,
-    onOpenTemplate: (WorkoutTemplate) -> Unit
+    onOpenTemplate: (WorkoutTemplate) -> Unit,
+    onEditTemplate: (WorkoutTemplate) -> Unit,
+    onDuplicateTemplate: (WorkoutTemplate) -> Unit
 ) {
     var createWorkout by remember { mutableStateOf(false) }
     var deleteTemplate by remember { mutableStateOf<WorkoutTemplate?>(null) }
@@ -352,10 +359,16 @@ private fun WorkoutLibraryContent(
                         Icon(Icons.Default.PlayArrow, "Start ${template.name}")
                     }
                     IconButton(
-                        onClick = { onOpenTemplate(template) },
+                        onClick = { onEditTemplate(template) },
                         modifier = Modifier.testTag("edit-workout-${template.id}")
                     ) {
                         Icon(Icons.Default.Edit, "Edit ${template.name}")
+                    }
+                    IconButton(
+                        onClick = { onDuplicateTemplate(template) },
+                        modifier = Modifier.testTag("duplicate-workout-${template.id}")
+                    ) {
+                        Icon(Icons.Default.ContentCopy, "Duplicate ${template.name}")
                     }
                     IconButton(
                         onClick = { deleteTemplate = template },

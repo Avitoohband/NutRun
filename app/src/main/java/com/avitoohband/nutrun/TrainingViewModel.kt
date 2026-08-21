@@ -616,6 +616,90 @@ class TrainingViewModel private constructor(
         return TrainingMutationResult.Success
     }
 
+    fun duplicateWorkout(templateId: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val source = workoutTemplates.firstOrNull { it.id == templateId }
+            ?: return TrainingMutationResult.ValidationError("Workout not found.")
+        val existingNames = workoutTemplates.map { it.name.trim().lowercase() }.toSet()
+        val copyRoot = "${source.name} Copy"
+        var copyName = copyRoot
+        var copyNumber = 2
+        while (copyName.trim().lowercase() in existingNames) {
+            copyName = "$copyRoot $copyNumber"
+            copyNumber += 1
+        }
+
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates += WorkoutTemplate.userCreated(
+            name = copyName,
+            exercises = source.exercises.map { target ->
+                target.copy(id = id("target"))
+            },
+            guidance = source.guidance
+        )
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun saveWorkoutDraft(
+        templateId: String,
+        name: String,
+        exercises: List<ExerciseTarget>,
+        newCustomExercises: List<Exercise> = emptyList()
+    ): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        if (activeWorkoutSessionId == templateId) return TrainingMutationResult.ActiveWorkoutConflict
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty()) {
+            return TrainingMutationResult.ValidationError("Workout name cannot be blank.")
+        }
+        val templateIndex = workoutTemplates.indexOfFirst { it.id == templateId }
+        if (templateIndex < 0) return TrainingMutationResult.ValidationError("Workout not found.")
+        if (exercises.map(ExerciseTarget::id).distinct().size != exercises.size) {
+            return TrainingMutationResult.ValidationError("Exercise targets must be unique.")
+        }
+        if (exercises.map { it.exercise.id }.distinct().size != exercises.size) {
+            return TrainingMutationResult.ValidationError("A workout cannot contain duplicate exercises.")
+        }
+        if (newCustomExercises.map(Exercise::id).distinct().size != newCustomExercises.size) {
+            return TrainingMutationResult.ValidationError("Custom exercise IDs must be unique.")
+        }
+        if (newCustomExercises.any { !it.id.isTypedUuid("exercise-") }) {
+            return TrainingMutationResult.ValidationError("Custom exercise IDs must be exercise UUIDs.")
+        }
+        val existingIds = exerciseLibrary.map(Exercise::id).toSet()
+        if (newCustomExercises.any { it.id in existingIds }) {
+            return TrainingMutationResult.ValidationError("A custom exercise ID already exists.")
+        }
+        if (newCustomExercises.any { it.name.isBlank() }) {
+            return TrainingMutationResult.ValidationError("Exercise name cannot be blank.")
+        }
+        val newNames = newCustomExercises.map { it.name.trim().lowercase() }
+        if (newNames.distinct().size != newNames.size) {
+            return TrainingMutationResult.ValidationError("Custom exercise names must be unique.")
+        }
+        val existingNames = exerciseLibrary.map { it.name.trim().lowercase() }.toSet()
+        if (newNames.any { it in existingNames }) {
+            return TrainingMutationResult.ValidationError("An exercise with this name already exists.")
+        }
+        val newCustomIds = newCustomExercises.map(Exercise::id).toSet()
+        if (newCustomIds.any { customId -> exercises.none { it.exercise.id == customId } }) {
+            return TrainingMutationResult.ValidationError("New custom exercises must belong to the workout.")
+        }
+        val knownIds = existingIds + newCustomIds
+        if (exercises.any { it.exercise.id !in knownIds }) {
+            return TrainingMutationResult.ValidationError("One or more exercises were not found.")
+        }
+
+        val snapshot = trainingMutationSnapshot()
+        customExercises += newCustomExercises
+        workoutTemplates[templateIndex] = workoutTemplates[templateIndex].copy(
+            name = trimmedName,
+            exercises = exercises
+        )
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
     fun deleteWorkout(
         templateId: String,
         today: LocalDate = LocalDate.now()

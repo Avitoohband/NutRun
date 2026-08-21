@@ -118,6 +118,7 @@ class ProductionFlowTest {
                 .fetchSemanticsNodes()
                 .isEmpty()
         ) {
+            composeRule.onNodeWithTag("training-mode-workouts").performClick()
             composeRule.onNodeWithTag("training-list").performScrollToNode(
                 hasTestTag("workout-card-session-sunday-cardio")
             )
@@ -1043,6 +1044,7 @@ class WorkoutEditorComposeTest {
         composeRule.onNodeWithTag("custom-exercise-name").performTextInput("Suitcase march")
         composeRule.onNodeWithTag("save-custom-exercise").performClick()
         composeRule.onNodeWithText("Suitcase march").assertIsDisplayed()
+        composeRule.onNodeWithTag("workout-editor-save").performClick()
         composeRule.runOnIdle {
             assertEquals("Suitcase march", model.workoutTemplates.first { it.id == template.id }.exercises.last().exercise.name)
         }
@@ -1057,6 +1059,7 @@ class WorkoutEditorComposeTest {
         composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
 
         composeRule.onAllNodesWithContentDescription("More sets")[0].performClick()
+        composeRule.onNodeWithTag("workout-editor-save").performClick()
         composeRule.runOnIdle {
             val updated = model.workoutTemplates.first { it.id == template.id }
             assertEquals(target.sets + 1, updated.exercises.first { it.id == target.id }.sets)
@@ -1085,7 +1088,7 @@ class WorkoutEditorComposeTest {
         composeRule.setContent { MaterialTheme { WorkoutEditorContent(model, template.id, {}) } }
 
         composeRule.onNodeWithTag("workout-name").performTextClearance()
-        composeRule.onNodeWithText("Done").performClick()
+        composeRule.onNodeWithTag("workout-editor-save").performClick()
 
         composeRule.onNodeWithText("Workout name cannot be blank.").assertIsDisplayed()
         assertEquals(template.name, model.workoutTemplates.first { it.id == template.id }.name)
@@ -1114,11 +1117,101 @@ class WorkoutEditorComposeTest {
         composeRule.onNodeWithContentDescription("Remove ${target.exercise.name}").performClick()
         composeRule.onNodeWithText("This removes it only from this workout.").assertIsDisplayed()
         composeRule.onNodeWithText("Remove").performClick()
+        composeRule.onNodeWithTag("workout-editor-save").performClick()
 
         composeRule.runOnIdle {
             assertFalse(model.workoutTemplates.first { it.id == template.id }.exercises.any { it.id == target.id })
             assertEquals(otherTargetIds, model.workoutTemplates.first { it.id == otherTemplate.id }.exercises.map(ExerciseTarget::id))
         }
+    }
+
+    @Test
+    fun editorIsFullScreenAndBackConfirmsBeforeDiscardingUnsavedChanges() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        var backed = false
+        composeRule.setContent {
+            MaterialTheme {
+                WorkoutEditorContent(
+                    model = model,
+                    templateId = template.id,
+                    onBack = { backed = true },
+                    onSaved = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("workout-editor-screen").assertIsDisplayed()
+        composeRule.onNodeWithTag("workout-name").performTextInput(" changed")
+        composeRule.onNodeWithTag("workout-editor-back").performClick()
+        composeRule.onNodeWithText("Discard changes?").assertIsDisplayed()
+        composeRule.onNodeWithText("Keep editing").performClick()
+        composeRule.runOnIdle { assertFalse(backed) }
+
+        composeRule.onNodeWithTag("workout-editor-back").performClick()
+        composeRule.onNodeWithText("Discard").performClick()
+        composeRule.runOnIdle {
+            assertTrue(backed)
+            assertEquals(template, model.workoutTemplates.first { it.id == template.id })
+        }
+    }
+
+    @Test
+    fun searchDraftSurvivesMultipleExerciseAdditionsUntilSave() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        val choices = model.exerciseLibrary
+            .filter { exercise -> template.exercises.none { it.exercise.id == exercise.id } }
+            .take(2)
+        var saved = false
+        composeRule.setContent {
+            MaterialTheme {
+                WorkoutEditorContent(
+                    model = model,
+                    templateId = template.id,
+                    onBack = {},
+                    onSaved = { saved = true }
+                )
+            }
+        }
+
+        choices.forEach { exercise ->
+            composeRule.onNodeWithTag("exercise-search").performTextClearance()
+            composeRule.onNodeWithTag("exercise-search").performTextInput(exercise.name)
+            composeRule.onNodeWithTag("catalog-exercise-${exercise.id}").performClick()
+            composeRule.onNodeWithTag("exercise-search").assertTextContains(exercise.name)
+        }
+        composeRule.runOnIdle {
+            assertEquals(template, model.workoutTemplates.first { it.id == template.id })
+        }
+
+        composeRule.onNodeWithTag("workout-editor-save").performClick()
+        composeRule.runOnIdle {
+            assertTrue(saved)
+            val exerciseIds = model.workoutTemplates.first { it.id == template.id }
+                .exercises.map { it.exercise.id }
+            choices.forEach { assertTrue(it.id in exerciseIds) }
+        }
+    }
+
+    @Test
+    fun workoutLibraryProvidesExplicitStartEditDuplicateAndDeleteActions() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        composeRule.setContent {
+            MaterialTheme {
+                TrainingPlanningContent(
+                    model = model,
+                    mode = TrainingPlanningMode.WORKOUTS,
+                    onOpenTemplate = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("start-session-${template.id}").assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-workout-${template.id}").assertIsDisplayed()
+        composeRule.onNodeWithTag("duplicate-workout-${template.id}").assertIsDisplayed()
+        composeRule.onNodeWithTag("delete-workout-${template.id}").assertIsDisplayed()
     }
 }
 
@@ -1138,6 +1231,7 @@ class ProgressionSuggestionComposeTest {
             }
         }
 
+        composeRule.onNodeWithTag("training-mode-workouts").performClick()
         composeRule.onNodeWithTag("training-list").performScrollToNode(
             hasTestTag("workout-card-${emptySession.id}")
         )
@@ -1182,6 +1276,7 @@ class ProgressionSuggestionComposeTest {
             }
         }
 
+        composeRule.onNodeWithTag("training-mode-workouts").performClick()
         val programTag = "program-progression-${target.id}"
         composeRule.onNodeWithTag("training-list", useUnmergedTree = true).performScrollToNode(hasTestTag(programTag))
         composeRule.onNodeWithTag(programTag, useUnmergedTree = true)

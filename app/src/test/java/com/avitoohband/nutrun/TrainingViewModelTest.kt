@@ -60,6 +60,102 @@ class TrainingViewModelTest {
     }
 
     @Test
+    fun duplicateWorkoutUsesFreshTypedIdAndCollisionSafeNamesWithoutCopyingRuntimeState() {
+        val model = TrainingViewModel(null, null)
+        val source = model.workoutTemplates.first { it.exercises.isNotEmpty() && it.guidance.isNotEmpty() }
+        val historyBefore = model.workoutHistory.toList()
+        val activeBefore = model.activeWorkoutSessionId
+
+        assertEquals(TrainingMutationResult.Success, model.duplicateWorkout(source.id))
+        assertEquals(TrainingMutationResult.Success, model.duplicateWorkout(source.id))
+
+        val firstCopy = model.workoutTemplates[model.workoutTemplates.lastIndex - 1]
+        val secondCopy = model.workoutTemplates.last()
+        assertEquals("${source.name} Copy", firstCopy.name)
+        assertEquals("${source.name} Copy 2", secondCopy.name)
+        assertTrue(firstCopy.id.isTypedUuid("workout-"))
+        assertTrue(secondCopy.id.isTypedUuid("workout-"))
+        assertTrue(firstCopy.id != secondCopy.id && firstCopy.id != source.id)
+        assertEquals(source.exercises.map { it.copy(id = "") }, firstCopy.exercises.map { it.copy(id = "") })
+        assertTrue(source.exercises.map(ExerciseTarget::id).toSet().intersect(firstCopy.exercises.map(ExerciseTarget::id).toSet()).isEmpty())
+        assertEquals(source.guidance, firstCopy.guidance)
+        assertEquals(WorkoutTemplateOrigin.USER_CREATED, firstCopy.origin)
+        assertEquals(historyBefore, model.workoutHistory)
+        assertEquals(activeBefore, model.activeWorkoutSessionId)
+    }
+
+    @Test
+    fun duplicateWorkoutPersistsTheCopiedTemplate() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val source = WorkoutTemplate(
+            id = "source-template",
+            name = "Source",
+            exercises = listOf(
+                ExerciseTarget("source-target", builtInExerciseCatalog().first())
+            ),
+            guidance = listOf("Keep one repetition in reserve.")
+        )
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity(
+                "account-a",
+                encodeTrainingState(workoutTemplates = listOf(source)),
+                1L
+            )
+        )
+        val model = TrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+
+        assertEquals(TrainingMutationResult.Success, model.duplicateWorkout(source.id))
+        withTimeout(5_000) { while (runtime.savedPayloads.isEmpty()) yield() }
+
+        val persisted = requireNotNull(
+            decodeTrainingState(runtime.savedPayloads.last(), builtInExerciseCatalog())
+        )
+        assertEquals(listOf("Source", "Source Copy"), persisted.workoutTemplates.map(WorkoutTemplate::name))
+        assertTrue(persisted.workoutTemplates.last().id.isTypedUuid("workout-"))
+    }
+    @Test
+    fun duplicateWorkoutRejectsUnknownTemplateWithoutMutation() {
+        val model = TrainingViewModel(null, null)
+        val before = model.workoutTemplates.toList()
+
+        assertTrue(model.duplicateWorkout("missing") is TrainingMutationResult.ValidationError)
+        assertEquals(before, model.workoutTemplates)
+    }
+
+    @Test
+    fun saveWorkoutDraftAppliesNameTargetsAndCustomCatalogAtomically() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first()
+        val builtIn = model.exerciseLibrary.first { exercise ->
+            template.exercises.none { it.exercise.id == exercise.id }
+        }
+        val custom = Exercise(
+            id = "exercise-00000000-0000-0000-0000-000000000011",
+            name = "Draft carry",
+            category = "Custom",
+            primaryMuscles = "Core",
+            secondaryMuscles = "",
+            instructions = "",
+            safetyNote = ""
+        )
+        val targets = listOf(
+            ExerciseTarget(id = "draft-built-in", exercise = builtIn, sets = 4),
+            ExerciseTarget(id = "draft-custom", exercise = custom, sets = 2)
+        )
+
+        assertEquals(
+            TrainingMutationResult.Success,
+            model.saveWorkoutDraft(template.id, "  Draft workout  ", targets, listOf(custom))
+        )
+        val saved = model.workoutTemplates.first { it.id == template.id }
+        assertEquals("Draft workout", saved.name)
+        assertEquals(targets, saved.exercises)
+        assertEquals(custom, model.customExercises.single { it.id == custom.id })
+    }
+    @Test
     fun setCountIsStoredPerTemplateAndRejectsZeroOrTwentyOne() {
         val model = TrainingViewModel(null, null)
         val first = model.workoutTemplates.first { it.exercises.isNotEmpty() }

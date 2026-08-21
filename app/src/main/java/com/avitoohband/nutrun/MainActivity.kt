@@ -1038,14 +1038,10 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         return
     }
 
-    var addSession by remember { mutableStateOf(false) }
     var editSessionId by remember { mutableStateOf<String?>(null) }
     var editRestTimer by remember { mutableStateOf(false) }
     var confirmCancelWorkout by remember { mutableStateOf(false) }
     var restTimerFinished by remember { mutableStateOf(false) }
-    var rescheduleRequest by remember {
-        mutableStateOf<Pair<TrainingSession, LocalDate>?>(null)
-    }
     var templateDetailsId by remember { mutableStateOf<String?>(null) }
     var planningMode by rememberSaveable {
         mutableStateOf(TrainingPlanningMode.SCHEDULE)
@@ -1067,15 +1063,6 @@ internal fun TrainingScreen(model: TrainingViewModel) {
             onCancel = { assignmentDay = null }
         )
         return
-    }
-    if (addSession) {
-        AddTrainingSessionDialog(
-            onDismiss = { addSession = false },
-            onSave = { name, day ->
-                model.addSession(name, day)
-                addSession = false
-            }
-        )
     }
     if (editRestTimer) {
         RestTimerSettingsDialog(
@@ -1115,19 +1102,10 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         WorkoutEditorContent(
             model = model,
             templateId = sessionId,
-            onDone = { editSessionId = null }
+            onBack = { editSessionId = null },
+            onSaved = { editSessionId = null }
         )
-    }
-    rescheduleRequest?.let { (session, originalDate) ->
-        RescheduleTrainingDialog(
-            session = session,
-            originalDate = originalDate,
-            onDismiss = { rescheduleRequest = null },
-            onMove = { date ->
-                model.rescheduleSession(session.id, originalDate, date)
-                rescheduleRequest = null
-            }
-        )
+        return
     }
     templateDetailsId?.let { templateId ->
         model.workoutTemplates.firstOrNull { it.id == templateId }?.let { template ->
@@ -1208,137 +1186,16 @@ internal fun TrainingScreen(model: TrainingViewModel) {
             mode = planningMode,
             onModeChange = { planningMode = it },
             onOpenTemplate = { templateDetailsId = it.id },
+            onEditTemplate = { template ->
+                editSessionId = template.id
+            },
+            onDuplicateTemplate = { template ->
+                model.duplicateWorkout(template.id)
+            },
             onAssignDay = { assignmentDay = it },
             modifier = Modifier.weight(1f)
         )
     }
-    return
-    /* Replaced by TrainingPlanningContent; retained temporarily for targeted migration review.
-    LazyColumn(
-        Modifier.fillMaxSize().padding(16.dp).testTag("training-list"),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Training",
-                    modifier = Modifier.weight(1f).testTag("training-heading"),
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(
-                    onClick = { editRestTimer = true },
-                    modifier = Modifier.testTag("rest-timer-settings")
-                ) {
-                    Text("Rest ${model.defaultRestTimerSeconds}s")
-                }
-            }
-        }
-        item { SectionHeading("This week") }
-        items(trainingWeek(), key = { it.toString() }) { date ->
-            val scheduled = model.sessionsForDate(date)
-            val completedNames = model.workoutHistory
-                .filter { it.performedOn == date }
-                .map(WorkoutRecord::sessionName)
-            ActionCard(
-                title = formatToday(date),
-                subtitle = when {
-                    scheduled.isEmpty() && completedNames.isEmpty() -> "Rest day"
-                    else -> (scheduled.map(TrainingSession::name) + completedNames.map { "$it completed" })
-                        .distinct()
-                        .joinToString(" | ")
-                },
-                icon = if (completedNames.isEmpty()) Icons.Default.FitnessCenter else Icons.Default.Check,
-                onClick = scheduled.firstOrNull { it.exercises.isNotEmpty() }?.let { session ->
-                    { model.startWorkout(session.id) }
-                },
-                testTag = scheduled.firstOrNull()?.let { session ->
-                    "week-session-${session.id}"
-                }
-            )
-        }
-        item { SectionHeading("Program") }
-        items(model.sessions, key = { it.id }) { session ->
-            val originalDate = trainingWeek().first { it.dayOfWeek == session.weekday }
-            val isToday = model.sessionsForDate(LocalDate.now()).any { it.id == session.id }
-            val canStart = session.exercises.isNotEmpty()
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("session-card-${session.id}")
-                    .clickable(enabled = canStart) { model.startWorkout(session.id) },
-                shape = RoundedCornerShape(8.dp),
-                border = if (isToday) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(session.name, fontWeight = FontWeight.Bold)
-                                if (isToday) {
-                                    Spacer(Modifier.width(8.dp))
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text("Today", Modifier.padding(horizontal = 7.dp, vertical = 2.dp), fontSize = 11.sp)
-                                    }
-                                }
-                            }
-                            Text(
-                                "${session.weekday.name.lowercase().replaceFirstChar(Char::uppercase)} | " +
-                                    "${session.logicalTargetCount()} planned targets"
-                            )
-                        }
-                        IconButton(
-                            onClick = { model.startWorkout(session.id) },
-                            enabled = canStart,
-                            modifier = Modifier.testTag("start-session-${session.id}")
-                        ) {
-                            Icon(Icons.Default.PlayArrow, "Start ${session.name}")
-                        }
-                    }
-                    if (!canStart) {
-                        Text(
-                            "Add exercises to start",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp
-                        )
-                    }
-                    model.progressionSuggestions(session).forEach { (target, suggestion) ->
-                        ProgressionSuggestionText(
-                            target = target,
-                            suggestion = suggestion,
-                            usesMetricUnits = model.usesMetricUnits,
-                            testTag = "program-progression-${target.id}"
-                        )
-                    }
-                    TextButton(onClick = {
-                        model.selectSession(session.id)
-                        editSessionId = session.id
-                    }) {
-                        Icon(Icons.Default.Edit, null)
-                        Text("Exercises")
-                    }
-                    Row {
-                        TextButton(onClick = { rescheduleRequest = session to originalDate }) {
-                            Text("Move")
-                        }
-                        TextButton(onClick = { model.skipSession(session.id, originalDate) }) {
-                            Text("Skip this week")
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            OutlinedButton(onClick = { addSession = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Add, null)
-                Text("Add training session")
-            }
-        }
-    }
-    */
 }
 
 
