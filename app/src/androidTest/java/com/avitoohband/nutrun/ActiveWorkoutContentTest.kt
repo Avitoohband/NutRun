@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
@@ -55,6 +56,7 @@ class ActiveWorkoutContentTest {
         }
 
         composeRule.onNodeWithText("Exercise 1 of 6").assertIsDisplayed()
+        composeRule.onNodeWithTag("active-workout-elapsed").assertIsDisplayed()
         composeRule.onNodeWithTag("active-exercise-${firstTarget.id}").assertIsDisplayed()
         composeRule.onNodeWithTag("active-exercise-${secondTarget.id}").assertDoesNotExist()
         composeRule.onNodeWithTag("active-workout-previous").assertIsNotEnabled()
@@ -75,6 +77,14 @@ class ActiveWorkoutContentTest {
         composeRule.onNodeWithText("Exercise 1 of 6").assertIsDisplayed()
         composeRule.onNodeWithTag("workout-weight-${firstSet.id}")
             .assertTextContains("75")
+
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}").performTextClearance()
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}").performTextInput(".")
+        composeRule.onNodeWithTag("active-workout-next").performClick()
+        composeRule.onNodeWithTag("active-workout-previous").performClick()
+
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}")
+            .assertTextContains(".")
     }
 
     @Test

@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,7 +65,20 @@ internal fun ActiveWorkoutContent(
     LaunchedEffect(session.id, targets.size) {
         focusedIndex = focusedIndex.coerceIn(0, targets.lastIndex)
     }
+    val startedAtMillis = remember(session.id, model.activeWorkoutStartedAtMillis) {
+        model.activeWorkoutStartedAtMillis ?: System.currentTimeMillis()
+    }
+    var elapsedClockMillis by remember(startedAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startedAtMillis) {
+        while (true) {
+            delay(1_000)
+            elapsedClockMillis = System.currentTimeMillis()
+        }
+    }
     var showFinishReview by rememberSaveable(session.id) { mutableStateOf(false) }
+    val setDrafts = remember(session.id, model.usesMetricUnits) {
+        mutableStateMapOf<String, WorkoutSetInput>()
+    }
     val completedLogicalTargets = session.completedLogicalTargetCount(model.completedExerciseIds)
     val totalLogicalTargets = session.logicalTargetCount()
     fun requestFinish() {
@@ -116,7 +130,23 @@ internal fun ActiveWorkoutContent(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(session.name, style = MaterialTheme.typography.titleLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            session.name,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        Text(
+                            formatWorkoutElapsed(
+                                ((elapsedClockMillis - startedAtMillis) / 1_000).coerceAtLeast(0)
+                            ),
+                            modifier = Modifier.testTag("active-workout-elapsed"),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -168,7 +198,11 @@ internal fun ActiveWorkoutContent(
                 }
             }
             item(key = target.id) {
-                ActiveExerciseCard(model = model, target = target)
+                ActiveExerciseCard(
+                    model = model,
+                    target = target,
+                    setDrafts = setDrafts
+                )
             }
             session.guidance.forEachIndexed { index, guidance ->
                 item(key = "guidance-$index") {
@@ -235,7 +269,11 @@ private fun ActiveWorkoutBottomBar(
 }
 
 @Composable
-private fun ActiveExerciseCard(model: TrainingViewModel, target: ExerciseTarget) {
+private fun ActiveExerciseCard(
+    model: TrainingViewModel,
+    target: ExerciseTarget,
+    setDrafts: MutableMap<String, WorkoutSetInput>
+) {
     Card(
         modifier = Modifier.fillMaxWidth().testTag("active-exercise-${target.id}"),
         shape = MaterialTheme.shapes.small
@@ -284,11 +322,27 @@ private fun ActiveExerciseCard(model: TrainingViewModel, target: ExerciseTarget)
                 )
             }
             model.activeSetLogs[target.id].orEmpty().forEach { set ->
+                val input = setDrafts[set.id] ?: set.toWorkoutSetInput(model.usesMetricUnits)
                 WorkoutSetEditor(
                     set = set,
+                    input = input,
+                    onInputChange = { setDrafts[set.id] = it },
                     metric = model.usesMetricUnits,
                     hasPrevious = previousSets.any { it.setNumber == set.setNumber },
-                    onCopyPrevious = { model.copyPreviousSet(target.id, set.setNumber) },
+                    onCopyPrevious = {
+                        if (
+                            model.copyPreviousSet(target.id, set.setNumber) ==
+                            TrainingMutationResult.Success
+                        ) {
+                            model.activeSetLogs[target.id]
+                                .orEmpty()
+                                .firstOrNull { it.setNumber == set.setNumber }
+                                ?.let { copied ->
+                                    setDrafts[set.id] =
+                                        copied.toWorkoutSetInput(model.usesMetricUnits)
+                                }
+                        }
+                    },
                     onChange = { reps, weightKg, durationSeconds, rpe, completed ->
                         model.updateWorkoutSet(
                             targetId = target.id,
@@ -309,28 +363,19 @@ private fun ActiveExerciseCard(model: TrainingViewModel, target: ExerciseTarget)
 @Composable
 private fun WorkoutSetEditor(
     set: WorkoutSetLog,
+    input: WorkoutSetInput,
+    onInputChange: (WorkoutSetInput) -> Unit,
     metric: Boolean,
     hasPrevious: Boolean,
     onCopyPrevious: () -> Unit,
     onChange: (Int?, Double?, Int?, Double?, Boolean) -> Unit
 ) {
     val durationTarget = set.durationSeconds != null
-    var input by remember(set.id, metric) { mutableStateOf(set.toWorkoutSetInput(metric)) }
-    var validation by remember(set.id, metric) {
-        mutableStateOf(validateWorkoutSetInput(input, durationTarget, metric))
-    }
-    LaunchedEffect(set.reps, set.weightKg, set.durationSeconds, set.rpe, metric) {
-        val savedInput = set.toWorkoutSetInput(metric)
-        if (validateWorkoutSetInput(input, durationTarget, metric).isValid) {
-            input = savedInput
-            validation = validateWorkoutSetInput(savedInput, durationTarget, metric)
-        }
-    }
+    val validation = validateWorkoutSetInput(input, durationTarget, metric)
 
     fun submit(next: WorkoutSetInput, completed: Boolean = set.completed) {
-        input = next
-        validation = validateWorkoutSetInput(next, durationTarget, metric)
-        validation.value?.let { value ->
+        onInputChange(next)
+        validateWorkoutSetInput(next, durationTarget, metric).value?.let { value ->
             onChange(value.reps, value.weightKg, value.durationSeconds, value.rpe, completed)
         }
     }
@@ -467,6 +512,13 @@ private fun formatWorkoutInput(value: Double): String {
     val rounded = (value * 10).roundToInt() / 10.0
     return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
 }
+
+private fun formatWorkoutElapsed(totalSeconds: Long): String =
+    "%d:%02d:%02d".format(
+        totalSeconds / 3_600,
+        (totalSeconds % 3_600) / 60,
+        totalSeconds % 60
+    )
 
 data class WorkoutSetInput(
     val weight: String,
