@@ -1,6 +1,6 @@
 # NutRun UX/UI Improvement Backlog
 
-**Status:** Detailed implementation plans complete after emulator and code audit on 2026-08-21. Task 10 is implemented and validated; Tasks 11-19 remain planned.
+**Status:** Detailed implementation plans complete after emulator and code audit on 2026-08-21. Tasks 10 and 11 are implemented and validated; Tasks 12-19 remain planned.
 
 **Relationship to customer testing:** GitHub issue #5 remains the acceptance tracker for issue #2. These tasks are follow-up improvements and should not replace or close that customer test.
 
@@ -71,6 +71,7 @@ Acceptance criteria:
 
 **Priority:** P0
 **Estimate:** 5-7 development days
+**Status:** Completed and validated on 2026-08-21.
 
 Make schedule planning and reusable workout management independently easy to reach.
 

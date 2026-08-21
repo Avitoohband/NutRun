@@ -1,6 +1,6 @@
 # NutRun UX/UI Tasks 10-19 Plan Index
 
-**Status:** Task 10 completed and validated; Task 11 in progress; Tasks 12-19 planned.
+**Status:** Tasks 10 and 11 completed and validated; Task 12 is next; Tasks 13-19 planned.
 
 **Audit/spec:** [`../../plans/04-ux-ui-improvement-backlog.md`](../../plans/04-ux-ui-improvement-backlog.md)
 
@@ -11,7 +11,7 @@
 | Order | Plan | Priority | Estimate | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 10 | [`Task 10 - Active Workout Focus Mode`](2026-08-21-task-10-active-workout-focus-mode.md) | P0 | 4-6 days | Tasks 1-9 baseline | Completed and validated |
-| 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | In progress |
+| 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | Completed and validated |
 | 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Tasks 1-9 baseline | Planned |
 | 13 | [`Task 13 - Form Components and Validation`](2026-08-21-task-13-form-components-validation.md) | P1 | 3-4 days | Task 12 may reuse time-input conventions | Planned |
 | 14 | [`Task 14 - Today Dashboard`](2026-08-21-task-14-today-dashboard.md) | P1 | 2-3 days | Stable navigation from Tasks 10-13 | Planned |
@@ -66,6 +66,6 @@ Unsafe parallel work:
 - Task 13 and Task 17 modifying validation/save behavior before Task 13 is committed.
 - Concurrent Gradle connected suites against the same emulator.
 
-## First Task
+## Next Task
 
-Task 10 is complete. Task 11 is next and must preserve the extracted `ActiveWorkoutContent` boundary while restructuring Schedule and Workouts.
+Tasks 10 and 11 are complete. Task 12 is next and must preserve the reminder scheduling, permission-denied, and account-isolation behavior already covered by tests.

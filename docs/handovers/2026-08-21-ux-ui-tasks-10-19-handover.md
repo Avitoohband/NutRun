@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Task 10 is implemented, validated, and pushed. Task 11 is in progress. Tasks 12-19 remain planned.
+Tasks 10 and 11 are implemented and validated. Task 10 is pushed on `main`; Task 11 is complete on its feature branch and ready for integration. Tasks 12-19 remain planned.
 
 Task 10 starts from `2b0189d52c5d5a32509e0b11c482db68de998d1d` on `origin/main`. Its implementation was developed on:
 
@@ -98,7 +98,7 @@ Known limitations retained intentionally:
 - After a snapshot-free cold boot, the interrupted `assignedWorkoutDetailsOpenEditorWithoutStartingWorkout` test passed alone: 1/1.
 - The complete clean-boot `connectedDebugAndroidTest` rerun passed: 47/47, zero skipped, zero failed, in 1 minute 29 seconds.
 
-## Task 11 In Progress
+## Task 11 Completion
 
 Task 11 started from pushed `main` commit `1f63df220a043b875a1021695583d2d0bcb6919a` in:
 
@@ -107,36 +107,56 @@ Worktree: C:\Users\Avi_OP_PC\Documents\FitnessApp\.issue-2-worktree
 Branch: codex/task-11-training-information-architecture
 ```
 
-Scope:
+Implementation commits, oldest first:
 
-- Separate Schedule and Workouts into saveable planning modes with compact weekday rows.
-- Add full-height searchable, ordered workout assignment.
-- Convert workout editing to a full-screen workflow with duplicate and explicit library actions.
-- Preserve Task 10 `ActiveWorkoutContent`, schema version 2, stable IDs, history, unit ownership, and account isolation.
+```text
+974e615 docs: start Task 11 training architecture
+e9d8a3f feat: separate training schedule and workouts
+084c91b feat: add scalable workout assignment
+9f5d6c0 feat: add full-screen workout editor
+7b6caed fix: clarify workout library actions
+```
 
-Primary planned files:
+Delivered:
 
-- `TrainingPlanningContent.kt`, `WorkoutAssignmentContent.kt`, `WorkoutEditorContent.kt`, `WorkoutPlanning.kt`
-- `TrainingViewModel.kt`, `MainActivity.kt`
-- `WorkoutPlanningTest.kt`, `TrainingViewModelTest.kt`, `TrainingInformationArchitectureTest.kt`, `ProductionFlowTest.kt`
+- Separate, saveable Schedule and Workouts modes with compact weekday rows and a Today shortcut.
+- Searchable full-screen assignment with selected count, duplicate-free ordered choices, reordering, Rest Day replacement on Save, and non-mutating Cancel.
+- Full-screen workout editing through a local draft, sticky Save, unsaved-change confirmation, catalog search/category filters, custom creation, set changes, and session-only removal.
+- Collision-safe Duplicate with fresh UUID-backed workout and target IDs, copied guidance/targets, persisted payload coverage, and unchanged history/active state.
+- Explicit labeled Start, Edit, Duplicate, and Delete actions in stable two-row card controls, plus deletion history preservation.
+- Removal of the unreachable legacy planner without modifying `ActiveWorkoutContent`, Room, REST, MCP, or training JSON schema version 2.
 
-Dependency commits: Task 10 commits `5a151a1` through `b3835e9`, documentation commits `a61e262`, `dcc53a9`, and `1f63df2`.
+Validation completed on Pixel 10 AVD, Android 17:
 
-Baseline on `emulator-5554`, Pixel 10 AVD:
+- Baseline `TrainingViewModelTest`: passed.
+- Baseline planning/editor/active-workout Compose tests: 13/13 passed.
+- Task 11.2 combined planning regression suite: 10/10 passed.
+- Focused Task 11 planning/editor suite: 19/19 passed.
+- Three full-suite tests updated for the intentional Schedule default and rerun: 3/3 passed.
+- `testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest`: passed in one combined Gradle run.
+- Final full `connectedDebugAndroidTest`: 56/56 passed, zero skipped, zero failed, in 6 minutes 3 seconds.
+- `git diff --check`: passed.
 
-- `TrainingViewModelTest`: passed.
-- `TrainingPlanningComposeTest`, `WorkoutEditorComposeTest`, and `ActiveWorkoutContentTest`: 13/13 passed, zero skipped, zero failed.
+Review findings resolved during validation:
 
-Planned completion gate: focused RED/GREEN checks for each slice, then `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`, full `connectedDebugAndroidTest`, Markdown-link validation, and `git diff --check`.
+- Older tests mounted the lower-level planner or expected the combined Schedule/Workouts list; they now exercise the real screen and select Workouts explicitly.
+- Duplicate target IDs would have shared progression identity with the source; duplicates now receive fresh target UUIDs.
+- Editor mutations previously persisted incrementally; the full-screen editor now uses a local draft and one atomic Save so Discard is truthful.
 
-Customer acceptance issue #5 remains open.
+Retained limitations:
+
+- WorkManager, database, REST, and MCP behavior were intentionally unchanged.
+- Task 11 does not add drag-and-drop assignment; accessible move-up/move-down controls preserve explicit ordering.
+- Customer acceptance issue #5 remains open for external verification.
+
+Next safe task: Task 12, Reminder Settings and Time Controls. Update this handover with Task 12 branch, starting commit, scope, and baseline before production edits.
 
 ## Execution Order
 
 Recommended order:
 
 1. Task 10 - Active Workout Focus Mode (complete).
-2. Task 11 - Training information architecture and full-screen editor (in progress).
+2. Task 11 - Training information architecture and full-screen editor (complete).
 3. Task 12 - Reminder settings and time controls.
 4. Task 13 - Shared forms and validation.
 5. Task 14 - Today dashboard.
@@ -145,25 +165,17 @@ Recommended order:
 
 Do not run Task 10 and Task 11 in parallel. Both own the Training screen and `MainActivity.kt` integration.
 
-## Task 11 Start Procedure
+## Task 12 Start Procedure
 
-When the user says to start Task 11:
+Before Task 12 production edits:
 
-1. Read the Task 11 plan and this handover completely.
-2. Confirm local `main` matches `origin/main` and contains Task 10 documentation commit `a61e262`.
-3. Create the Task 11 branch from the current `main` head.
-4. Update this handover with the new branch, starting commit, scope, and baseline result before editing production files.
-5. Run the focused existing Training tests before editing.
+1. Confirm Task 11 is integrated as requested and the target branch is clean.
+2. Read the Task 12 plan and this handover completely.
+3. Create a Task 12 branch from the current integrated head.
+4. Record the branch, starting commit, scope, dependencies, and focused Notification Settings baseline here.
+5. Run the focused reminder settings and scheduling tests named by the Task 12 plan.
 
-```powershell
-Set-Location 'C:\Users\Avi_OP_PC\Documents\FitnessApp\.issue-2-worktree'
-git status --short --branch
-.\gradlew.bat testDebugUnitTest --tests com.avitoohband.nutrun.TrainingViewModelTest --console=plain
-$env:ANDROID_SERIAL='emulator-5554'
-.\gradlew.bat connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.avitoohband.nutrun.TrainingPlanningComposeTest,com.avitoohband.nutrun.WorkoutEditorComposeTest,com.avitoohband.nutrun.ActiveWorkoutContentTest' --console=plain
-```
-
-Then execute Task 11.1 test-first. Do not overwrite or re-inline `ActiveWorkoutContent` while restructuring Training navigation.
+Do not start Task 12 in the Task 11 worktree until Task 11 integration has been decided.
 
 ## Cross-Task Safety Rules
 
