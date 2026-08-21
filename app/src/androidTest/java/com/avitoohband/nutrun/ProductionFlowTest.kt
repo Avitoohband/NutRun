@@ -1021,7 +1021,7 @@ class TrainingPlanningComposeTest {
         )
         composeRule.onNodeWithTag("delete-workout-${workout.id}").performClick()
         composeRule.onNodeWithText("Delete workout?").assertIsDisplayed()
-        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.onNodeWithTag("confirm-delete-workout").performClick()
 
         composeRule.runOnIdle {
             assertFalse(model.workoutTemplates.any { it.id == workout.id })

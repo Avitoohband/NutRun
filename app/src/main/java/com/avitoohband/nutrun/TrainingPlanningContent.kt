@@ -28,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -271,7 +272,8 @@ private fun WorkoutLibraryContent(
                         if (model.deleteWorkout(template.id) is TrainingMutationResult.Success) {
                             deleteTemplate = null
                         }
-                    }
+                    },
+                    modifier = Modifier.testTag("confirm-delete-workout")
                 ) {
                     Text("Delete")
                 }
@@ -308,10 +310,14 @@ private fun WorkoutLibraryContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("workout-card-${template.id}")
-                    .clickable { onOpenTemplate(template) }
             ) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
+                Column {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenTemplate(template) }
+                            .padding(12.dp)
+                    ) {
                         Text(template.name, fontWeight = FontWeight.Bold)
                         Text(
                             "${template.logicalTargetCount()} planned targets",
@@ -351,35 +357,47 @@ private fun WorkoutLibraryContent(
                             }
                         }
                     }
-                    IconButton(
-                        onClick = { model.startWorkout(template.id) },
-                        enabled = template.exercises.isNotEmpty(),
-                        modifier = Modifier.testTag("start-session-${template.id}")
-                    ) {
-                        Icon(Icons.Default.PlayArrow, "Start ${template.name}")
+                    HorizontalDivider()
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                        TextButton(
+                            onClick = { model.startWorkout(template.id) },
+                            enabled = template.exercises.isNotEmpty(),
+                            modifier = Modifier.weight(1f).testTag("start-session-${template.id}")
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Start")
+                        }
+                        TextButton(
+                            onClick = { onEditTemplate(template) },
+                            modifier = Modifier.weight(1f).testTag("edit-workout-${template.id}")
+                        ) {
+                            Icon(Icons.Default.Edit, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Edit")
+                        }
                     }
-                    IconButton(
-                        onClick = { onEditTemplate(template) },
-                        modifier = Modifier.testTag("edit-workout-${template.id}")
-                    ) {
-                        Icon(Icons.Default.Edit, "Edit ${template.name}")
-                    }
-                    IconButton(
-                        onClick = { onDuplicateTemplate(template) },
-                        modifier = Modifier.testTag("duplicate-workout-${template.id}")
-                    ) {
-                        Icon(Icons.Default.ContentCopy, "Duplicate ${template.name}")
-                    }
-                    IconButton(
-                        onClick = { deleteTemplate = template },
-                        enabled = !isActive,
-                        modifier = Modifier.testTag("delete-workout-${template.id}")
-                    ) {
-                        Icon(Icons.Default.Delete, "Delete ${template.name}")
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                        TextButton(
+                            onClick = { onDuplicateTemplate(template) },
+                            modifier = Modifier.weight(1f).testTag("duplicate-workout-${template.id}")
+                        ) {
+                            Icon(Icons.Default.ContentCopy, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Duplicate")
+                        }
+                        TextButton(
+                            onClick = { deleteTemplate = template },
+                            enabled = !isActive,
+                            modifier = Modifier.weight(1f).testTag("delete-workout-${template.id}")
+                        ) {
+                            Icon(Icons.Default.Delete, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Delete")
+                        }
                     }
                 }
-            }
-        }
+            }        }
     }
 }
 
