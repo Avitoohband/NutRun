@@ -1143,7 +1143,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
             }
         )
     }
-    model.activeSession()?.let { session ->
+    model.activeSession()?.let {
         val context = LocalContext.current
         val timerEnd = model.restTimerEndAtMillis
         var currentTime by remember(timerEnd) { mutableLongStateOf(System.currentTimeMillis()) }
@@ -1162,122 +1162,12 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                 playRestTimerFinishedFeedback(context)
             }
         }
-        LazyColumn(
-            Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        session.name,
-                        modifier = Modifier.weight(1f),
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    TextButton(
-                        onClick = { editRestTimer = true },
-                        modifier = Modifier.testTag("rest-timer-settings")
-                    ) {
-                        Text("Rest ${model.defaultRestTimerSeconds}s")
-                    }
-                }
-            }
-            if (session.exercises.any { it.alternativeGroupId != null }) {
-                item {
-                    Text(
-                        "Choose one cardio option.",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-            items(session.guidance) { guidance ->
-                Text(guidance, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-            }
-            if (timerEnd != null && timerEnd > currentTime) {
-                item {
-                    RestTimerBar(
-                        remainingSeconds = ((timerEnd - currentTime + 999) / 1_000).toInt(),
-                        onAddTime = model::addRestTime,
-                        onSkip = model::skipRestTimer
-                    )
-                }
-            }
-            items(session.exercises, key = { it.id }) { target ->
-                Card(shape = RoundedCornerShape(8.dp)) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(target.exercise.name, fontWeight = FontWeight.SemiBold)
-                        Text(target.summary(model.usesMetricUnits))
-                        model.progressionSuggestion(target)?.let { suggestion ->
-                            ProgressionSuggestionText(
-                                target = target,
-                                suggestion = suggestion,
-                                usesMetricUnits = model.usesMetricUnits,
-                                testTag = "active-progression-${target.id}"
-                            )
-                        }
-                        target.intensityGuidance?.let {
-                            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                        }
-                        val previousSets = model.previousSets(target.exercise.id)
-                        if (previousSets.isNotEmpty()) {
-                            Text(
-                                "Previous: " + previousSets.joinToString(" | ") {
-                                    buildString {
-                                        append("Set ${it.setNumber}")
-                                        it.weightKg?.let { weight -> append(" ${displayWeight(weight, model.usesMetricUnits)}") }
-                                        it.reps?.let { reps -> append(" x $reps") }
-                                        it.rpe?.let { rpe -> append(" RPE ${formatMeasurementForInput(rpe)}") }
-                                    }
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp
-                            )
-                        }
-                        model.activeSetLogs[target.id].orEmpty().forEach { set ->
-                            WorkoutSetRow(
-                                set = set,
-                                metric = model.usesMetricUnits,
-                                onChange = { reps, weightKg, durationSeconds, rpe, completed ->
-                                    model.updateWorkoutSet(
-                                        target.id,
-                                        set.setNumber,
-                                        reps,
-                                        weightKg,
-                                        durationSeconds,
-                                        rpe,
-                                        completed
-                                    )
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { confirmCancelWorkout = true },
-                        modifier = Modifier.weight(1f).testTag("cancel-workout")
-                    ) {
-                        Text("Cancel")
-                    }
-                    Button(
-                        onClick = model::finishWorkout,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Stop, null)
-                        Text("Finish")
-                    }
-                }
-            }
-        }
+        ActiveWorkoutContent(
+            model = model,
+            onEditRestTimer = { editRestTimer = true },
+            onCancelRequest = { confirmCancelWorkout = true },
+            onFinishRequest = model::finishWorkout
+        )
         return
     }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
@@ -1427,27 +1317,6 @@ internal fun TrainingScreen(model: TrainingViewModel) {
     */
 }
 
-@Composable
-private fun ProgressionSuggestionText(
-    target: ExerciseTarget,
-    suggestion: ProgressionSuggestion,
-    usesMetricUnits: Boolean,
-    testTag: String
-) {
-    val action = when (suggestion.action) {
-        ProgressionAction.INCREASE -> "Increase to"
-        ProgressionAction.KEEP -> "Keep"
-        ProgressionAction.REDUCE -> "Reduce to"
-    }
-    Text(
-        text = "${target.exercise.name}: $action " +
-            displayWeight(suggestion.suggestedWeightKg, usesMetricUnits),
-        modifier = Modifier.testTag(testTag),
-        color = MaterialTheme.colorScheme.primary,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.SemiBold
-    )
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -3733,117 +3602,6 @@ private fun ExercisePickerDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
-}
-
-@Composable
-private fun WorkoutSetRow(
-    set: WorkoutSetLog,
-    metric: Boolean,
-    onChange: (Int?, Double?, Int?, Double?, Boolean) -> Unit
-) {
-    var reps by remember(set.id) { mutableStateOf(set.reps?.toString().orEmpty()) }
-    var weight by remember(set.id, metric) {
-        mutableStateOf(
-            set.weightKg?.let {
-                formatMeasurementForInput(if (metric) it else it * KG_TO_POUNDS)
-            }.orEmpty()
-        )
-    }
-    var minutes by remember(set.id) {
-        mutableStateOf(set.durationSeconds?.div(60.0)?.let(::formatMeasurementForInput).orEmpty())
-    }
-    var rpe by remember(set.id) { mutableStateOf(set.rpe?.let(::formatMeasurementForInput).orEmpty()) }
-
-    fun emit(completed: Boolean = set.completed) {
-        val parsedReps = reps.toIntOrNull()
-        val enteredWeight = weight.toDoubleOrNull()
-        val parsedMinutes = minutes.toDoubleOrNull()
-        val parsedRpe = rpe.toDoubleOrNull()
-        if (reps.isNotBlank() && parsedReps !in 0..1_000) return
-        if (weight.isNotBlank() && (enteredWeight == null || enteredWeight < 0.0)) return
-        if (minutes.isNotBlank() && (parsedMinutes == null || parsedMinutes !in 0.0..1_440.0)) return
-        if (rpe.isNotBlank() && (parsedRpe == null || parsedRpe !in 0.0..10.0)) return
-        onChange(
-            parsedReps,
-            enteredWeight?.let { if (metric) it else it / KG_TO_POUNDS },
-            parsedMinutes?.times(60)?.roundToInt(),
-            parsedRpe,
-            completed
-        )
-    }
-
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("${set.setNumber}", modifier = Modifier.width(22.dp), fontWeight = FontWeight.Bold)
-        if (set.durationSeconds != null) {
-            OutlinedTextField(
-                value = minutes,
-                onValueChange = { minutes = it; emit() },
-                modifier = Modifier.weight(1f),
-                label = { Text("Minutes") },
-                singleLine = true
-            )
-        } else {
-            OutlinedTextField(
-                value = weight,
-                onValueChange = { weight = it; emit() },
-                modifier = Modifier.weight(1f),
-                label = { Text(if (metric) "kg" else "lb") },
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = reps,
-                onValueChange = { reps = it; emit() },
-                modifier = Modifier.weight(1f),
-                label = { Text("Reps") },
-                singleLine = true
-            )
-        }
-        OutlinedTextField(
-            value = rpe,
-            onValueChange = { rpe = it; emit() },
-            modifier = Modifier.weight(0.8f).testTag("workout-effort-${set.id}"),
-            label = { Text("RPE") },
-            singleLine = true
-        )
-        Checkbox(
-            checked = set.completed,
-            onCheckedChange = { emit(it) },
-            modifier = Modifier.testTag("workout-set-completed-${set.id}")
-        )
-    }
-}
-
-@Composable
-private fun RestTimerBar(
-    remainingSeconds: Int,
-    onAddTime: () -> Unit,
-    onSkip: () -> Unit
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Rest", fontWeight = FontWeight.Bold)
-                Text(
-                    "%d:%02d".format(remainingSeconds / 60, remainingSeconds % 60),
-                    fontSize = 22.sp
-                )
-            }
-            TextButton(onClick = onAddTime) { Text("+30 sec") }
-            TextButton(onClick = onSkip) { Text("Skip") }
-        }
-    }
 }
 
 @Composable
