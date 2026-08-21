@@ -35,3 +35,17 @@ $env:ANDROID_SERIAL='emulator-5554'
 .\gradlew.bat connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.avitoohband.nutrun.ProductionFlowTest' --console=plain
 .\gradlew.bat installDebug --console=plain
 ```
+
+## Tasks 8-9: Workout Editor and Delivery Validation
+
+- `WorkoutEditorComposeTest` passed on `emulator-5554`: custom creation with a name only and per-target set control isolation.
+- Focused JVM compatibility suite passed: `TrainingStateV2MigrationTest`, `DefaultTrainingProgramTest`, and `TrainingReminderTest`.
+- Focused production and reminder instrumentation suite passed: 11/11 on `emulator-5554`.
+- Full validation passed, 2026-08-21:
+  - `testDebugUnitTest`
+  - `lintDebug`
+  - `assembleDebug`
+  - `assembleDebugAndroidTest`
+  - full `connectedDebugAndroidTest`: 36/36, no skips or failures.
+
+Task 8 implementation provides workout-name editing, target set controls constrained to `1..20`, confirmed session-only target removal, combined catalog search/category filtering, duplicate-disabled catalog entries, and quick custom-exercise creation with optional category and primary-muscle details. Existing `TrainingViewModel` validation keeps custom creation atomic and preserves canonical units.
