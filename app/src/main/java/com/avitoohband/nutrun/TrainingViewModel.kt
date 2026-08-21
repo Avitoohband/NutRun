@@ -933,6 +933,36 @@ class TrainingViewModel private constructor(
             ?.filter { it.exerciseId == exerciseId && it.completed }
             .orEmpty()
 
+    fun copyPreviousSet(targetId: String, setNumber: Int): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val session = activeSession()
+            ?: return TrainingMutationResult.ValidationError("No active workout is available.")
+        val target = session.exercises.firstOrNull { it.id == targetId }
+            ?: return TrainingMutationResult.ValidationError("Exercise target not found.")
+        val current = activeSetLogs[targetId]
+            .orEmpty()
+            .firstOrNull { it.setNumber == setNumber }
+            ?: return TrainingMutationResult.ValidationError("Workout set not found.")
+        val previous = workoutHistory.firstNotNullOfOrNull { workout ->
+            workout.sets.firstOrNull { set ->
+                set.exerciseId == target.exercise.id &&
+                    set.setNumber == setNumber &&
+                    set.completed
+            }
+        } ?: return TrainingMutationResult.ValidationError("No previous set is available.")
+
+        updateWorkoutSet(
+            targetId = targetId,
+            setNumber = setNumber,
+            reps = previous.reps,
+            weightKg = previous.weightKg,
+            durationSeconds = previous.durationSeconds,
+            rpe = previous.rpe,
+            completed = current.completed
+        )
+        return TrainingMutationResult.Success
+    }
+
     fun progressionSuggestion(target: ExerciseTarget): ProgressionSuggestion? =
         progressionSuggestion(target, workoutHistory, usesMetricUnits)
 

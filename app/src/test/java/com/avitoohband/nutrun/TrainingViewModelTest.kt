@@ -1320,6 +1320,84 @@ class TrainingViewModelTest {
     }
 
     @Test
+    fun copyPreviousSetCopiesTheMatchingCompletedSetWithoutCompletingTheNewSet() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val target = session.exercises.first()
+        model.startWorkout(session.id)
+        model.updateWorkoutSet(
+            targetId = target.id,
+            setNumber = 1,
+            reps = 7,
+            weightKg = 62.5,
+            durationSeconds = null,
+            rpe = 8.5,
+            completed = true
+        )
+        model.finishWorkout()
+        model.startWorkout(session.id)
+
+        val result = model.copyPreviousSet(target.id, setNumber = 1)
+
+        assertEquals(TrainingMutationResult.Success, result)
+        val copied = model.activeSetLogs.getValue(target.id).first { it.setNumber == 1 }
+        assertEquals(7, copied.reps)
+        assertEquals(62.5, copied.weightKg ?: -1.0, 0.0001)
+        assertEquals(8.5, copied.rpe ?: -1.0, 0.0001)
+        assertNull(copied.durationSeconds)
+        assertFalse(copied.completed)
+    }
+
+    @Test
+    fun copyPreviousSetUsesExerciseIdentityAcrossDifferentTargetIds() {
+        val model = TrainingViewModel(null, null)
+        val sourceSession = model.sessions.first { it.id == "session-wednesday-pull-triceps" }
+        val sourceTarget = sourceSession.exercises.first { it.exercise.id == "face-pull" }
+        model.startWorkout(sourceSession.id)
+        model.updateWorkoutSet(
+            targetId = sourceTarget.id,
+            setNumber = 1,
+            reps = 9,
+            weightKg = 55.0,
+            durationSeconds = null,
+            rpe = 7.5,
+            completed = true
+        )
+        model.finishWorkout()
+        val destination = model.workoutTemplates.first { template ->
+            template.id != sourceSession.id &&
+                template.exercises.any { it.exercise.id == sourceTarget.exercise.id }
+        }
+        val destinationTarget = destination.exercises.first {
+            it.exercise.id == sourceTarget.exercise.id
+        }
+        model.startWorkout(destination.id)
+
+        assertEquals(
+            TrainingMutationResult.Success,
+            model.copyPreviousSet(destinationTarget.id, setNumber = 1)
+        )
+        assertEquals(
+            55.0,
+            model.activeSetLogs.getValue(destinationTarget.id).first().weightKg ?: -1.0,
+            0.0001
+        )
+    }
+
+    @Test
+    fun copyPreviousSetReportsWhenNoMatchingHistoryExists() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.exercises.isNotEmpty() }
+        val target = session.exercises.first()
+        model.startWorkout(session.id)
+
+        assertEquals(
+            TrainingMutationResult.ValidationError("No previous set is available."),
+            model.copyPreviousSet(target.id, setNumber = 1)
+        )
+    }
+
+    @Test
     fun zeroEffortValueCanCompleteAWorkoutSet() {
         val model = TrainingViewModel(null, null)
         val session = model.sessions.first { it.id == "session-monday-push-biceps" }
