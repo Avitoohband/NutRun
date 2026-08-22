@@ -142,6 +142,7 @@ fun SupplementReminderSettingsCard(
     onPermissionRequest: () -> Unit,
     onManageSupplements: () -> Unit,
     loading: Boolean = false,
+    collapsedSummary: String? = null,
     modifier: Modifier = Modifier
 ) {
     val enableAll = supplements.any { supplement ->
@@ -172,9 +173,21 @@ fun SupplementReminderSettingsCard(
                 )
             }
 
+            Text(
+                "The master switch pauses all supplement reminders without changing individual schedules.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp
+            )
+
             if (loading) {
                 Text(
                     "Loading supplement reminders...",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (!masterEnabled && collapsedSummary != null) {
+                Text(
+                    collapsedSummary,
+                    modifier = Modifier.testTag("supplement-reminder-summary"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else if (supplements.isEmpty()) {

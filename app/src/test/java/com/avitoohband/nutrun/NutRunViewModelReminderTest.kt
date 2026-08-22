@@ -234,6 +234,132 @@ class NutRunViewModelReminderTest {
     }
 
     @Test
+    fun remainingSettingsRejectAnAccountMismatchBeforeHydrationStarts() = runBlocking {
+        val runtime = ReminderRuntime("account-b")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        runtime.settingsWrites.clear()
+
+        val result = model.persistNotificationSettings(
+            accountId = "account-a",
+            hydration = testHydrationPlan(),
+            training = testTrainingSettings(),
+            supplements = testSettings()
+        )
+
+        assertTrue(result is NotificationSettingsSaveResult.AccountChanged)
+        val changed = result as NotificationSettingsSaveResult.AccountChanged
+        assertEquals(NotificationSettingsSaveStage.HYDRATION, changed.stage)
+        assertEquals(
+            setOf(NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS),
+            changed.completedStages
+        )
+        assertTrue(runtime.settingsWrites.isEmpty())
+    }
+
+    @Test
+    fun remainingSettingsDetectAccountSwitchAfterTrainingBeforeMasterStarts() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        runtime.settingsWrites.clear()
+        runtime.trainingSaveGate = CompletableDeferred()
+
+        val save = async {
+            model.persistNotificationSettings(
+                accountId = "account-a",
+                hydration = testHydrationPlan(),
+                training = testTrainingSettings(),
+                supplements = testSettings()
+            )
+        }
+        runtime.trainingSaveStarted.await()
+        runtime.selectAccount("account-b")
+        runtime.trainingSaveGate!!.complete(Unit)
+
+        val result = save.await()
+        assertTrue(result is NotificationSettingsSaveResult.AccountChanged)
+        val changed = result as NotificationSettingsSaveResult.AccountChanged
+        assertEquals(NotificationSettingsSaveStage.TRAINING, changed.stage)
+        assertEquals(
+            setOf(
+                NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                NotificationSettingsSaveStage.HYDRATION,
+                NotificationSettingsSaveStage.TRAINING
+            ),
+            changed.completedStages
+        )
+        assertEquals(
+            listOf("hydration:account-a", "training:account-a"),
+            runtime.settingsWrites
+        )
+        assertTrue(runtime.settingsWrites.none { it == "master:account-a" })
+    }
+
+    @Test
+    fun remainingSettingsDetectAccountSwitchDuringMasterPersistence() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        runtime.settingsWrites.clear()
+        runtime.saveGate = CompletableDeferred()
+
+        val save = async {
+            model.persistNotificationSettings(
+                accountId = "account-a",
+                hydration = testHydrationPlan(),
+                training = testTrainingSettings(),
+                supplements = testSettings()
+            )
+        }
+        runtime.saveStarted.await()
+        runtime.selectAccount("account-b")
+        runtime.saveGate!!.complete(Unit)
+
+        val result = save.await()
+        assertTrue(result is NotificationSettingsSaveResult.AccountChanged)
+        val changed = result as NotificationSettingsSaveResult.AccountChanged
+        assertEquals(NotificationSettingsSaveStage.SUPPLEMENT_MASTER, changed.stage)
+        assertEquals(
+            setOf(
+                NotificationSettingsSaveStage.INDIVIDUAL_SUPPLEMENTS,
+                NotificationSettingsSaveStage.HYDRATION,
+                NotificationSettingsSaveStage.TRAINING
+            ),
+            changed.completedStages
+        )
+        assertEquals(
+            listOf("hydration:account-a", "training:account-a"),
+            runtime.settingsWrites
+        )
+    }
+
+    @Test
+    fun disabledSettingsPersistTheirConfiguredTimesWithoutResettingThem() = runBlocking {
+        val runtime = ReminderRuntime("account-a")
+        val model = NutRunViewModel(runtime, reminderTestScope())
+        val hydration = testHydrationPlan().copy(
+            remindersEnabled = false,
+            intervalMinutes = 90,
+            wakingStartMinute = 7 * 60 + 30,
+            wakingEndMinute = 21 * 60 + 15
+        )
+        val training = testTrainingSettings().copy(
+            enabled = false,
+            previousDayMinute = 19 * 60 + 45,
+            sameDayMinute = 7 * 60 + 5
+        )
+
+        val result = model.persistNotificationSettings(
+            accountId = "account-a",
+            hydration = hydration,
+            training = training,
+            supplements = testSettings(enabled = false)
+        )
+
+        assertEquals(NotificationSettingsSaveResult.Success("account-a"), result)
+        assertEquals(hydration, runtime.savedHydrationPlans.single())
+        assertEquals(training, runtime.savedTrainingSettings.single())
+        assertFalse(runtime.savedSettings.single().second.enabled)
+    }
+    @Test
     fun signOutCancelsCurrentAccountBeforeSessionClearAndBlocksQueuedReschedule() = runBlocking {
         val runtime = ReminderRuntime("account-a")
         val model = NutRunViewModel(runtime, reminderTestScope())
@@ -310,6 +436,8 @@ class NutRunViewModelReminderTest {
         val hydrationSchedules = mutableListOf<HydrationPlanEntity>()
         val trainingSchedules = mutableListOf<Pair<String, TrainingReminderSettingsEntity>>()
         val settingsWrites = mutableListOf<String>()
+        val savedHydrationPlans = mutableListOf<HydrationPlanEntity>()
+        val savedTrainingSettings = mutableListOf<TrainingReminderSettingsEntity>()
         val scheduleAttempts = mutableListOf<ReminderSystem>()
         val successfulScheduleSystems = mutableListOf<ReminderSystem>()
         val recoverySchedules = mutableListOf<Pair<String, ReminderSystem>>()
@@ -317,6 +445,8 @@ class NutRunViewModelReminderTest {
         var settingsFailureStage: NotificationSettingsSaveStage? = null
         var hydrationSaveGate: CompletableDeferred<Unit>? = null
         val hydrationSaveStarted = CompletableDeferred<Unit>()
+        var trainingSaveGate: CompletableDeferred<Unit>? = null
+        val trainingSaveStarted = CompletableDeferred<Unit>()
         var settingsReads = 0
         var saveGate: CompletableDeferred<Unit>? = null
         val saveStarted = CompletableDeferred<Unit>()
@@ -433,6 +563,7 @@ class NutRunViewModelReminderTest {
             hydrationSaveStarted.complete(Unit)
             hydrationSaveGate?.await()
             failSettingsSaveIfRequested(NotificationSettingsSaveStage.HYDRATION)
+            savedHydrationPlans += plan
             settingsWrites += "hydration:$userId"
         }
 
@@ -440,8 +571,11 @@ class NutRunViewModelReminderTest {
             userId: String,
             settings: TrainingReminderSettingsEntity
         ) {
-            failSettingsSaveIfRequested(NotificationSettingsSaveStage.TRAINING)
             require(session.value.authenticatedUserId == userId)
+            trainingSaveStarted.complete(Unit)
+            trainingSaveGate?.await()
+            failSettingsSaveIfRequested(NotificationSettingsSaveStage.TRAINING)
+            savedTrainingSettings += settings
             settingsWrites += "training:$userId"
         }
 

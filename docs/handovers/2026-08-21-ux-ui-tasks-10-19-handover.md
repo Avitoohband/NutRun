@@ -151,6 +151,8 @@ Retained limitations:
 
 Next safe task: Task 12, Reminder Settings and Time Controls. Update this handover with Task 12 branch, starting commit, scope, and baseline before production edits.
 
+Task 12 live resume point: [`2026-08-22-task-12-live-handover.md`](2026-08-22-task-12-live-handover.md). It must be updated before and after every implementation and validation checkpoint.
+
 ## Execution Order
 
 Recommended order:
