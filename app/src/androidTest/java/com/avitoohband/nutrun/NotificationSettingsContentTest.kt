@@ -9,11 +9,15 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToNode
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -141,9 +145,84 @@ class NotificationSettingsContentTest {
         composeRule.runOnIdle { assertEquals(1, backCount) }
     }
 
+    @Test
+    fun typedAndPickerBackedTimesReachOneSaveAndSurviveDisabledSections() {
+        var persisted: NotificationSettingsDraft? = null
+        var saveCalls = 0
+        val saved = draft().copy(trainingDayReminder = "07:05")
+        setContent(
+            saved = saved,
+            onPersist = { current ->
+                saveCalls += 1
+                persisted = current
+                NotificationSettingsSaveResult.Success("account-a")
+            }
+        )
+
+        composeRule.onNodeWithTag("water-first-reminder")
+            .performTextClearance()
+        composeRule.onNodeWithTag("water-first-reminder")
+            .performTextInput("07:30")
+        composeRule.onNodeWithTag("training-day-reminder-clock")
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithTag("training-day-reminder-picker").assertIsDisplayed()
+        composeRule.onNodeWithTag("training-day-reminder-confirm").performClick()
+        composeRule.onNodeWithTag("water-reminders-master").performClick()
+        composeRule.onNodeWithTag("training-reminders-master").performClick()
+        composeRule.onNodeWithTag("save-notification-settings").performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000) { saveCalls == 1 }
+        composeRule.runOnIdle {
+            assertEquals(false, persisted?.waterEnabled)
+            assertEquals("07:30", persisted?.firstReminder)
+            assertEquals(false, persisted?.trainingEnabled)
+            assertEquals("07:05", persisted?.trainingDayReminder)
+            assertEquals(1, saveCalls)
+        }
+    }
+
+    @Test
+    fun deniedPermissionKeepsConfiguredValuesAndProvidesSettingsAction() {
+        var permissionRequests = 0
+        var settingsOpens = 0
+        setContent(
+            saved = draft(),
+            permissionGranted = false,
+            onPermissionRequest = { permissionRequests += 1 },
+            onOpenNotificationSettings = { settingsOpens += 1 }
+        )
+
+        composeRule.onNodeWithTag("notification-settings-list").performScrollToNode(
+            hasText("Notification permission is required.")
+        )
+        composeRule.onNodeWithText("Notification permission is required.")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Open Android notification settings")
+            .performClick()
+        composeRule.onNodeWithTag("water-reminders-master")
+            .performScrollTo()
+            .performClick()
+            .assertIsOff()
+        composeRule.onNodeWithTag("water-reminders-master")
+            .performClick()
+            .assertIsOn()
+        composeRule.onNodeWithTag("water-first-reminder").assertTextContains("08:00")
+
+        composeRule.runOnIdle {
+            assertEquals(1, settingsOpens)
+            assertEquals(1, permissionRequests)
+        }
+    }
     private fun setContent(
         saved: NotificationSettingsDraft = draft(),
         supplements: List<Supplement> = emptyList(),
+        permissionGranted: Boolean = true,
+        onPermissionRequest: () -> Unit = {},
+        onOpenNotificationSettings: () -> Unit = {},
+        onPersist: suspend (NotificationSettingsDraft) -> NotificationSettingsSaveResult = {
+            NotificationSettingsSaveResult.Success("account-a")
+        },
         onBack: () -> Unit = {}
     ) {
         composeRule.setContent {
@@ -154,12 +233,12 @@ class NotificationSettingsContentTest {
                     draft = current,
                     supplements = supplements,
                     accountReady = true,
-                    permissionGranted = true,
+                    permissionGranted = permissionGranted,
                     onDraftChange = { current = it },
-                    onPermissionRequest = {},
-                    onOpenNotificationSettings = {},
+                    onPermissionRequest = onPermissionRequest,
+                    onOpenNotificationSettings = onOpenNotificationSettings,
                     onManageSupplements = {},
-                    persist = { NotificationSettingsSaveResult.Success("account-a") },
+                    persist = { onPersist(current) },
                     currentAccountId = { "account-a" },
                     onSaveSuccess = {},
                     onBack = onBack,

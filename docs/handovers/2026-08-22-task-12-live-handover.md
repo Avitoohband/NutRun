@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `TASK_12_2_GREEN`
+**Status:** `TASK_12_3_GREEN_FULL_VALIDATION_NEXT`
 
 **Current writer:** Codex
 
@@ -131,6 +131,17 @@ Planned tests:
 - Existing connected regression: SupplementReminderSettingsCardComposeTest, 11 passed, 0 failed, 0 skipped; exit 0.
 - Task 12.1 regression: 11 focused JVM tests passed, 0 failed, 0 skipped; exit 0.
 - Next exact step: extend Task 12.3 persistence/account/permission/scheduling regression tests, beginning with a RED test for retained disabled values and exactly one successful reschedule.
+### 2026-08-22 - Task 12.3 Focused Regression Gate Passed
+
+- Added account-change coverage before hydration, after training and before master, and during master persistence; the existing hydration-stage test remains green.
+- Added persistence coverage proving disabled water, training, and supplement masters retain and save their configured interval and times.
+- Added Compose coverage proving typed water time and picker-confirmed training time reach one persistence invocation, including while sections are disabled.
+- Added permission-denial coverage proving configured values remain and the Android notification settings action remains available.
+- Focused JVM command covered NotificationSettingsDraftTest, ReminderTimeInputTest, NotificationSettingsSaveTest, and NutRunViewModelReminderTest.
+- Focused JVM result: 28 passed, 0 failed, 0 skipped; exit 0.
+- NotificationSettingsContentTest connected result: 7 passed, 0 failed, 0 skipped on Pixel_10; exit 0.
+- Scheduler implementation, WorkManager unique names, Room schema, defaults, REST, and MCP contracts remain unchanged.
+- Next exact step: run the full unit, lint, debug assemble, Android-test assemble, and connected instrumentation gates; then perform manual emulator checks and review the complete diff.
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -145,10 +156,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12.2 GREEN; Task 12.3 regression gate next
-Committed/pushed Task 12 commits: through 2d93d01; this Task 12.2 GREEN checkpoint is pending commit
-Dirty files: NotificationSettingsContent.kt, MainActivity.kt, SupplementReminderSettingsCard.kt, NotificationSettingsContentTest.kt, and this handover until committed
-Last verified command: NotificationSettingsContentTest, 5 passed, exit 0
-Next exact step: Add Task 12.3 persistence, account, permission, and one-reschedule regression tests
+Task/subtask: Task 12.3 focused regressions GREEN; full validation next
+Committed/pushed Task 12 commits: through 55a5037; this Task 12.3 test checkpoint is pending commit
+Dirty files: NotificationSettingsContentTest.kt, NutRunViewModelReminderTest.kt, and this handover until committed
+Last verified command: NotificationSettingsContentTest, 7 passed, exit 0; focused JVM suite, 28 passed
+Next exact step: Run the complete Task 12 Gradle validation gate and manual emulator checklist
 Blockers: None
 ```
