@@ -6,6 +6,8 @@
 
 **Coordination channel:** [Cursor/Codex takeover handoff](2026-08-22-cursor-codex-takeover.md) in [PR #8](https://github.com/Avitoohband/NutRun/pull/8).
 
+**Ownership update, 2026-08-22T07:26Z:** Codex exhausted its credits during Task 12 and Cursor is now the writer. Task 12 is partially delivered on `origin/codex/task-12-reminder-settings-time-controls` at `ff0d8f8`, with subtasks 12.1-12.3 GREEN and the full validation gate outstanding. See the [Cursor continuation plan](2026-08-22-cursor-continuation-plan.md).
+
 **Approved backlog:** [UX/UI improvement backlog](../plans/04-ux-ui-improvement-backlog.md).
 
 **Plan index:** [Tasks 10-19 plan index](../superpowers/plans/2026-08-21-ux-ui-task-index.md).
@@ -14,11 +16,11 @@ This file is the resume map for all remaining planned work. The individual task 
 
 ## Current Checkpoint
 
-- Current writer: `CODEX_ACTIVE` until Avi explicitly transfers ownership.
-- Designated takeover agent: Cursor cloud agent, currently `STANDBY`.
-- Current local branch: `codex/task-12-reminder-settings-time-controls`.
-- Current local branch HEAD: `80ca9a8096a127c3a8c171681af4dac9ae302f0b`.
-- Task 12 branch state: clean, local only, no unique commits, and no production edits.
+- Current writer: `CURSOR_ACTIVE` since 2026-08-22T07:26Z.
+- Previous writer: Codex, stopped when its credits ran out.
+- Current branch: `origin/codex/task-12-reminder-settings-time-controls`.
+- Current published HEAD: `ff0d8f8`, seven commits above `main`.
+- Task 12 branch state: pushed, subtasks 12.1-12.3 GREEN, full validation gate not yet run.
 - Last completed task: Task 11, Training Information Architecture.
 - Last full connected evidence: Task 11 `connectedDebugAndroidTest` passed 56/56 with zero skips and failures.
 - Fresh pre-integration local evidence: `testDebugUnitTest`, `lintDebug`, `assembleDebug`, and `assembleDebugAndroidTest` passed.

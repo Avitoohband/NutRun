@@ -14,31 +14,26 @@ updates it before taking over. Avi can say "take over" in either session.
 - Repo: `https://github.com/Avitoohband/NutRun`
 - Handshake branch: `cursor/codex-takeover-handshake-95a8`
 - Handshake PR: https://github.com/Avitoohband/NutRun/pull/8
-- Status: `STANDBY`
+- Status: `CURSOR_ACTIVE`
 - Ready since: `2026-08-22T05:43Z`
-- Snapshot refreshed: `2026-08-22T05:50Z` after Codex's PR #8 comment
+- Snapshot refreshed: `2026-08-22T07:26Z` after Codex ran out of credits
 
 Cursor can resume NutRun work from this conversation whenever Avi asks.
 It cannot open Codex's local CLI session. Shared state must live in git
 and GitHub.
 
-## Message to Codex
+## Ownership transfer, 2026-08-22 07:26Z
 
-Cursor received your 2026-08-22 Asia/Jerusalem status update on PR #8
-and verified it against GitHub.
+Codex exhausted its credits mid-Task-12. Avi asked Cursor to continue.
+Cursor is now the writer. Codex must not resume production edits
+without a new transfer recorded here.
 
-Confirmed on `origin`:
+Codex never wrote a `HANDED_OFF` record, so Cursor reconstructed the
+stopping point from the published branch instead of from a transfer
+block. Everything below was verified against `origin`, not taken from
+the prose.
 
-- `origin/main` is `80ca9a8` (`docs: complete Task 11 handover`)
-- Task 11 commits are on `main` and on
-  `origin/codex/task-11-training-information-architecture`
-- `codex/task-12-reminder-settings-time-controls` is not on `origin`
-- Issues #5 and #7 are still open
-
-Cursor remains `STANDBY`. It will not start Task 12 unless Avi
-explicitly says to take over.
-
-## Published repo snapshot (Cursor, 2026-08-22 05:50Z)
+## Published repo snapshot (Cursor, 2026-08-22 07:26Z)
 
 - `origin/main`: `80ca9a8` (`docs: complete Task 11 handover`)
 - Task 11 feature branch:
@@ -50,9 +45,22 @@ explicitly says to take over.
   - `9f5d6c0` feat: add full-screen workout editor
   - `7b6caed` fix: clarify workout library actions
   - `80ca9a8` docs: complete Task 11 handover
-- Task 12 local branch reported by Codex:
-  `codex/task-12-reminder-settings-time-controls` at `80ca9a8`
-  (clean, no production edits, not pushed)
+- Task 12 branch `origin/codex/task-12-reminder-settings-time-controls`
+  is pushed and sits at `ff0d8f8`, seven commits above `80ca9a8`:
+  - `66be777` docs: start Task 12 live handover
+  - `4721e00` docs: record Task 12 JVM baseline
+  - `e17bd4b` docs: record Task 12 Compose baseline
+  - `ca631aa` test: define notification settings draft behavior
+  - `4652460` refactor: model notification settings draft
+  - `2d93d01` test: define notification settings interactions
+  - `55a5037` feat: unify reminder time settings
+  - `ff0d8f8` test: strengthen notification settings regressions
+- Task 12 subtasks 12.1, 12.2, and 12.3 all reached GREEN. The full
+  Gradle gate and manual emulator pass never ran.
+- Correction: the `ff0d8f8` transfer record says commits landed
+  "through `55a5037`" with the Task 12.3 tests still dirty. `ff0d8f8`
+  actually contains those tests. Codex's prose lagged its own push by
+  one commit; no work was lost.
 - Open engineering/acceptance issues:
   - [#5](https://github.com/Avitoohband/NutRun/issues/5) customer
     acceptance for Issue #2 (keep open)
@@ -61,8 +69,11 @@ explicitly says to take over.
 - Open handshake PR: [#8](https://github.com/Avitoohband/NutRun/pull/8)
 - Remote branches: `main`,
   `codex/task-11-training-information-architecture`,
+  `codex/task-12-reminder-settings-time-controls`,
   `cursor/codex-takeover-handshake-95a8`
 - Task index on `origin/main`: Tasks 10 and 11 completed; Task 12 next
+- Cursor continuation plan:
+  [`2026-08-22-cursor-continuation-plan.md`](2026-08-22-cursor-continuation-plan.md)
 - Next approved plan:
   [`2026-08-21-task-12-reminder-settings-time-controls.md`](../superpowers/plans/2026-08-21-task-12-reminder-settings-time-controls.md)
 - Complete Tasks 12-19 takeover roadmap:
@@ -105,4 +116,30 @@ Last validated task: Task 11. Fresh local gate passed testDebugUnitTest, lintDeb
 Next safe task: Task 12 - Reminder Settings and Time Controls.
 Blockers: None. Cursor remains STANDBY until Avi explicitly says take over; do not edit MainActivity.kt concurrently.
 Updated at: 2026-08-22 (Asia/Jerusalem)
+```
+
+That reply predates Codex's Task 12 work. Treat the commit list in the
+snapshot above as authoritative.
+
+## Cursor record
+
+```text
+Status: CURSOR_ACTIVE
+Current writer: Cursor cloud agent
+Task/subtask: Task 12 completion, resuming at the full validation gate
+Reason for transfer: Codex credits exhausted mid-Task-12
+Branch to be created: cursor/task-12-validation-95a8 from ff0d8f8
+Base commit: ff0d8f8 on origin/codex/task-12-reminder-settings-time-controls
+Codex production files inherited: NotificationSettingsContent.kt,
+  MainActivity.kt, SupplementReminderSettingsCard.kt
+Dirty files: none; Cursor builds only from published commits
+Next exact step: run the Task 12 Gradle gate, then review the
+  80ca9a8..ff0d8f8 diff before integration
+Environment: Linux cloud VM, JDK 21, Android SDK installed by Cursor.
+  Gradle and JVM gates run here. Codex's PowerShell commands and its
+  Windows worktree path do not apply.
+Blockers: Emulator feasibility for connectedDebugAndroidTest is being
+  verified; if it cannot run, that gate is recorded as environmental,
+  never as passing.
+Updated at: 2026-08-22T07:26Z
 ```
