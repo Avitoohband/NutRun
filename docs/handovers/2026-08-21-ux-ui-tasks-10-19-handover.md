@@ -16,6 +16,8 @@ Task 10 is integrated into `main` and pushed to `origin/main` after the validati
 
 Customer acceptance issue #5 remains open and must not be closed as part of Tasks 10-19 engineering work.
 
+Cursor takeover channel: [`2026-08-22-cursor-codex-takeover.md`](2026-08-22-cursor-codex-takeover.md). Use that file when Avi asks Cursor to take over from Codex.
+
 ## Required Reading
 
 1. [`UX/UI audit and acceptance backlog`](../plans/04-ux-ui-improvement-backlog.md)
