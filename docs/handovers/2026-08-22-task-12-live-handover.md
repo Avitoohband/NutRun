@@ -142,6 +142,25 @@ Planned tests:
 - NotificationSettingsContentTest connected result: 7 passed, 0 failed, 0 skipped on Pixel_10; exit 0.
 - Scheduler implementation, WorkManager unique names, Room schema, defaults, REST, and MCP contracts remain unchanged.
 - Next exact step: run the full unit, lint, debug assemble, Android-test assemble, and connected instrumentation gates; then perform manual emulator checks and review the complete diff.
+
+### 2026-08-22 - Cursor Takeover and Partial Validation
+
+- Codex exhausted credits at `ff0d8f8`; Avi asked Cursor to continue.
+- Cursor cloud agent (Linux VM) took over from `origin/codex/task-12-reminder-settings-time-controls` at `ff0d8f8`.
+- Environment: JDK 21, Android SDK installed by Cursor, Gradle wrapper via `sh gradlew`.
+- Full JVM gate: `testDebugUnitTest` passed; 256 tests, 0 failed, 0 skipped; exit 0.
+- Lint gate: `lintDebug` passed; exit 0.
+- Build gate: `assembleDebug assembleDebugAndroidTest` passed; exit 0.
+- Connected gate: **DEFERRED** — emulator stayed stuck "offline" after 10+ minutes (KVM present but emulator boot issues). Requires Avi's hardware.
+- Code review of `80ca9a8..ff0d8f8` found no defects:
+  - Account check preserved in persist
+  - Two-stage atomic save preserved via `orchestrateNotificationSettingsSave`
+  - Permission denial does not clear configured values
+  - Room schema, REST, MCP contracts unchanged
+  - Clean whitespace (`git diff --check` passes)
+- Branch for PR: `cursor/task-12-validation-95a8`
+- Next exact step: Avi runs `connectedDebugAndroidTest` locally; if green, Task 12 is ready to merge.
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -154,12 +173,16 @@ Planned tests:
 ## Transfer Record
 
 ```text
-Status: NOT_HANDED_OFF
-Current writer: Codex
-Task/subtask: Task 12.3 focused regressions GREEN; full validation next
-Committed/pushed Task 12 commits: through 55a5037; this Task 12.3 test checkpoint is pending commit
-Dirty files: NotificationSettingsContentTest.kt, NutRunViewModelReminderTest.kt, and this handover until committed
-Last verified command: NotificationSettingsContentTest, 7 passed, exit 0; focused JVM suite, 28 passed
-Next exact step: Run the complete Task 12 Gradle validation gate and manual emulator checklist
-Blockers: None
+Status: CURSOR_ACTIVE
+Current writer: Cursor cloud agent
+Task/subtask: Task 12 validation complete except connectedDebugAndroidTest
+Branch: cursor/task-12-validation-95a8 (from ff0d8f8)
+Committed/pushed Task 12 commits: ff0d8f8 (all Codex commits preserved)
+Dirty files: this handover only until committed
+Last verified command: testDebugUnitTest 256/0/0, lintDebug, assembleDebug/AndroidTest all exit 0
+Connected tests: DEFERRED to Avi's emulator
+Code review: no defects found
+Next exact step: Avi runs connectedDebugAndroidTest; if green, merge Task 12 PR
+Blockers: emulator boot on cloud VM; requires local device
+Updated at: 2026-08-22T07:55Z
 ```
