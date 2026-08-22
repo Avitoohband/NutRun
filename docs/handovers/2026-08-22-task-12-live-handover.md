@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `TASK_12_1_GREEN`
+**Status:** `TASK_12_2_RED_CONFIRMED`
 
 **Current writer:** Codex
 
@@ -109,6 +109,15 @@ Planned tests:
 - Result: exit 0, 11 tests passed, 0 failed, 0 skipped; `BUILD SUCCESSFUL` in 17 seconds.
 - Next exact step: write Task 12.2 connected Compose RED tests for four clock actions, plain labels, collapsed summaries, independent supplement controls, persistent Save, and dirty Back confirmation.
 
+### 2026-08-22 - Task 12.2 Compose RED Confirmed
+
+- Added `NotificationSettingsContentTest.kt` with five connected tests.
+- Coverage: all four water/training clock actions and plain labels; collapsed summaries with restored values; independent supplement master and Toggle all; sticky Save with 20 supplements; dirty Back confirmation with Keep editing and Discard.
+- First RED run also exposed an invalid assertion import in the new test; it was removed before accepting RED.
+- Clean RED command: connected Android test filtered to `NotificationSettingsContentTest`.
+- Result: expected exit 1 at Android test compilation only because `NotificationSettingsContent` is unresolved; the dependent lambda inference error is a consequence of that missing API.
+- Next exact step: implement the stateless content composable in `NotificationSettingsContent.kt`, add collapsed summary support to `SupplementReminderSettingsCard.kt`, then integrate the extracted screen state and persistence in `MainActivity.kt`.
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -123,10 +132,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12.1 GREEN; Task 12.2 Compose RED next
-Committed/pushed Task 12 commits: 66be777, 4721e00, e17bd4b, ca631aa; this GREEN checkpoint is pending commit
-Dirty files: NotificationSettingsContent.kt, corrected NotificationSettingsDraftTest.kt, and this live handover until committed
-Last verified command: focused Task 12.1 JVM tests, 11 passed, exit 0
-Next exact step: Add NotificationSettingsContentTest Compose RED coverage before extracting the screen
+Task/subtask: Task 12.2 Compose RED confirmed; screen extraction next
+Committed/pushed Task 12 commits: through 4652460; this Compose RED checkpoint is pending commit
+Dirty files: NotificationSettingsContentTest.kt and this live handover until committed
+Last verified command: focused Task 12.2 connected test, expected missing-content compilation failure, exit 1
+Next exact step: Implement and integrate NotificationSettingsContent, then rerun the focused connected class
 Blockers: None
 ```
