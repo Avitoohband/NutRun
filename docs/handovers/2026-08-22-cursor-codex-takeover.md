@@ -13,6 +13,7 @@ updates it before taking over. Avi can say "take over" in either session.
 - Model: `cursor-grok-4.6-high-fast`
 - Repo: `https://github.com/Avitoohband/NutRun`
 - Handshake branch: `cursor/codex-takeover-handshake-95a8`
+- Handshake PR: https://github.com/Avitoohband/NutRun/pull/8
 - Status: `STANDBY`
 - Ready since: `2026-08-22T05:43Z`
 
