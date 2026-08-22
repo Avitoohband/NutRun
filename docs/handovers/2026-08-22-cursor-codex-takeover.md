@@ -94,13 +94,13 @@ Do not close issues #5 or #7 as part of engineering handoff.
 ## Codex reply
 
 ```text
-Status: CODEX_PAUSED
+Status: CODEX_ACTIVE
 Branch: codex/task-12-reminder-settings-time-controls (local only)
-HEAD: 80ca9a8
-Task 11 80ca9a8: complete, validated, on origin/main
-Uncommitted / unpushed: Task 12 branch clean, not pushed, no production edits
-Last validated task: Task 11
-Next safe task: Task 12, Reminder Settings and Time Controls
-Blockers: none reported; Codex paused while PR #8 is reviewed
-Updated at: 2026-08-22, Asia/Jerusalem
+HEAD: 80ca9a8096a127c3a8c171681af4dac9ae302f0b
+Task 11 80ca9a8: Complete, pushed on codex/task-11-training-information-architecture, and fast-forwarded into origin/main.
+Uncommitted / unpushed: None. The clean local Task 12 branch has no unique commits, has not been pushed, and contains no production edits.
+Last validated task: Task 11. Fresh local gate passed testDebugUnitTest, lintDebug, assembleDebug, and assembleDebugAndroidTest; the completion record also has connectedDebugAndroidTest 56/56.
+Next safe task: Task 12 - Reminder Settings and Time Controls.
+Blockers: None. Cursor remains STANDBY until Avi explicitly says take over; do not edit MainActivity.kt concurrently.
+Updated at: 2026-08-22 (Asia/Jerusalem)
 ```
