@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `BASELINE_JVM_PASSED_COMPOSE_PENDING`
+**Status:** `BASELINE_PASSED_TASK_12_1_RED_NEXT`
 
 **Current writer:** Codex
 
@@ -81,6 +81,15 @@ Planned tests:
 - No production file has been edited.
 - Next exact step: confirm an emulator is connected, then run `SupplementReminderSettingsCardComposeTest` as the existing connected Compose baseline.
 
+### 2026-08-22 - Connected Compose Baseline Passed
+
+- Emulator: `Pixel_10`, headless AVD, boot completed.
+- Command: connected Android test filtered to `SupplementReminderSettingsCardComposeTest`.
+- Result: exit 0, 11 tests passed, 0 failed, 0 skipped; `BUILD SUCCESSFUL` in 1 minute 3 seconds.
+- Baseline is complete: 96 focused JVM tests plus 11 connected Compose tests are green.
+- No production file has been edited.
+- Next exact step: create Task 12.1 RED unit tests for immutable notification settings draft equality, dirty detection, retained disabled values, next-reminder summaries, passed times, empty supplements, and invalid input.
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -95,10 +104,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12 focused baseline; connected Compose baseline next
-Committed/pushed Task 12 commits: 66be777 docs: start Task 12 live handover
+Task/subtask: Task 12.1 RED unit tests next
+Committed/pushed Task 12 commits: 66be777, 4721e00
 Dirty files: This live handover only until committed
-Last verified command: focused JVM reminder/settings baseline, 96 passed, exit 0
-Next exact step: Run connected SupplementReminderSettingsCardComposeTest before production edits
+Last verified command: connected SupplementReminderSettingsCardComposeTest, 11 passed, exit 0
+Next exact step: Add NotificationSettingsDraftTest RED coverage before production edits
 Blockers: None
 ```
