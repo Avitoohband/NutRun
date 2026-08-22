@@ -65,6 +65,8 @@ explicitly says to take over.
 - Task index on `origin/main`: Tasks 10 and 11 completed; Task 12 next
 - Next approved plan:
   [`2026-08-21-task-12-reminder-settings-time-controls.md`](../superpowers/plans/2026-08-21-task-12-reminder-settings-time-controls.md)
+- Complete Tasks 12-19 takeover roadmap:
+  [`2026-08-22-tasks-12-19-execution-handover.md`](2026-08-22-tasks-12-19-execution-handover.md)
 - Authoritative UX resume file:
   [`2026-08-21-ux-ui-tasks-10-19-handover.md`](2026-08-21-ux-ui-tasks-10-19-handover.md)
 

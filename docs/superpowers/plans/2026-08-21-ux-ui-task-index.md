@@ -6,16 +6,18 @@
 
 **Execution handover:** [`../../handovers/2026-08-21-ux-ui-tasks-10-19-handover.md`](../../handovers/2026-08-21-ux-ui-tasks-10-19-handover.md)
 
+**Tasks 12-19 takeover roadmap:** [`../../handovers/2026-08-22-tasks-12-19-execution-handover.md`](../../handovers/2026-08-22-tasks-12-19-execution-handover.md)
+
 ## Plans
 
 | Order | Plan | Priority | Estimate | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 10 | [`Task 10 - Active Workout Focus Mode`](2026-08-21-task-10-active-workout-focus-mode.md) | P0 | 4-6 days | Tasks 1-9 baseline | Completed and validated |
 | 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | Completed and validated |
-| 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Tasks 1-9 baseline | Planned |
+| 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Task 11 integrated at `80ca9a8` | Ready |
 | 13 | [`Task 13 - Form Components and Validation`](2026-08-21-task-13-form-components-validation.md) | P1 | 3-4 days | Task 12 may reuse time-input conventions | Planned |
 | 14 | [`Task 14 - Today Dashboard`](2026-08-21-task-14-today-dashboard.md) | P1 | 2-3 days | Stable navigation from Tasks 10-13 | Planned |
-| 15 | [`Task 15 - Accessibility and Responsive Foundation`](2026-08-21-task-15-accessibility-responsive-foundation.md) | P1 | 3-5 days | Apply during Tasks 10-14; close after them | Planned |
+| 15 | [`Task 15 - Accessibility and Responsive Foundation`](2026-08-21-task-15-accessibility-responsive-foundation.md) | P1 | 3-5 days | Task 14 extracted screens; apply rules during Tasks 12-14 | Planned |
 | 16 | [`Task 16 - Progress Trends`](2026-08-21-task-16-progress-trends.md) | P2 | 5-8 days | Task 15 shared components | Planned |
 | 17 | [`Task 17 - Nutrition Logging Refinement`](2026-08-21-task-17-nutrition-logging-refinement.md) | P2 | 4-6 days | Tasks 13 and 15 | Planned |
 | 18 | [`Task 18 - Walk Recording Confidence`](2026-08-21-task-18-walk-recording-confidence.md) | P2 | 4-6 days | Task 15 shared components | Planned |
