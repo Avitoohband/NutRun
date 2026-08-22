@@ -9,11 +9,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -55,11 +55,11 @@ class NotificationSettingsContentTest {
         setContent(saved = saved, supplements = listOf(supplement))
 
         composeRule.onNodeWithTag("water-reminder-summary")
-            .assertTextContains("Off - next saved")
+            .assertTextContains("Off - next saved", substring = true)
         composeRule.onNodeWithTag("training-reminder-summary")
-            .assertTextContains("Off - next saved")
+            .assertTextContains("Off - next saved", substring = true)
         composeRule.onNodeWithTag("supplement-reminder-summary")
-            .assertTextContains("Off - next saved")
+            .assertTextContains("Off - next saved", substring = true)
         composeRule.onNodeWithTag("water-first-reminder").assertDoesNotExist()
         composeRule.onNodeWithTag("training-day-reminder").assertDoesNotExist()
         composeRule.onNodeWithTag("supplement-reminder-d3-time").assertDoesNotExist()
@@ -118,10 +118,8 @@ class NotificationSettingsContentTest {
         setContent(saved = saved, supplements = supplements)
 
         composeRule.onNodeWithTag("save-notification-settings").assertIsDisplayed()
-        composeRule.onNodeWithTag("notification-settings-list").performScrollToNode(
-            hasTestTag("supplement-reminder-supplement-19-enabled")
-        )
         composeRule.onNodeWithTag("supplement-reminder-supplement-19-enabled")
+            .performScrollTo()
             .assertIsDisplayed()
         composeRule.onNodeWithTag("save-notification-settings").assertIsDisplayed()
     }

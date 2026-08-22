@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `TASK_12_2_RED_CONFIRMED`
+**Status:** `TASK_12_2_GREEN`
 
 **Current writer:** Codex
 
@@ -118,6 +118,19 @@ Planned tests:
 - Result: expected exit 1 at Android test compilation only because `NotificationSettingsContent` is unresolved; the dependent lambda inference error is a consequence of that missing API.
 - Next exact step: implement the stateless content composable in `NotificationSettingsContent.kt`, add collapsed summary support to `SupplementReminderSettingsCard.kt`, then integrate the extracted screen state and persistence in `MainActivity.kt`.
 
+### 2026-08-22 - Task 12.2 GREEN
+
+- Extracted stateless NotificationSettingsContent with top Back, scrollable settings, and a persistent bottom Save action.
+- Water and training now use ReminderTimeInput with labels First reminder, Last reminder, Day-before reminder, and Training-day reminder.
+- Disabled sections collapse to next-saved summaries while retaining their configured values.
+- The supplement master remains independent from per-item switches and Toggle all; its collapsed summary preserves all item schedules.
+- Dirty top or system Back shows Discard notification changes?; Keep editing remains on the screen and Discard leaves without persistence.
+- MainActivity.kt retains account ownership, permission launching, and the existing two-stage atomic save orchestration.
+- The first GREEN attempt had two test-harness issues, not production defects: summary assertions needed substring mode and a nested long-list control needed performScrollTo.
+- Final focused connected result: NotificationSettingsContentTest, 5 passed, 0 failed, 0 skipped; exit 0 after cleanup.
+- Existing connected regression: SupplementReminderSettingsCardComposeTest, 11 passed, 0 failed, 0 skipped; exit 0.
+- Task 12.1 regression: 11 focused JVM tests passed, 0 failed, 0 skipped; exit 0.
+- Next exact step: extend Task 12.3 persistence/account/permission/scheduling regression tests, beginning with a RED test for retained disabled values and exactly one successful reschedule.
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -132,10 +145,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12.2 Compose RED confirmed; screen extraction next
-Committed/pushed Task 12 commits: through 4652460; this Compose RED checkpoint is pending commit
-Dirty files: NotificationSettingsContentTest.kt and this live handover until committed
-Last verified command: focused Task 12.2 connected test, expected missing-content compilation failure, exit 1
-Next exact step: Implement and integrate NotificationSettingsContent, then rerun the focused connected class
+Task/subtask: Task 12.2 GREEN; Task 12.3 regression gate next
+Committed/pushed Task 12 commits: through 2d93d01; this Task 12.2 GREEN checkpoint is pending commit
+Dirty files: NotificationSettingsContent.kt, MainActivity.kt, SupplementReminderSettingsCard.kt, NotificationSettingsContentTest.kt, and this handover until committed
+Last verified command: NotificationSettingsContentTest, 5 passed, exit 0
+Next exact step: Add Task 12.3 persistence, account, permission, and one-reschedule regression tests
 Blockers: None
 ```
