@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `STARTED_BASELINE_PENDING`
+**Status:** `BASELINE_JVM_PASSED_COMPOSE_PENDING`
 
 **Current writer:** Codex
 
@@ -65,6 +65,22 @@ Planned tests:
 - Baseline focused tests: pending.
 - Next exact step: inspect Notification Settings state/persistence boundaries and run the existing focused reminder settings, save, account, and scheduling tests.
 
+### 2026-08-22 - Baseline Environment Attempt 1
+
+- Command: focused `testDebugUnitTest` reminder/settings suite.
+- Result: Gradle exited 1 before test discovery because this new worktree had no `local.properties` and no `ANDROID_HOME`.
+- Root cause: Android SDK location is intentionally machine-local and ignored by Git; the known-good main checkout contains the required SDK path.
+- Resolution: copied the ignored `local.properties` into this worktree. No tracked file or production behavior changed.
+- Next exact step: rerun the identical focused JVM baseline and record the actual test result.
+
+### 2026-08-22 - Focused JVM Baseline Passed
+
+- Command: focused `testDebugUnitTest` suite covering reminder time parsing, notification settings saves, reminder ViewModel behavior, training settings, training reminder planning, and supplement reminder UI rules.
+- Result: exit 0, `BUILD SUCCESSFUL` in 57 seconds.
+- Exact count: 96 tests passed, 0 failed, 0 skipped.
+- No production file has been edited.
+- Next exact step: confirm an emulator is connected, then run `SupplementReminderSettingsCardComposeTest` as the existing connected Compose baseline.
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -79,10 +95,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12 start and baseline
-Committed/pushed Task 12 commits: None
+Task/subtask: Task 12 focused baseline; connected Compose baseline next
+Committed/pushed Task 12 commits: 66be777 docs: start Task 12 live handover
 Dirty files: This live handover only until committed
-Last verified command: Pending
-Next exact step: Run focused baseline tests before production edits
+Last verified command: focused JVM reminder/settings baseline, 96 passed, exit 0
+Next exact step: Run connected SupplementReminderSettingsCardComposeTest before production edits
 Blockers: None
 ```
