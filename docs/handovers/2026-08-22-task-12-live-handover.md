@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `BASELINE_PASSED_TASK_12_1_RED_NEXT`
+**Status:** `TASK_12_1_RED_CONFIRMED`
 
 **Current writer:** Codex
 
@@ -90,6 +90,14 @@ Planned tests:
 - No production file has been edited.
 - Next exact step: create Task 12.1 RED unit tests for immutable notification settings draft equality, dirty detection, retained disabled values, next-reminder summaries, passed times, empty supplements, and invalid input.
 
+### 2026-08-22 - Task 12.1 RED Confirmed
+
+- Added `NotificationSettingsDraftTest.kt` with eight tests covering unchanged and dirty drafts, disabled-value retention, water/training/supplement summaries, passed times, empty supplements, and invalid typed times.
+- Command: focused `NotificationSettingsDraftTest` and `ReminderTimeInputTest` JVM run.
+- Result: expected exit 1 during test compilation because `NotificationSettingsDraft`, `notificationSettingsDirty`, and `nextReminderSummary` do not exist yet.
+- The failure is scoped to the missing Task 12.1 production contract; baseline production compilation remained up to date.
+- Next exact step: create `NotificationSettingsContent.kt` with immutable draft, dirty helper, and display-only summary calculation, then rerun the identical focused command to GREEN.
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -104,10 +112,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12.1 RED unit tests next
-Committed/pushed Task 12 commits: 66be777, 4721e00
-Dirty files: This live handover only until committed
-Last verified command: connected SupplementReminderSettingsCardComposeTest, 11 passed, exit 0
-Next exact step: Add NotificationSettingsDraftTest RED coverage before production edits
+Task/subtask: Task 12.1 RED confirmed; pure helper implementation next
+Committed/pushed Task 12 commits: 66be777, 4721e00, e17bd4b; this RED checkpoint is pending commit
+Dirty files: NotificationSettingsDraftTest.kt and this live handover until committed
+Last verified command: focused Task 12.1 JVM tests, expected compilation failure, exit 1
+Next exact step: Implement NotificationSettingsContent.kt pure draft and summary helpers, then rerun focused tests
 Blockers: None
 ```
