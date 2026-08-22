@@ -1,6 +1,6 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `TASK_12_1_RED_CONFIRMED`
+**Status:** `TASK_12_1_GREEN`
 
 **Current writer:** Codex
 
@@ -98,6 +98,17 @@ Planned tests:
 - The failure is scoped to the missing Task 12.1 production contract; baseline production compilation remained up to date.
 - Next exact step: create `NotificationSettingsContent.kt` with immutable draft, dirty helper, and display-only summary calculation, then rerun the identical focused command to GREEN.
 
+### 2026-08-22 - Task 12.1 GREEN
+
+- Added immutable `NotificationSettingsDraft`, structural dirty detection, and display-only water, training, and supplement summary helpers.
+- Training summaries use assigned workout weekdays and distinguish day-before from training-day reminders.
+- Supplement summaries apply unsaved per-supplement draft switches and times without scheduling or persistence side effects.
+- Disabled masters retain configured values and identify the next saved reminder; invalid typed values return section-specific feedback.
+- Corrected the RED contract so a Saturday day-before reminder at `20:00` correctly precedes a Sunday training-day reminder.
+- Command: focused `NotificationSettingsDraftTest` and `ReminderTimeInputTest` JVM run.
+- Result: exit 0, 11 tests passed, 0 failed, 0 skipped; `BUILD SUCCESSFUL` in 17 seconds.
+- Next exact step: write Task 12.2 connected Compose RED tests for four clock actions, plain labels, collapsed summaries, independent supplement controls, persistent Save, and dirty Back confirmation.
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -112,10 +123,10 @@ Planned tests:
 ```text
 Status: NOT_HANDED_OFF
 Current writer: Codex
-Task/subtask: Task 12.1 RED confirmed; pure helper implementation next
-Committed/pushed Task 12 commits: 66be777, 4721e00, e17bd4b; this RED checkpoint is pending commit
-Dirty files: NotificationSettingsDraftTest.kt and this live handover until committed
-Last verified command: focused Task 12.1 JVM tests, expected compilation failure, exit 1
-Next exact step: Implement NotificationSettingsContent.kt pure draft and summary helpers, then rerun focused tests
+Task/subtask: Task 12.1 GREEN; Task 12.2 Compose RED next
+Committed/pushed Task 12 commits: 66be777, 4721e00, e17bd4b, ca631aa; this GREEN checkpoint is pending commit
+Dirty files: NotificationSettingsContent.kt, corrected NotificationSettingsDraftTest.kt, and this live handover until committed
+Last verified command: focused Task 12.1 JVM tests, 11 passed, exit 0
+Next exact step: Add NotificationSettingsContentTest Compose RED coverage before extracting the screen
 Blockers: None
 ```

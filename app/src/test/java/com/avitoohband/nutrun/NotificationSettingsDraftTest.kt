@@ -87,7 +87,7 @@ class NotificationSettingsDraftTest {
         val summaries = nextReminderSummary(saved, supplements, now)
 
         assertEquals("Next today at 10:00", summaries.water)
-        assertEquals("Next tomorrow at 08:00 (training day)", summaries.training)
+        assertEquals("Next today at 20:00 (day before)", summaries.training)
         assertEquals("Next Monday at 08:00", summaries.supplements)
     }
 
