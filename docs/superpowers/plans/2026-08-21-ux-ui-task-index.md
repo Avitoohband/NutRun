@@ -1,6 +1,6 @@
 # NutRun UX/UI Tasks 10-19 Plan Index
 
-**Status:** Tasks 10 and 11 completed and validated; Task 12 is next; Tasks 13-19 planned.
+**Status:** Tasks 10, 11, and 12 completed and validated; Task 13 is next; Tasks 14-19 planned.
 
 **Audit/spec:** [`../../plans/04-ux-ui-improvement-backlog.md`](../../plans/04-ux-ui-improvement-backlog.md)
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 10 | [`Task 10 - Active Workout Focus Mode`](2026-08-21-task-10-active-workout-focus-mode.md) | P0 | 4-6 days | Tasks 1-9 baseline | Completed and validated |
 | 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | Completed and validated |
-| 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Tasks 1-9 baseline | Planned |
+| 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Tasks 1-9 baseline | Completed and validated |
 | 13 | [`Task 13 - Form Components and Validation`](2026-08-21-task-13-form-components-validation.md) | P1 | 3-4 days | Task 12 may reuse time-input conventions | Planned |
 | 14 | [`Task 14 - Today Dashboard`](2026-08-21-task-14-today-dashboard.md) | P1 | 2-3 days | Stable navigation from Tasks 10-13 | Planned |
 | 15 | [`Task 15 - Accessibility and Responsive Foundation`](2026-08-21-task-15-accessibility-responsive-foundation.md) | P1 | 3-5 days | Apply during Tasks 10-14; close after them | Planned |
@@ -68,4 +68,4 @@ Unsafe parallel work:
 
 ## Next Task
 
-Tasks 10 and 11 are complete. Task 12 is next and must preserve the reminder scheduling, permission-denied, and account-isolation behavior already covered by tests.
+Tasks 10, 11, and 12 are complete. Task 13 is next and must preserve canonical units, existing repository operations, and the validation conventions established by Task 12 time inputs.

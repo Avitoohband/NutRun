@@ -1,14 +1,14 @@
 # Task 12 Reminder Settings Live Handover
 
-**Status:** `TASK_12_3_GREEN_FULL_VALIDATION_NEXT`
+**Status:** `TASK_12_COMPLETE`
 
-**Current writer:** Codex
+**Current writer:** none (standby)
 
 **Takeover agent:** Cursor cloud agent, `STANDBY`
 
-**Branch:** `codex/task-12-reminder-settings-time-controls`
+**Branch:** integrated into `origin/main`
 
-**Base and current HEAD:** `80ca9a8096a127c3a8c171681af4dac9ae302f0b`
+**Base and current HEAD:** `7d2c42aca2b38f8f510b955b3891eb2ac837d340` (merge PR #9)
 
 **Worktree:** `C:\Users\Avi_OP_PC\Documents\FitnessApp\task-12-worktree`
 
@@ -161,6 +161,14 @@ Planned tests:
 - Branch for PR: `cursor/task-12-validation-95a8`
 - Next exact step: Avi runs `connectedDebugAndroidTest` locally; if green, Task 12 is ready to merge.
 
+### 2026-08-23 - Task 12 Merged
+
+- Avi approved merge; PR #9 merged into `origin/main` at `7d2c42a`.
+- Merge commit: `7d2c42aca2b38f8f510b955b3891eb2ac837d340`.
+- Integrated commit range: `80ca9a8..b0f9782` (Codex implementation + Cursor validation docs).
+- Connected gate remains deferred: cloud emulator offline; local Espresso/API 35 issue documented for later.
+- Next safe task: Task 13 — Form Components and Validation (await Avi approval before starting).
+
 ## Resume Procedure
 
 1. Read this file and the approved Task 12 plan completely.
@@ -173,16 +181,15 @@ Planned tests:
 ## Transfer Record
 
 ```text
-Status: CURSOR_ACTIVE
-Current writer: Cursor cloud agent
-Task/subtask: Task 12 validation complete except connectedDebugAndroidTest
-Branch: cursor/task-12-validation-95a8 (from ff0d8f8)
-Committed/pushed Task 12 commits: ff0d8f8 (all Codex commits preserved)
-Dirty files: this handover only until committed
+Status: STANDBY
+Current writer: none
+Task/subtask: Task 12 complete — merged to main
+Branch: origin/main @ 7d2c42a
+Merge PR: #9 (merged 2026-08-23T12:46:08Z)
 Last verified command: testDebugUnitTest 256/0/0, lintDebug, assembleDebug/AndroidTest all exit 0
-Connected tests: DEFERRED to Avi's emulator
+Connected tests: DEFERRED (cloud emulator offline; local Espresso/API 35 issue)
 Code review: no defects found
-Next exact step: Avi runs connectedDebugAndroidTest; if green, merge Task 12 PR
-Blockers: emulator boot on cloud VM; requires local device
-Updated at: 2026-08-22T07:55Z
+Next exact step: await Avi approval before Task 13
+Blockers: none for Task 12 closure
+Updated at: 2026-08-23T12:47Z
 ```
