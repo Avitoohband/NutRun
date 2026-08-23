@@ -21,7 +21,56 @@ import {
   validateMcpTransportHeaders,
   shouldApplyClientWrite
 } from "./policy.js";
-import { toolDefinitions } from "./tools.js";
+import { toolDefinitions, MCP_CONTRACT_VERSION } from "./tools.js";
+
+function parseTrainingPayload(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") return JSON.parse(raw);
+  if (typeof raw.payloadJson === "string") return JSON.parse(raw.payloadJson);
+  return raw;
+}
+
+async function latestTrainingDocument(userId) {
+  const snapshot = await userDocument(userId)
+    .collection("trainingState")
+    .orderBy("clientUpdatedAtMillis", "desc")
+    .limit(1)
+    .get();
+  return snapshot.docs[0]?.data() ?? null;
+}
+
+function trainingSummaryFromPayload(payload) {
+  const root = parseTrainingPayload(payload);
+  if (!root) return null;
+  return {
+    schemaVersion: root.schemaVersion ?? 1,
+    activeWorkoutSessionId: root.activeWorkoutSessionId ?? null,
+    workoutHistoryCount: Array.isArray(root.workoutHistory) ? root.workoutHistory.length : 0,
+    supplementCount: Array.isArray(root.supplements) ? root.supplements.length : 0,
+    workoutTemplateCount: Array.isArray(root.workoutTemplates) ? root.workoutTemplates.length : 0,
+    weeklyDayPlanCount: Array.isArray(root.weeklyDayPlans) ? root.weeklyDayPlans.length : 0
+  };
+}
+
+function trainingProgramFromPayload(payload) {
+  const root = parseTrainingPayload(payload);
+  if (!root) return null;
+  const templates = Array.isArray(root.workoutTemplates)
+    ? root.workoutTemplates.map((template) => ({
+        id: template.id,
+        name: template.name,
+        exerciseCount: Array.isArray(template.exercises) ? template.exercises.length : 0
+      }))
+    : [];
+  const weeklyDayPlans = Array.isArray(root.weeklyDayPlans)
+    ? root.weeklyDayPlans.map((plan) => ({
+        weekday: plan.weekday,
+        templateIds: plan.templateIds ?? [],
+        restDay: Boolean(plan.restDay)
+      }))
+    : [];
+  return { workoutTemplates: templates, weeklyDayPlans };
+}
 
 const googleCredential = applicationDefault();
 if (!getApps().length) initializeApp({ credential: googleCredential });
@@ -487,7 +536,7 @@ app.post("/mcp", mcpAuth, async (req, res, next) => {
       return respond({
         protocolVersion: "2025-03-26",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "NutRun", version: "0.1.0" }
+        serverInfo: { name: "NutRun", version: MCP_CONTRACT_VERSION }
       });
     }
     if (request.method === "notifications/initialized") return res.status(202).end();
@@ -544,7 +593,70 @@ async function callTool(principal, name, args) {
       return idempotentCreate(principal.userId, "supplementLogs", args.idempotencyKey, args);
     case "log_workout":
       requireScope(principal.scopes, "logs.write");
-      return idempotentCreate(principal.userId, "workouts", args.idempotencyKey, args);
+      const workoutDate = args.date ?? args.completedAt?.slice(0, 10);
+      return idempotentCreate(principal.userId, "workouts", args.idempotencyKey, {
+        name: args.name,
+        completedAt: args.completedAt,
+        date: workoutDate,
+        sessionId: args.sessionId ?? null,
+        sets: args.sets ?? []
+      });
+    case "get_training_summary": {
+      requireScope(principal.scopes, "health.read");
+      const trainingDocument = await latestTrainingDocument(principal.userId);
+      return trainingSummaryFromPayload(trainingDocument);
+    }
+    case "get_training_program": {
+      requireScope(principal.scopes, "health.read");
+      const trainingDocument = await latestTrainingDocument(principal.userId);
+      return trainingProgramFromPayload(trainingDocument);
+    }
+    case "list_weight_entries": {
+      requireScope(principal.scopes, "health.read");
+      const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 100);
+      const weights = await user.collection("weightEntries")
+        .orderBy("recordedAtMillis", "desc")
+        .limit(limit)
+        .get();
+      return weights.docs.map((document) => ({ id: document.id, ...document.data() }));
+    }
+    case "log_weight": {
+      requireScope(principal.scopes, "logs.write");
+      const recordedAtMillis = args.recordedAt
+        ? Date.parse(args.recordedAt)
+        : Date.now();
+      if (!Number.isFinite(recordedAtMillis)) throw new HttpError(400, "invalid_recorded_at");
+      return idempotentCreate(principal.userId, "weightEntries", args.idempotencyKey, {
+        weightKg: args.weightKg,
+        recordedAtMillis,
+        clientUpdatedAtMillis: Date.now()
+      });
+    }
+    case "get_hydration_plan": {
+      requireScope(principal.scopes, "health.read");
+      return (await user.get()).data()?.hydrationPlan ?? null;
+    }
+    case "get_reminder_settings": {
+      requireScope(principal.scopes, "health.read");
+      const reminderSettings = (await user.get()).data()?.reminderSettings ?? null;
+      return {
+        reminderSettings,
+        mobileDeviceLocalNote:
+          "Training and supplement reminder toggles may remain device-local on mobile until cloud sync is enabled."
+      };
+    }
+    case "update_reminder_settings": {
+      requireScope(principal.scopes, "profile.write");
+      requireConfirmation(args);
+      const existing = (await user.get()).data()?.reminderSettings ?? {};
+      const merged = {
+        ...existing,
+        ...args.patch,
+        clientUpdatedAtMillis: Date.now()
+      };
+      await user.set({ reminderSettings: merged, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      return { updated: true, reminderSettings: merged };
+    }
     case "list_walks": {
       requireScope(principal.scopes, "walks.read");
       const walks = await user.collection("walks").orderBy("startedAt", "desc").limit(100).get();

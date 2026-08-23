@@ -1,3 +1,22 @@
+import { MCP_CONTRACT_VERSION } from "./mcpContract.js";
+
+export { MCP_CONTRACT_VERSION };
+
+const workoutSetSchema = {
+  type: "object",
+  properties: {
+    exerciseId: { type: "string" },
+    exerciseName: { type: "string" },
+    setNumber: { type: "integer", minimum: 1 },
+    reps: { type: "integer", minimum: 0 },
+    weightKg: { type: "number", minimum: 0 },
+    durationSeconds: { type: "integer", minimum: 0 },
+    rpe: { type: "number", minimum: 0, maximum: 10 },
+    completed: { type: "boolean" }
+  },
+  additionalProperties: false
+};
+
 export const toolDefinitions = [
   {
     name: "get_profile_summary",
@@ -75,16 +94,88 @@ export const toolDefinitions = [
   },
   {
     name: "log_workout",
-    description: "Create a completed workout summary.",
+    description: "Create a completed workout with optional per-set detail.",
     inputSchema: {
       type: "object",
       properties: {
         idempotencyKey: { type: "string" },
         name: { type: "string" },
-        completedAt: { type: "string", format: "date-time" }
+        completedAt: { type: "string", format: "date-time" },
+        date: { type: "string", format: "date" },
+        sessionId: { type: "string" },
+        sets: {
+          type: "array",
+          items: workoutSetSchema
+        }
       },
       required: ["idempotencyKey", "name", "completedAt"],
-      additionalProperties: true
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_training_summary",
+    description: "Read active workout state and recent workout counts from synced training data.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "get_training_program",
+    description: "Read weekly schedule and reusable workout templates from synced training data.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "list_weight_entries",
+    description: "List recent body-weight entries in canonical kilograms.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "integer", minimum: 1, maximum: 100 } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "log_weight",
+    description: "Record a body-weight entry in canonical kilograms.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        idempotencyKey: { type: "string" },
+        weightKg: { type: "number", exclusiveMinimum: 0, maximum: 500 },
+        recordedAt: { type: "string", format: "date-time" }
+      },
+      required: ["idempotencyKey", "weightKg"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_hydration_plan",
+    description: "Read the synced hydration goal, serving size, and reminder window.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "get_reminder_settings",
+    description:
+      "Read reminder settings stored for MCP clients. Mobile reminder toggles may remain device-local until cloud sync is enabled.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "update_reminder_settings",
+    description:
+      "Update MCP-visible reminder settings after explicit confirmation. Does not yet replace device-local mobile reminder storage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        confirmed: { type: "boolean" },
+        patch: {
+          type: "object",
+          properties: {
+            water: { type: "object" },
+            training: { type: "object" },
+            supplement: { type: "object" }
+          },
+          additionalProperties: false
+        }
+      },
+      required: ["confirmed", "patch"],
+      additionalProperties: false
     }
   },
   {
