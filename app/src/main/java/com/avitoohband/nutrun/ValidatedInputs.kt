@@ -31,6 +31,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlin.math.roundToInt
 
 data class DecimalRule(
     val label: String,
@@ -43,6 +44,53 @@ data class ValidatedDecimal(
     val value: Double? = null,
     val error: String? = null
 )
+
+object FormValidationRules {
+    fun birthDateRange(today: LocalDate = LocalDate.now()): ClosedRange<LocalDate> =
+        today.minusYears(120)..today
+
+    fun workoutDateRange(today: LocalDate = LocalDate.now()): ClosedRange<LocalDate> =
+        today.minusYears(10)..today.plusYears(1)
+
+    fun heightRule(metric: Boolean): DecimalRule = if (metric) {
+        DecimalRule("Height (cm)", 50.0, 280.0, required = true)
+    } else {
+        DecimalRule("Height (inches)", 20.0, 110.0, required = true)
+    }
+
+    fun weightRule(metric: Boolean): DecimalRule = if (metric) {
+        DecimalRule("Weight (kg)", 20.0, 500.0, required = true)
+    } else {
+        DecimalRule("Weight (lb)", 44.0, 1_100.0, required = true)
+    }
+
+    val calorieTargetRule = DecimalRule("Daily calorie target", 500.0, 10_000.0, required = true)
+    val optionalCalorieTargetRule = DecimalRule("Daily calorie target", 500.0, 10_000.0, required = false)
+    val foodServingRule = DecimalRule("Serving (g)", 0.1, 5_000.0, required = true)
+    val caloriesRule = DecimalRule("Calories", 0.0, 10_000.0, required = true)
+    val hydrationGoalRule = DecimalRule("Daily goal (mL)", 250.0, 10_000.0, required = true)
+    val hydrationServingRule = DecimalRule("Quick serving (mL)", 50.0, 2_000.0, required = true)
+    val restTimerRule = DecimalRule("Seconds", 15.0, 600.0, required = true)
+
+    fun macroRule(label: String): DecimalRule = DecimalRule(label, 0.0, 1_000.0, required = false)
+}
+
+fun convertHeightInputToCm(value: Double, metric: Boolean): Double =
+    if (metric) value else value * 2.54
+
+fun convertWeightInputToKg(value: Double, metric: Boolean): Double =
+    if (metric) value else value / KG_TO_POUNDS
+
+fun formatMeasurementForInput(value: Double): String {
+    val rounded = (value * 10).roundToInt() / 10.0
+    return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+}
+
+fun formatHeightForUnits(heightCm: Double, metric: Boolean): String =
+    formatMeasurementForInput(if (metric) heightCm else heightCm / 2.54)
+
+fun formatWeightForUnits(weightKg: Double, metric: Boolean): String =
+    formatMeasurementForInput(if (metric) weightKg else weightKg * KG_TO_POUNDS)
 
 fun validateDecimalInput(
     value: String,
@@ -241,5 +289,35 @@ fun ValidatedNumberField(
             { Text(message) }
         },
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType)
+    )
+}
+
+@Composable
+fun ConfirmDiscardChangesDialog(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onDiscard: () -> Unit
+) {
+    if (!open) return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Discard changes?") },
+        text = { Text("Your unsaved changes will be lost.") },
+        confirmButton = {
+            TextButton(
+                onClick = onDiscard,
+                modifier = Modifier.testTag("confirm-discard-changes")
+            ) {
+                Text("Discard")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("cancel-discard-changes")
+            ) {
+                Text("Keep editing")
+            }
+        }
     )
 }

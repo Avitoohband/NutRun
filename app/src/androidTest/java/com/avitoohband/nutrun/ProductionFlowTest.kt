@@ -160,6 +160,44 @@ class ProductionFlowTest {
     }
 
     @Test
+    fun editHealthDetailsUsesValidatedBirthDateField() {
+        enterDemo()
+        composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
+        composeRule.onNodeWithText("Profile and settings").performClick()
+        composeRule.onNodeWithText("Edit health details").performClick()
+        composeRule.onNodeWithTag("edit-health-birth-date").assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-health-email").assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-health-birth-date-calendar").performClick()
+        composeRule.onNodeWithTag("edit-health-birth-date-confirm").performClick()
+    }
+
+    @Test
+    fun editHealthDetailsPromptsBeforeDiscardingChanges() {
+        enterDemo()
+        composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
+        composeRule.onNodeWithText("Profile and settings").performClick()
+        composeRule.onNodeWithText("Edit health details").performClick()
+        composeRule.onNodeWithTag("edit-health-height").performTextClearance()
+        composeRule.onNodeWithTag("edit-health-height").performTextInput("180")
+        composeRule.onNodeWithTag("edit-health-back").performClick()
+        composeRule.onNodeWithText("Discard changes?").assertIsDisplayed()
+        composeRule.onNodeWithTag("cancel-discard-changes").performClick()
+        composeRule.onNodeWithTag("edit-health-height").assertIsDisplayed()
+    }
+
+    @Test
+    fun editWorkoutHistoryUsesValidatedDateField() {
+        enterDemo()
+        composeRule.onNodeWithTag("bottom-nav-progress").performClick()
+        composeRule.onNodeWithTag("recent-training-heading").performScrollTo()
+        composeRule.onAllNodesWithTag("recent-workout-card")[0]
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithTag("edit-workout-history").performClick()
+        composeRule.onNodeWithTag("edit-workout-date").assertIsDisplayed()
+    }
+
+    @Test
     fun savedWalkRouteAndMetricsFlowFromHistorySelectionIntoDetails() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val preferences = AppPreferences(context)

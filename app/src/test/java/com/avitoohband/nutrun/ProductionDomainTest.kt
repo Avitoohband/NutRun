@@ -21,6 +21,7 @@ import java.time.DayOfWeek
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -217,5 +218,32 @@ class ProductionDomainTest {
         assertEquals(EntitlementKind.TRIAL, active.entitlement(now.toEpochMilli()))
         assertEquals(EntitlementKind.FREE_AD_SUPPORTED, expired.entitlement(now.toEpochMilli()))
         assertEquals(EntitlementKind.SUBSCRIBER, expired.copy(subscriber = true).entitlement(now.toEpochMilli()))
+    }
+
+    @Test
+    fun foodServingRejectsBlankAndNegativeValues() {
+        assertNotNull(validateDecimalInput("", FormValidationRules.foodServingRule).error)
+        assertNotNull(validateDecimalInput("-5", FormValidationRules.foodServingRule).error)
+        assertEquals(100.0, validateDecimalInput("100", FormValidationRules.foodServingRule).value)
+    }
+
+    @Test
+    fun hydrationGoalRejectsOutOfRangeValues() {
+        assertNotNull(validateDecimalInput("100", FormValidationRules.hydrationGoalRule, integerOnly = true).error)
+        assertEquals(2_000.0, validateDecimalInput("2000", FormValidationRules.hydrationGoalRule, integerOnly = true).value)
+    }
+
+    @Test
+    fun hydrationServingRejectsOutOfRangeValues() {
+        assertNotNull(validateDecimalInput("25", FormValidationRules.hydrationServingRule, integerOnly = true).error)
+        assertEquals(250.0, validateDecimalInput("250", FormValidationRules.hydrationServingRule, integerOnly = true).value)
+    }
+
+    @Test
+    fun restTimerRetainsSecondBoundaries() {
+        assertEquals(15.0, validateDecimalInput("15", FormValidationRules.restTimerRule, integerOnly = true).value)
+        assertEquals(600.0, validateDecimalInput("600", FormValidationRules.restTimerRule, integerOnly = true).value)
+        assertNotNull(validateDecimalInput("10", FormValidationRules.restTimerRule, integerOnly = true).error)
+        assertNotNull(validateDecimalInput("601", FormValidationRules.restTimerRule, integerOnly = true).error)
     }
 }

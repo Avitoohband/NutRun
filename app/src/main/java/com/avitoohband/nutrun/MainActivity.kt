@@ -155,7 +155,6 @@ import com.google.android.gms.ads.AdView
 import dagger.hilt.android.AndroidEntryPoint
 import java.time.LocalDate
 import java.time.DayOfWeek
-import java.time.format.DateTimeParseException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -365,7 +364,7 @@ private fun AuthenticationScreen(
 
 @Composable
 private fun OnboardingScreen(email: String, onSave: (UserProfile) -> Unit) {
-    var birthDate by rememberSaveable { mutableStateOf("1995-01-01") }
+    var birthDateEpoch by rememberSaveable { mutableLongStateOf(LocalDate.of(1995, 1, 1).toEpochDay()) }
     var sex by rememberSaveable { mutableStateOf(BiologicalSex.MALE) }
     var height by rememberSaveable { mutableStateOf("175") }
     var weight by rememberSaveable { mutableStateOf("75") }
@@ -374,6 +373,24 @@ private fun OnboardingScreen(email: String, onSave: (UserProfile) -> Unit) {
     var units by rememberSaveable { mutableStateOf(UnitSystem.METRIC) }
     var target by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    val birthDate = LocalDate.ofEpochDay(birthDateEpoch)
+    val birthDateRange = FormValidationRules.birthDateRange()
+    val heightValidation = validateDecimalInput(height, FormValidationRules.heightRule(units == UnitSystem.METRIC))
+    val weightValidation = validateDecimalInput(weight, FormValidationRules.weightRule(units == UnitSystem.METRIC))
+    val targetValidation = validateDecimalInput(
+        target,
+        FormValidationRules.optionalCalorieTargetRule,
+        integerOnly = true
+    )
+    val heightCm = heightValidation.value?.let { convertHeightInputToCm(it, units == UnitSystem.METRIC) }
+    val weightKg = weightValidation.value?.let { convertWeightInputToKg(it, units == UnitSystem.METRIC) }
+    val estimate = if (heightCm != null && weightKg != null) {
+        runCatching {
+            calculateHealthEstimate(birthDate, sex, heightCm, weightKg, activity, goal)
+        }.getOrNull()
+    } else {
+        null
+    }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 20.dp),
@@ -385,76 +402,105 @@ private fun OnboardingScreen(email: String, onSave: (UserProfile) -> Unit) {
             Text("These details calculate your starting BMI and energy estimates.")
         }
         item {
-            OutlinedTextField(
-                birthDate,
-                { birthDate = it },
-                Modifier.fillMaxWidth(),
-                label = { Text("Birth date (YYYY-MM-DD)") },
-                singleLine = true
+            ValidatedDateField(
+                value = birthDate,
+                onValueChange = { selected -> selected?.let { birthDateEpoch = it.toEpochDay() } },
+                label = "Birth date",
+                allowedRange = birthDateRange,
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "onboarding-birth-date"
             )
         }
         item { ChoiceRow("Biological sex", BiologicalSex.entries, sex, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { sex = it } }
-        item { ChoiceRow("Units", UnitSystem.entries, units, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { units = it } }
         item {
-            OutlinedTextField(
-                height,
-                { height = it },
-                Modifier.fillMaxWidth(),
-                label = { Text(if (units == UnitSystem.METRIC) "Height (cm)" else "Height (inches)") },
-                singleLine = true
+            ChoiceRow(
+                "Units",
+                UnitSystem.entries,
+                units,
+                { it.name.lowercase().replaceFirstChar(Char::uppercase) }
+            ) { selected ->
+                if (selected != units) {
+                    val currentHeightCm = heightValidation.value?.let {
+                        convertHeightInputToCm(it, units == UnitSystem.METRIC)
+                    }
+                    val currentWeightKg = weightValidation.value?.let {
+                        convertWeightInputToKg(it, units == UnitSystem.METRIC)
+                    }
+                    units = selected
+                    currentHeightCm?.let { height = formatHeightForUnits(it, selected == UnitSystem.METRIC) }
+                    currentWeightKg?.let { weight = formatWeightForUnits(it, selected == UnitSystem.METRIC) }
+                }
+            }
+        }
+        item {
+            ValidatedNumberField(
+                value = height,
+                onValueChange = { height = it },
+                rule = FormValidationRules.heightRule(units == UnitSystem.METRIC),
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "onboarding-height"
             )
         }
         item {
-            OutlinedTextField(
-                weight,
-                { weight = it },
-                Modifier.fillMaxWidth(),
-                label = { Text(if (units == UnitSystem.METRIC) "Weight (kg)" else "Weight (lb)") },
-                singleLine = true
+            ValidatedNumberField(
+                value = weight,
+                onValueChange = { weight = it },
+                rule = FormValidationRules.weightRule(units == UnitSystem.METRIC),
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "onboarding-weight"
             )
         }
         item { ChoiceRow("Activity", ActivityLevel.entries, activity, { it.name.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase) }) { activity = it } }
         item { ChoiceRow("Goal", HealthGoal.entries, goal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { goal = it } }
         item {
-            OutlinedTextField(
-                target,
-                { target = it },
-                Modifier.fillMaxWidth(),
-                label = { Text("Daily calorie target (optional)") },
-                singleLine = true
+            ValidatedNumberField(
+                value = target,
+                onValueChange = { target = it },
+                rule = FormValidationRules.optionalCalorieTargetRule,
+                modifier = Modifier.fillMaxWidth(),
+                integerOnly = true,
+                testTag = "onboarding-calorie-target"
             )
         }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         item {
             Button(
                 onClick = {
-                    try {
-                        val date = LocalDate.parse(birthDate)
-                        val enteredHeight = height.toDouble()
-                        val enteredWeight = weight.toDouble()
-                        val heightCm = if (units == UnitSystem.METRIC) enteredHeight else enteredHeight * 2.54
-                        val weightKg = if (units == UnitSystem.METRIC) enteredWeight else enteredWeight / KG_TO_POUNDS
-                        val estimate = calculateHealthEstimate(date, sex, heightCm, weightKg, activity, goal)
-                        onSave(
-                            UserProfile(
-                                email,
-                                date,
-                                sex,
-                                heightCm,
-                                weightKg,
-                                activity,
-                                goal,
-                                units,
-                                target.toIntOrNull() ?: estimate.calorieTarget
-                            )
-                        )
-                    } catch (_: DateTimeParseException) {
-                        error = "Use a valid date in YYYY-MM-DD format."
-                    } catch (_: Exception) {
-                        error = "Check that your date, height, weight, and target are valid."
+                    val dateError = validateDateInRange(birthDate, birthDateRange, "Birth date", required = true)
+                    val firstError = dateError
+                        ?: heightValidation.error
+                        ?: weightValidation.error
+                        ?: targetValidation.error
+                    if (firstError != null) {
+                        error = firstError
+                        return@Button
                     }
+                    error = null
+                    val resolvedHeightCm = convertHeightInputToCm(heightValidation.value!!, units == UnitSystem.METRIC)
+                    val resolvedWeightKg = convertWeightInputToKg(weightValidation.value!!, units == UnitSystem.METRIC)
+                    val resolvedEstimate = calculateHealthEstimate(
+                        birthDate,
+                        sex,
+                        resolvedHeightCm,
+                        resolvedWeightKg,
+                        activity,
+                        goal
+                    )
+                    onSave(
+                        UserProfile(
+                            email,
+                            birthDate,
+                            sex,
+                            resolvedHeightCm,
+                            resolvedWeightKg,
+                            activity,
+                            goal,
+                            units,
+                            targetValidation.value?.toInt() ?: resolvedEstimate.calorieTarget
+                        )
+                    )
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("finish-onboarding")
             ) { Text("Finish setup") }
         }
         item {
@@ -1522,39 +1568,97 @@ private fun FoodEntryDialog(
     var carbs by remember { mutableStateOf((existing?.carbohydrateGrams ?: draft?.carbohydrateGrams)?.toString() ?: "0") }
     var fat by remember { mutableStateOf((existing?.fatGrams ?: draft?.fatGrams)?.toString() ?: "0") }
     var meal by remember { mutableStateOf(existing?.mealType?.let(MealType::valueOf) ?: MealType.SNACK) }
+    val servingValidation = validateDecimalInput(serving, FormValidationRules.foodServingRule)
+    val caloriesValidation = validateDecimalInput(calories, FormValidationRules.caloriesRule, integerOnly = true)
+    val proteinValidation = validateDecimalInput(protein, FormValidationRules.macroRule("Protein (g)"))
+    val carbsValidation = validateDecimalInput(carbs, FormValidationRules.macroRule("Carbohydrates (g)"))
+    val fatValidation = validateDecimalInput(fat, FormValidationRules.macroRule("Fat (g)"))
+    val canSave = name.isNotBlank() &&
+        servingValidation.error == null &&
+        servingValidation.value != null &&
+        caloriesValidation.error == null &&
+        caloriesValidation.value != null &&
+        proteinValidation.error == null &&
+        carbsValidation.error == null &&
+        fatValidation.error == null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "Log food" else "Edit food") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { OutlinedTextField(name, { name = it }, label = { Text("Food name") }, singleLine = true) }
+                item {
+                    OutlinedTextField(
+                        name,
+                        { name = it },
+                        label = { Text("Food name") },
+                        singleLine = true,
+                        modifier = Modifier.testTag("food-entry-name")
+                    )
+                }
                 item { ChoiceRow("Meal", MealType.entries, meal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { meal = it } }
-                item { OutlinedTextField(serving, { serving = it }, label = { Text("Serving (g)") }, singleLine = true) }
-                item { OutlinedTextField(calories, { calories = it }, label = { Text("Calories") }, singleLine = true) }
-                item { OutlinedTextField(protein, { protein = it }, label = { Text("Protein (g)") }, singleLine = true) }
-                item { OutlinedTextField(carbs, { carbs = it }, label = { Text("Carbohydrates (g)") }, singleLine = true) }
-                item { OutlinedTextField(fat, { fat = it }, label = { Text("Fat (g)") }, singleLine = true) }
+                item {
+                    ValidatedNumberField(
+                        value = serving,
+                        onValueChange = { serving = it },
+                        rule = FormValidationRules.foodServingRule,
+                        testTag = "food-entry-serving"
+                    )
+                }
+                item {
+                    ValidatedNumberField(
+                        value = calories,
+                        onValueChange = { calories = it },
+                        rule = FormValidationRules.caloriesRule,
+                        integerOnly = true,
+                        testTag = "food-entry-calories"
+                    )
+                }
+                item {
+                    ValidatedNumberField(
+                        value = protein,
+                        onValueChange = { protein = it },
+                        rule = FormValidationRules.macroRule("Protein (g)"),
+                        testTag = "food-entry-protein"
+                    )
+                }
+                item {
+                    ValidatedNumberField(
+                        value = carbs,
+                        onValueChange = { carbs = it },
+                        rule = FormValidationRules.macroRule("Carbohydrates (g)"),
+                        testTag = "food-entry-carbs"
+                    )
+                }
+                item {
+                    ValidatedNumberField(
+                        value = fat,
+                        onValueChange = { fat = it },
+                        rule = FormValidationRules.macroRule("Fat (g)"),
+                        testTag = "food-entry-fat"
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                enabled = name.isNotBlank() && calories.toIntOrNull() != null,
+                enabled = canSave,
                 onClick = {
                     onSave(
                         FoodCatalogItem(
                             existing?.catalogId ?: draft?.id ?: "manual-${System.currentTimeMillis()}",
                             name,
                             existing?.brand ?: draft?.brand,
-                            serving.toDoubleOrNull() ?: 100.0,
-                            calories.toIntOrNull() ?: 0,
-                            protein.toDoubleOrNull() ?: 0.0,
-                            carbs.toDoubleOrNull() ?: 0.0,
-                            fat.toDoubleOrNull() ?: 0.0
+                            servingValidation.value!!,
+                            caloriesValidation.value!!.toInt(),
+                            proteinValidation.value ?: 0.0,
+                            carbsValidation.value ?: 0.0,
+                            fatValidation.value ?: 0.0
                         ),
                         meal,
                         existing?.id
                     )
-                }
+                },
+                modifier = Modifier.testTag("food-entry-save")
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
@@ -1569,24 +1673,50 @@ private fun HydrationSettingsDialog(
 ) {
     var goal by remember { mutableStateOf(initial.goalMl.toString()) }
     var serving by remember { mutableStateOf(initial.servingMl.toString()) }
+    val goalValidation = validateDecimalInput(goal, FormValidationRules.hydrationGoalRule, integerOnly = true)
+    val servingValidation = validateDecimalInput(serving, FormValidationRules.hydrationServingRule, integerOnly = true)
+    val canSave = goalValidation.error == null &&
+        goalValidation.value != null &&
+        servingValidation.error == null &&
+        servingValidation.value != null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Water settings") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { OutlinedTextField(goal, { goal = it }, label = { Text("Daily goal (mL)") }) }
-                item { OutlinedTextField(serving, { serving = it }, label = { Text("Quick serving (mL)") }) }
+                item {
+                    ValidatedNumberField(
+                        value = goal,
+                        onValueChange = { goal = it },
+                        rule = FormValidationRules.hydrationGoalRule,
+                        integerOnly = true,
+                        testTag = "hydration-goal"
+                    )
+                }
+                item {
+                    ValidatedNumberField(
+                        value = serving,
+                        onValueChange = { serving = it },
+                        rule = FormValidationRules.hydrationServingRule,
+                        integerOnly = true,
+                        testTag = "hydration-serving"
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                onSave(
-                    initial.copy(
-                        goalMl = goal.toIntOrNull() ?: initial.goalMl,
-                        servingMl = serving.toIntOrNull() ?: initial.servingMl
+            Button(
+                enabled = canSave,
+                onClick = {
+                    onSave(
+                        initial.copy(
+                            goalMl = goalValidation.value!!.toInt(),
+                            servingMl = servingValidation.value!!.toInt()
+                        )
                     )
-                )
-            }) { Text("Save") }
+                },
+                modifier = Modifier.testTag("hydration-settings-save")
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -2327,12 +2457,38 @@ private fun WorkoutHistoryEditScreen(
     var sessionName by rememberSaveable(workout.id) {
         mutableStateOf(workout.sessionName)
     }
-    var performedOn by rememberSaveable(workout.id) {
-        mutableStateOf(workout.performedOn.toString())
+    var performedOnEpoch by rememberSaveable(workout.id) {
+        mutableLongStateOf(workout.performedOn.toEpochDay())
     }
+    val initialSessionName = remember(workout.id) { workout.sessionName }
+    val initialPerformedOnEpoch = remember(workout.id) { workout.performedOn.toEpochDay() }
+    val initialSets = remember(workout.id) { workout.sets }
     var draftSets by remember(workout.id) { mutableStateOf(workout.sets) }
     var validationError by remember { mutableStateOf<String?>(null) }
+    var showDiscard by remember { mutableStateOf(false) }
+    val performedOn = LocalDate.ofEpochDay(performedOnEpoch)
+    val workoutDateRange = FormValidationRules.workoutDateRange()
     val setsByExercise = draftSets.groupBy(WorkoutSetLog::exerciseId)
+    val isDirty = sessionName != initialSessionName ||
+        performedOnEpoch != initialPerformedOnEpoch ||
+        draftSets != initialSets
+
+    fun requestCancel() {
+        if (isDirty) {
+            showDiscard = true
+        } else {
+            onCancel()
+        }
+    }
+
+    ConfirmDiscardChangesDialog(
+        open = showDiscard,
+        onDismiss = { showDiscard = false },
+        onDiscard = {
+            showDiscard = false
+            onCancel()
+        }
+    )
 
     LazyColumn(
         modifier = Modifier
@@ -2345,7 +2501,7 @@ private fun WorkoutHistoryEditScreen(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
-                    onClick = onCancel,
+                    onClick = ::requestCancel,
                     modifier = Modifier.testTag("cancel-edit-workout")
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cancel editing")
@@ -2368,12 +2524,13 @@ private fun WorkoutHistoryEditScreen(
             )
         }
         item {
-            OutlinedTextField(
+            ValidatedDateField(
                 value = performedOn,
-                onValueChange = { performedOn = it },
+                onValueChange = { selected -> selected?.let { performedOnEpoch = it.toEpochDay() } },
+                label = "Date",
+                allowedRange = workoutDateRange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Date (YYYY-MM-DD)") },
-                singleLine = true
+                testTag = "edit-workout-date"
             )
         }
         item { SectionHeading("Exercises and sets") }
@@ -2409,18 +2566,18 @@ private fun WorkoutHistoryEditScreen(
         item {
             Button(
                 onClick = {
-                    val date = runCatching { LocalDate.parse(performedOn) }.getOrNull()
+                    val dateError = validateDateInRange(performedOn, workoutDateRange, "Date", required = true)
                     when {
                         sessionName.isBlank() ->
                             validationError = "Workout name is required."
-                        date == null ->
-                            validationError = "Enter a valid date as YYYY-MM-DD."
+                        dateError != null ->
+                            validationError = dateError
                         else -> {
                             validationError = null
                             onSave(
                                 workout.copy(
                                     sessionName = sessionName.trim(),
-                                    performedOn = date,
+                                    performedOn = performedOn,
                                     sets = draftSets
                                 )
                             )
@@ -2557,17 +2714,29 @@ private fun formatElapsedTime(totalSeconds: Long): String {
 private fun WeightDialog(profile: UserProfile, onSave: (UserProfile) -> Unit, onDismiss: () -> Unit) {
     val metric = profile.unitSystem == UnitSystem.METRIC
     var value by remember {
-        mutableStateOf((if (metric) profile.weightKg else profile.weightKg * KG_TO_POUNDS).let { "%.1f".format(it) })
+        mutableStateOf(formatWeightForUnits(profile.weightKg, metric))
     }
+    val validation = validateDecimalInput(value, FormValidationRules.weightRule(metric))
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add weight") },
-        text = { OutlinedTextField(value, { value = it }, label = { Text(if (metric) "Weight (kg)" else "Weight (lb)") }) },
+        text = {
+            ValidatedNumberField(
+                value = value,
+                onValueChange = { value = it },
+                rule = FormValidationRules.weightRule(metric),
+                testTag = "add-weight-field"
+            )
+        },
         confirmButton = {
-            Button(onClick = {
-                val entered = value.toDoubleOrNull() ?: return@Button
-                onSave(profile.copy(weightKg = if (metric) entered else entered / KG_TO_POUNDS))
-            }) { Text("Save") }
+            Button(
+                enabled = validation.error == null && validation.value != null,
+                onClick = {
+                    val weightKg = convertWeightInputToKg(validation.value!!, metric)
+                    onSave(profile.copy(weightKg = weightKg))
+                },
+                modifier = Modifier.testTag("add-weight-save")
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -2676,77 +2845,143 @@ private fun EditHealthDetailsScreen(
     onSave: (UserProfile) -> Unit,
     onBack: () -> Unit
 ) {
-    var birthDate by rememberSaveable { mutableStateOf(profile.birthDate.toString()) }
+    var birthDateEpoch by rememberSaveable { mutableLongStateOf(profile.birthDate.toEpochDay()) }
     var sex by rememberSaveable { mutableStateOf(profile.biologicalSex) }
     var units by rememberSaveable { mutableStateOf(profile.unitSystem) }
     var height by rememberSaveable {
-        mutableStateOf(
-            "%.1f".format(
-                if (profile.unitSystem == UnitSystem.METRIC) profile.heightCm else profile.heightCm / 2.54
-            )
-        )
+        mutableStateOf(formatHeightForUnits(profile.heightCm, profile.unitSystem == UnitSystem.METRIC))
     }
     var weight by rememberSaveable {
-        mutableStateOf(
-            "%.1f".format(
-                if (profile.unitSystem == UnitSystem.METRIC) profile.weightKg else profile.weightKg * KG_TO_POUNDS
-            )
-        )
+        mutableStateOf(formatWeightForUnits(profile.weightKg, profile.unitSystem == UnitSystem.METRIC))
     }
     var activity by rememberSaveable { mutableStateOf(profile.activityLevel) }
     var goal by rememberSaveable { mutableStateOf(profile.goal) }
     var calorieTarget by rememberSaveable { mutableStateOf(profile.calorieTarget.toString()) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    var showDiscard by remember { mutableStateOf(false) }
+    val initialBirthDateEpoch = remember(profile) { profile.birthDate.toEpochDay() }
+    val initialSex = remember(profile) { profile.biologicalSex }
+    val initialUnits = remember(profile) { profile.unitSystem }
+    val initialHeight = remember(profile) {
+        formatHeightForUnits(profile.heightCm, profile.unitSystem == UnitSystem.METRIC)
+    }
+    val initialWeight = remember(profile) {
+        formatWeightForUnits(profile.weightKg, profile.unitSystem == UnitSystem.METRIC)
+    }
+    val initialActivity = remember(profile) { profile.activityLevel }
+    val initialGoal = remember(profile) { profile.goal }
+    val initialCalorieTarget = remember(profile) { profile.calorieTarget.toString() }
 
-    val parsedDate = runCatching { LocalDate.parse(birthDate) }.getOrNull()
-    val enteredHeight = height.toDoubleOrNull()
-    val enteredWeight = weight.toDoubleOrNull()
-    val heightCm = enteredHeight?.let { if (units == UnitSystem.METRIC) it else it * 2.54 }
-    val weightKg = enteredWeight?.let { if (units == UnitSystem.METRIC) it else it / KG_TO_POUNDS }
-    val estimate = if (parsedDate != null && heightCm != null && weightKg != null) {
+    val birthDate = LocalDate.ofEpochDay(birthDateEpoch)
+    val birthDateRange = FormValidationRules.birthDateRange()
+    val metric = units == UnitSystem.METRIC
+    val heightValidation = validateDecimalInput(height, FormValidationRules.heightRule(metric))
+    val weightValidation = validateDecimalInput(weight, FormValidationRules.weightRule(metric))
+    val calorieTargetValidation = validateDecimalInput(
+        calorieTarget,
+        FormValidationRules.calorieTargetRule,
+        integerOnly = true
+    )
+    val heightCm = heightValidation.value?.let { convertHeightInputToCm(it, metric) }
+    val weightKg = weightValidation.value?.let { convertWeightInputToKg(it, metric) }
+    val estimate = if (heightCm != null && weightKg != null) {
         runCatching {
-            calculateHealthEstimate(parsedDate, sex, heightCm, weightKg, activity, goal)
+            calculateHealthEstimate(birthDate, sex, heightCm, weightKg, activity, goal)
         }.getOrNull()
-    } else null
+    } else {
+        null
+    }
+    val isDirty = birthDateEpoch != initialBirthDateEpoch ||
+        sex != initialSex ||
+        units != initialUnits ||
+        height != initialHeight ||
+        weight != initialWeight ||
+        activity != initialActivity ||
+        goal != initialGoal ||
+        calorieTarget != initialCalorieTarget
+
+    fun requestBack() {
+        if (isDirty) {
+            showDiscard = true
+        } else {
+            onBack()
+        }
+    }
+
+    ConfirmDiscardChangesDialog(
+        open = showDiscard,
+        onDismiss = { showDiscard = false },
+        onDiscard = {
+            showDiscard = false
+            onBack()
+        }
+    )
 
     LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("edit-health-list"),
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { TextButton(onClick = onBack) { Text("Back") } }
-        item { OutlinedTextField(profile.email, {}, Modifier.fillMaxWidth(), label = { Text("Email") }, readOnly = true) }
-        item { OutlinedTextField(birthDate, { birthDate = it }, Modifier.fillMaxWidth(), label = { Text("Birth date (YYYY-MM-DD)") }) }
+        item { TextButton(onClick = ::requestBack, modifier = Modifier.testTag("edit-health-back")) { Text("Back") } }
+        item {
+            OutlinedTextField(
+                profile.email,
+                {},
+                Modifier.fillMaxWidth().testTag("edit-health-email"),
+                label = { Text("Email") },
+                readOnly = true
+            )
+        }
+        item {
+            ValidatedDateField(
+                value = birthDate,
+                onValueChange = { selected -> selected?.let { birthDateEpoch = it.toEpochDay() } },
+                label = "Birth date",
+                allowedRange = birthDateRange,
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "edit-health-birth-date"
+            )
+        }
         item { ChoiceRow("Biological sex", BiologicalSex.entries, sex, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { sex = it } }
         item {
             ChoiceRow("Units", UnitSystem.entries, units, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { selected ->
                 if (selected != units) {
-                    val currentHeightCm = height.toDoubleOrNull()?.let {
-                        if (units == UnitSystem.METRIC) it else it * 2.54
-                    }
-                    val currentWeightKg = weight.toDoubleOrNull()?.let {
-                        if (units == UnitSystem.METRIC) it else it / KG_TO_POUNDS
-                    }
+                    val currentHeightCm = heightValidation.value?.let { convertHeightInputToCm(it, metric) }
+                    val currentWeightKg = weightValidation.value?.let { convertWeightInputToKg(it, metric) }
                     units = selected
-                    currentHeightCm?.let {
-                        height = "%.1f".format(if (selected == UnitSystem.METRIC) it else it / 2.54)
-                    }
-                    currentWeightKg?.let {
-                        weight = "%.1f".format(if (selected == UnitSystem.METRIC) it else it * KG_TO_POUNDS)
-                    }
+                    currentHeightCm?.let { height = formatHeightForUnits(it, selected == UnitSystem.METRIC) }
+                    currentWeightKg?.let { weight = formatWeightForUnits(it, selected == UnitSystem.METRIC) }
                 }
             }
         }
-        item { OutlinedTextField(height, { height = it }, Modifier.fillMaxWidth(), label = { Text(if (units == UnitSystem.METRIC) "Height (cm)" else "Height (inches)") }) }
-        item { OutlinedTextField(weight, { weight = it }, Modifier.fillMaxWidth(), label = { Text(if (units == UnitSystem.METRIC) "Weight (kg)" else "Weight (lb)") }) }
+        item {
+            ValidatedNumberField(
+                value = height,
+                onValueChange = { height = it },
+                rule = FormValidationRules.heightRule(metric),
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "edit-health-height"
+            )
+        }
+        item {
+            ValidatedNumberField(
+                value = weight,
+                onValueChange = { weight = it },
+                rule = FormValidationRules.weightRule(metric),
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "edit-health-weight"
+            )
+        }
         item { ChoiceRow("Activity", ActivityLevel.entries, activity, { it.name.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase) }) { activity = it } }
         item { ChoiceRow("Goal", HealthGoal.entries, goal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { goal = it } }
         item {
-            OutlinedTextField(
-                calorieTarget,
-                { calorieTarget = it.filter(Char::isDigit) },
-                Modifier.fillMaxWidth(),
-                label = { Text("Daily calorie target") }
+            ValidatedNumberField(
+                value = calorieTarget,
+                onValueChange = { calorieTarget = it },
+                rule = FormValidationRules.calorieTargetRule,
+                modifier = Modifier.fillMaxWidth(),
+                integerOnly = true,
+                testTag = "edit-health-calorie-target"
             )
         }
         estimate?.let { health ->
@@ -2768,28 +3003,30 @@ private fun EditHealthDetailsScreen(
         item {
             Button(
                 onClick = {
-                    val target = calorieTarget.toIntOrNull()
-                    if (
-                        parsedDate == null || heightCm == null || weightKg == null ||
-                        heightCm <= 0 || weightKg <= 0 || target == null || target <= 0
-                    ) {
-                        error = "Check the date, measurements, and calorie target."
+                    val dateError = validateDateInRange(birthDate, birthDateRange, "Birth date", required = true)
+                    val firstError = dateError
+                        ?: heightValidation.error
+                        ?: weightValidation.error
+                        ?: calorieTargetValidation.error
+                    if (firstError != null || heightCm == null || weightKg == null) {
+                        error = firstError ?: "Check the date, measurements, and calorie target."
                     } else {
+                        error = null
                         onSave(
                             profile.copy(
-                                birthDate = parsedDate,
+                                birthDate = birthDate,
                                 biologicalSex = sex,
                                 heightCm = heightCm,
                                 weightKg = weightKg,
                                 activityLevel = activity,
                                 goal = goal,
                                 unitSystem = units,
-                                calorieTarget = target
+                                calorieTarget = calorieTargetValidation.value!!.toInt()
                             )
                         )
                     }
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("save-health-details")
             ) { Text("Save health details") }
         }
     }
@@ -3418,8 +3655,8 @@ private fun RestTimerSettingsDialog(
     var seconds by rememberSaveable(currentSeconds) {
         mutableStateOf(currentSeconds.toString())
     }
-    val parsed = seconds.toIntOrNull()
-    val valid = parsed in 15..600
+    val validation = validateDecimalInput(seconds, FormValidationRules.restTimerRule, integerOnly = true)
+    val parsed = validation.value?.toInt()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Default rest timer") },
@@ -3432,19 +3669,13 @@ private fun RestTimerSettingsDialog(
                     label = { "$it sec" },
                     onSelected = { seconds = it.toString() }
                 )
-                OutlinedTextField(
+                ValidatedNumberField(
                     value = seconds,
-                    onValueChange = { seconds = it.filter(Char::isDigit).take(3) },
-                    label = { Text("Seconds") },
-                    singleLine = true
+                    onValueChange = { seconds = it },
+                    rule = FormValidationRules.restTimerRule,
+                    integerOnly = true,
+                    testTag = "rest-timer-seconds"
                 )
-                if (!valid) {
-                    Text(
-                        "Enter a duration from 15 to 600 seconds.",
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 12.sp
-                    )
-                }
                 Text(
                     "The timer starts after you complete a set.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3455,7 +3686,8 @@ private fun RestTimerSettingsDialog(
         confirmButton = {
             Button(
                 onClick = { parsed?.let(onSave) },
-                enabled = valid
+                enabled = validation.error == null && parsed != null,
+                modifier = Modifier.testTag("rest-timer-save")
             ) {
                 Text("Save")
             }
@@ -3543,39 +3775,43 @@ private fun RescheduleTrainingDialog(
     onDismiss: () -> Unit,
     onMove: (LocalDate) -> Unit
 ) {
-    var date by rememberSaveable(session.id, originalDate) {
-        mutableStateOf(originalDate.plusDays(1).toString())
+    var scheduledEpoch by rememberSaveable(session.id, originalDate) {
+        mutableLongStateOf(originalDate.plusDays(1).toEpochDay())
     }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    val scheduledDate = LocalDate.ofEpochDay(scheduledEpoch)
+    val allowedRange = FormValidationRules.workoutDateRange()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move ${session.name}") },
         text = {
             Column {
                 Text("Originally ${formatToday(originalDate)}")
-                OutlinedTextField(
-                    value = date,
-                    onValueChange = { date = it; error = null },
-                    label = { Text("New date (YYYY-MM-DD)") },
-                    singleLine = true
+                ValidatedDateField(
+                    value = scheduledDate,
+                    onValueChange = { selected ->
+                        selected?.let { scheduledEpoch = it.toEpochDay() }
+                        error = null
+                    },
+                    label = "New date",
+                    allowedRange = allowedRange,
+                    error = error,
+                    testTag = "reschedule-training-date"
                 )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             Button(onClick = {
-                val parsed = runCatching { LocalDate.parse(date) }.getOrNull()
-                if (parsed == null) error = "Enter a valid date."
-                else onMove(parsed)
-            }) { Text("Move") }
+                val dateError = validateDateInRange(scheduledDate, allowedRange, "New date", required = true)
+                if (dateError != null) {
+                    error = dateError
+                } else {
+                    onMove(scheduledDate)
+                }
+            }, modifier = Modifier.testTag("reschedule-training-confirm")) { Text("Move") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-private fun formatMeasurementForInput(value: Double): String {
-    val rounded = (value * 10).roundToInt() / 10.0
-    return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
 }
 
 @Composable
