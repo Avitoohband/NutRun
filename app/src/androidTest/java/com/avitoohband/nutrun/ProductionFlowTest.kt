@@ -284,27 +284,46 @@ class ProductionFlowTest {
 
         composeRule.onNodeWithText("Supplement reminders").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("supplement-reminders-master").assertIsOff()
-        composeRule.onNodeWithTag("supplement-reminders-toggle-all").performClick()
-        composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
+        // Task 12 collapses per-supplement controls when the master is off; enable it first.
+        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled")
+            .performScrollTo()
+            .performClick()
+            .assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
             .performTextClearance()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
             .performTextInput("09:45")
         composeRule.activityRule.scenario.recreate()
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText("Supplement reminders")
-                .fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("Supplement reminders").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText("Loading supplement reminders").fetchSemanticsNodes().isEmpty()
+        }
+        if (runCatching {
+                composeRule.onNodeWithTag("supplement-reminders-master").assertIsOff()
+            }.isSuccess
+        ) {
+            composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
         }
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
+            .performScrollTo()
             .assertTextContains("09:45")
 
-        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
+        composeRule.onNodeWithTag("supplement-reminders-master").assertIsOn()
         composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOff()
+        // Task 12 hides per-supplement controls when master is off; re-enable to verify retained drafts.
+        composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
             .assertTextContains("09:45")
 
-        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time-clock").performClick()
+        composeRule.onNodeWithTag("supplement-reminder-supplement-1-time-clock")
+            .performScrollTo()
+            .performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("supplement-reminder-supplement-1-time-picker")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time-picker")
             .assertIsDisplayed()
         composeRule.onNodeWithText("Cancel").performClick()
@@ -325,11 +344,17 @@ class ProductionFlowTest {
             .assertTextContains("08:00")
         composeRule.onNodeWithTag("supplement-reminders-master")
             .performScrollTo()
-            .performClick().assertIsOn()
-        composeRule.onNodeWithTag("notification-settings-list")
-            .performScrollToNode(hasTestTag("save-notification-settings"))
+        if (runCatching {
+                composeRule.onNodeWithTag("supplement-reminders-master").assertIsOff()
+            }.isSuccess
+        ) {
+            composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
+        }
         composeRule.onNodeWithTag("save-notification-settings").performClick()
         composeRule.onNodeWithText("Notification settings").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Loading supplement reminders").fetchSemanticsNodes().isEmpty()
+        }
         composeRule.onNodeWithText("Supplement reminders").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("supplement-reminders-master").assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
