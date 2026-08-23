@@ -2,6 +2,7 @@ package com.avitoohband.nutrun
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -44,6 +45,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -253,14 +257,14 @@ private fun ActiveWorkoutBottomBar(
                     onClick = onCancelRequest,
                     modifier = Modifier.weight(1f).testTag("cancel-workout")
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = null)
+                    Icon(Icons.Default.Close, contentDescription = "Cancel workout")
                     Text("Cancel")
                 }
                 Button(
                     onClick = onFinishRequest,
                     modifier = Modifier.weight(1f).testTag("finish-workout")
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null)
+                    Icon(Icons.Default.Check, contentDescription = "Finish workout")
                     Text("Finish")
                 }
             }
@@ -404,27 +408,65 @@ private fun WorkoutSetEditor(
                 tag = "workout-minutes-${set.id}"
             )
         } else {
-            WorkoutDecimalField(
-                value = input.weight,
-                onValueChange = { submit(input.copy(weight = it)) },
-                label = if (metric) "Weight (kg)" else "Weight (lb)",
-                error = validation.weightError,
-                tag = "workout-weight-${set.id}"
-            )
-            OutlinedTextField(
-                value = input.reps,
-                onValueChange = { submit(input.copy(reps = it)) },
-                modifier = Modifier.fillMaxWidth().testTag("workout-reps-${set.id}"),
-                label = { Text("Repetitions") },
-                isError = validation.repsError != null,
-                supportingText = if (validation.repsError != null) {
-                    { Text(requireNotNull(validation.repsError)) }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val fieldsModifier = Modifier.fillMaxWidth()
+                if (maxWidth >= 360.dp) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        WorkoutDecimalField(
+                            value = input.weight,
+                            onValueChange = { submit(input.copy(weight = it)) },
+                            label = if (metric) "Weight (kg)" else "Weight (lb)",
+                            error = validation.weightError,
+                            tag = "workout-weight-${set.id}",
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = input.reps,
+                            onValueChange = { submit(input.copy(reps = it)) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("workout-reps-${set.id}"),
+                            label = { Text("Repetitions") },
+                            isError = validation.repsError != null,
+                            supportingText = if (validation.repsError != null) {
+                                { Text(requireNotNull(validation.repsError)) }
+                            } else {
+                                null
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                    }
                 } else {
-                    null
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true
-            )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WorkoutDecimalField(
+                            value = input.weight,
+                            onValueChange = { submit(input.copy(weight = it)) },
+                            label = if (metric) "Weight (kg)" else "Weight (lb)",
+                            error = validation.weightError,
+                            tag = "workout-weight-${set.id}",
+                            modifier = fieldsModifier
+                        )
+                        OutlinedTextField(
+                            value = input.reps,
+                            onValueChange = { submit(input.copy(reps = it)) },
+                            modifier = fieldsModifier.testTag("workout-reps-${set.id}"),
+                            label = { Text("Repetitions") },
+                            isError = validation.repsError != null,
+                            supportingText = if (validation.repsError != null) {
+                                { Text(requireNotNull(validation.repsError)) }
+                            } else {
+                                null
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                    }
+                }
+            }
         }
         WorkoutDecimalField(
             value = input.rpe,
@@ -437,6 +479,14 @@ private fun WorkoutSetEditor(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = if (set.completed) {
+                        "Set ${set.setNumber} completed"
+                    } else {
+                        "Mark set ${set.setNumber} complete"
+                    }
+                    stateDescription = if (set.completed) "Completed" else "Not completed"
+                }
                 .clickable { submit(input, completed = !set.completed) }
                 .testTag("workout-set-completed-${set.id}"),
             verticalAlignment = Alignment.CenterVertically
@@ -453,12 +503,13 @@ private fun WorkoutDecimalField(
     onValueChange: (String) -> Unit,
     label: String,
     error: String?,
-    tag: String
+    tag: String,
+    modifier: Modifier = Modifier.fillMaxWidth()
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth().testTag(tag),
+        modifier = modifier.testTag(tag),
         label = { Text(label) },
         isError = error != null,
         supportingText = if (error != null) {
@@ -486,7 +537,12 @@ private fun ActiveRestTimer(
     }
     val remainingSeconds = ((endAtMillis - currentTime + 999) / 1_000).coerceAtLeast(0).toInt()
     if (remainingSeconds == 0) return
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+    Card(
+        modifier = Modifier.semantics {
+            contentDescription = "Rest timer, ${remainingSeconds / 60}:${"%02d".format(remainingSeconds % 60)} remaining"
+        },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -494,8 +550,18 @@ private fun ActiveRestTimer(
             Text("Rest", fontWeight = FontWeight.Bold)
             Text("%d:%02d".format(remainingSeconds / 60, remainingSeconds % 60))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onAddTime) { Text("Add 30 seconds") }
-                TextButton(onClick = onSkip) { Text("Skip") }
+                TextButton(
+                    onClick = onAddTime,
+                    modifier = Modifier.semantics { contentDescription = "Add 30 seconds to rest timer" }
+                ) {
+                    Text("Add 30 seconds")
+                }
+                TextButton(
+                    onClick = onSkip,
+                    modifier = Modifier.semantics { contentDescription = "Skip rest timer" }
+                ) {
+                    Text("Skip")
+                }
             }
         }
     }

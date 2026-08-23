@@ -166,10 +166,7 @@ internal fun NotificationSettingsContent(
         ) {
             if (!accountReady) {
                 item {
-                    Text(
-                        "Loading notification settings...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    NutRunLoadingState(message = "Loading notification settings...")
                 }
             }
             item {

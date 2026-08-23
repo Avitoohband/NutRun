@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,7 +20,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -135,16 +136,18 @@ fun TodayScreen(
 
     LazyColumn(
         Modifier.fillMaxSize()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = NutRunSpacing.lg)
             .testTag("today-list"),
         state = listState,
         contentPadding = PaddingValues(vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(NutRunSpacing.md)
     ) {
         item {
             Text(
                 "Today",
-                modifier = Modifier.testTag("today-heading"),
+                modifier = Modifier
+                    .testTag("today-heading")
+                    .semantics { heading() },
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -156,43 +159,81 @@ fun TodayScreen(
             )
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DashboardMetric(
-                    value = "${state.waterMl}",
-                    label = "mL water",
-                    icon = Icons.Default.WaterDrop,
-                    actionLabel = "Open Nutrition water",
-                    onClick = onWaterClick,
-                    modifier = Modifier.weight(1f),
-                    containerColor = Color(0xFFDDEFFC),
-                    testTag = "today-metric-water"
-                )
-                DashboardMetric(
-                    value = "${state.nutrition.proteinGrams.roundToInt()} g",
-                    label = "protein",
-                    icon = Icons.Default.LocalDining,
-                    actionLabel = "Open Nutrition",
-                    onClick = onNutritionClick,
-                    modifier = Modifier.weight(1f),
-                    containerColor = Color(0xFFE3F3E8),
-                    testTag = "today-metric-protein"
-                )
-                DashboardMetric(
-                    value = lastWalkValue,
-                    label = lastWalkLabel,
-                    icon = Icons.AutoMirrored.Filled.DirectionsRun,
-                    actionLabel = "Open Walk",
-                    onClick = onWalkClick,
-                    modifier = Modifier.weight(1f),
-                    containerColor = Color(0xFFFFE7DE),
-                    testTag = "today-metric-walk"
-                )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val compact = maxWidth < 360.dp
+                if (compact) {
+                    Column(verticalArrangement = Arrangement.spacedBy(NutRunSpacing.sm)) {
+                        NutRunMetric(
+                            value = "${state.waterMl}",
+                            label = "mL water",
+                            icon = Icons.Default.WaterDrop,
+                            actionLabel = "Open Nutrition water",
+                            onClick = onWaterClick,
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = Color(0xFFDDEFFC),
+                            testTag = "today-metric-water"
+                        )
+                        NutRunMetric(
+                            value = "${state.nutrition.proteinGrams.roundToInt()} g",
+                            label = "protein",
+                            icon = Icons.Default.LocalDining,
+                            actionLabel = "Open Nutrition",
+                            onClick = onNutritionClick,
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = Color(0xFFE3F3E8),
+                            testTag = "today-metric-protein"
+                        )
+                        NutRunMetric(
+                            value = lastWalkValue,
+                            label = lastWalkLabel,
+                            icon = Icons.AutoMirrored.Filled.DirectionsRun,
+                            actionLabel = "Open Walk",
+                            onClick = onWalkClick,
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = Color(0xFFFFE7DE),
+                            testTag = "today-metric-walk"
+                        )
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(NutRunSpacing.sm)) {
+                        NutRunMetric(
+                            value = "${state.waterMl}",
+                            label = "mL water",
+                            icon = Icons.Default.WaterDrop,
+                            actionLabel = "Open Nutrition water",
+                            onClick = onWaterClick,
+                            modifier = Modifier.weight(1f),
+                            containerColor = Color(0xFFDDEFFC),
+                            testTag = "today-metric-water"
+                        )
+                        NutRunMetric(
+                            value = "${state.nutrition.proteinGrams.roundToInt()} g",
+                            label = "protein",
+                            icon = Icons.Default.LocalDining,
+                            actionLabel = "Open Nutrition",
+                            onClick = onNutritionClick,
+                            modifier = Modifier.weight(1f),
+                            containerColor = Color(0xFFE3F3E8),
+                            testTag = "today-metric-protein"
+                        )
+                        NutRunMetric(
+                            value = lastWalkValue,
+                            label = lastWalkLabel,
+                            icon = Icons.AutoMirrored.Filled.DirectionsRun,
+                            actionLabel = "Open Walk",
+                            onClick = onWalkClick,
+                            modifier = Modifier.weight(1f),
+                            containerColor = Color(0xFFFFE7DE),
+                            testTag = "today-metric-walk"
+                        )
+                    }
+                }
             }
         }
         item {
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(NutRunSpacing.sm),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedButton(
@@ -213,7 +254,7 @@ fun TodayScreen(
         item {
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(NutRunSpacing.sm)
             ) {
                 TextButton(
                     onClick = onFoodClick,
@@ -295,56 +336,38 @@ fun TodayScreen(
         }
         if (!trainingReady) {
             item {
-                Text("Loading supplements...", modifier = Modifier.testTag("today-supplements-loading"))
+                NutRunLoadingState(
+                    message = "Loading supplements...",
+                    modifier = Modifier.testTag("today-supplements-loading")
+                )
             }
         }
         if (trainingReady && configuredSupplements.isEmpty()) {
             item {
-                Card(shape = RoundedCornerShape(8.dp)) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "Add your supplements",
-                            modifier = Modifier.testTag("today-supplements-empty-configured"),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            "Track daily vitamins and doses from Today.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp
-                        )
-                        TextButton(onClick = { addSupplement = true }) {
-                            Text("Add supplement")
-                        }
-                    }
-                }
+                NutRunEmptyState(
+                    title = "Add your supplements",
+                    message = "Track daily vitamins and doses from Today.",
+                    actionLabel = "Add supplement",
+                    onAction = { addSupplement = true },
+                    titleTestTag = "today-supplements-empty-configured"
+                )
             }
         }
         if (trainingReady && configuredSupplements.isNotEmpty() && dueSupplements.isEmpty()) {
             item {
-                Card(shape = RoundedCornerShape(8.dp)) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "No supplements due today",
-                            modifier = Modifier.testTag("today-supplements-none-due"),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        TextButton(onClick = onManageSupplements) {
-                            Text("Manage supplements")
-                        }
-                    }
-                }
+                NutRunEmptyState(
+                    title = "No supplements due today",
+                    message = "",
+                    actionLabel = "Manage supplements",
+                    onAction = onManageSupplements,
+                    titleTestTag = "today-supplements-none-due"
+                )
             }
         }
         items(dueSupplements, key = { it.id }) { supplement ->
             val completed = supplement.isCompletedOn(today)
             Card(
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.small,
                 colors = CardDefaults.cardColors(
                     containerColor = if (completed) {
                         MaterialTheme.colorScheme.surfaceVariant
@@ -354,7 +377,16 @@ fun TodayScreen(
                 )
             ) {
                 Row(
-                    Modifier.fillMaxWidth().padding(10.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = if (completed) {
+                                "${supplement.name}, completed"
+                            } else {
+                                "${supplement.name}, not completed"
+                            }
+                        },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(
@@ -391,33 +423,16 @@ fun DashboardMetric(
     containerColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     testTag: String = "dashboard-metric"
 ) {
-    Card(
-        modifier = modifier
-            .testTag(testTag)
-            .semantics(mergeDescendants = true) {
-                contentDescription = "$actionLabel, $value $label"
-            }
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor)
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column(Modifier.weight(1f)) {
-                Text(value, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF202426))
-                Text(label, fontSize = 11.sp, color = Color(0xFF4F5B62))
-            }
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
+    NutRunMetric(
+        value = value,
+        label = label,
+        icon = icon,
+        actionLabel = actionLabel,
+        onClick = onClick,
+        modifier = modifier,
+        containerColor = containerColor,
+        testTag = testTag
+    )
 }
 
 @Composable
@@ -436,13 +451,21 @@ private fun TodayActionCard(
     val taggedModifier = testTag?.let { Modifier.testTag(it) } ?: Modifier
     Card(
         modifier = taggedModifier.then(
-            if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+            if (onClick != null) {
+                Modifier
+                    .clickable(onClick = onClick)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "$title, $subtitle"
+                    }
+            } else {
+                Modifier
+            }
         ),
-        shape = RoundedCornerShape(8.dp)
+        shape = MaterialTheme.shapes.small
     ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Column(Modifier.weight(1f).padding(start = NutRunSpacing.md)) {
                 Text(title, fontWeight = FontWeight.Bold)
                 Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             }

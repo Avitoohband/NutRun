@@ -48,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -317,6 +319,9 @@ private fun WorkoutLibraryContent(
                             .fillMaxWidth()
                             .clickable { onOpenTemplate(template) }
                             .padding(12.dp)
+                            .semantics(mergeDescendants = true) {
+                                contentDescription = "Open ${template.name} workout details"
+                            }
                     ) {
                         Text(template.name, fontWeight = FontWeight.Bold)
                         Text(
@@ -362,9 +367,17 @@ private fun WorkoutLibraryContent(
                         TextButton(
                             onClick = { model.startWorkout(template.id) },
                             enabled = template.exercises.isNotEmpty(),
-                            modifier = Modifier.weight(1f).testTag("start-session-${template.id}")
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("start-session-${template.id}")
+                                .semantics {
+                                    if (template.exercises.isEmpty()) {
+                                        contentDescription =
+                                            "Start ${template.name}, disabled because workout has no exercises"
+                                    }
+                                }
                         ) {
-                            Icon(Icons.Default.PlayArrow, null)
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Start workout")
                             Spacer(Modifier.width(4.dp))
                             Text("Start")
                         }
@@ -372,7 +385,7 @@ private fun WorkoutLibraryContent(
                             onClick = { onEditTemplate(template) },
                             modifier = Modifier.weight(1f).testTag("edit-workout-${template.id}")
                         ) {
-                            Icon(Icons.Default.Edit, null)
+                            Icon(Icons.Default.Edit, contentDescription = "Edit ${template.name}")
                             Spacer(Modifier.width(4.dp))
                             Text("Edit")
                         }
@@ -382,7 +395,7 @@ private fun WorkoutLibraryContent(
                             onClick = { onDuplicateTemplate(template) },
                             modifier = Modifier.weight(1f).testTag("duplicate-workout-${template.id}")
                         ) {
-                            Icon(Icons.Default.ContentCopy, null)
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate ${template.name}")
                             Spacer(Modifier.width(4.dp))
                             Text("Duplicate")
                         }
@@ -391,7 +404,7 @@ private fun WorkoutLibraryContent(
                             enabled = !isActive,
                             modifier = Modifier.weight(1f).testTag("delete-workout-${template.id}")
                         ) {
-                            Icon(Icons.Default.Delete, null)
+                            Icon(Icons.Default.Delete, contentDescription = "Delete ${template.name}")
                             Spacer(Modifier.width(4.dp))
                             Text("Delete")
                         }

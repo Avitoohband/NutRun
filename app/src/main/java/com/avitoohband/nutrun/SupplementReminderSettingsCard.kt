@@ -17,6 +17,11 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -169,7 +174,13 @@ fun SupplementReminderSettingsCard(
                         if (enabled && !masterEnabled) onPermissionRequest()
                     },
                     enabled = !loading,
-                    modifier = Modifier.testTag("supplement-reminders-master")
+                    modifier = Modifier
+                        .testTag("supplement-reminders-master")
+                        .semantics {
+                            role = Role.Switch
+                            stateDescription = if (masterEnabled) "On" else "Off"
+                            contentDescription = "Supplement reminders master switch"
+                        }
                 )
             }
 
@@ -180,10 +191,7 @@ fun SupplementReminderSettingsCard(
             )
 
             if (loading) {
-                Text(
-                    "Loading supplement reminders...",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                NutRunLoadingState(message = "Loading supplement reminders...")
             } else if (!masterEnabled && collapsedSummary != null) {
                 Text(
                     collapsedSummary,
@@ -242,9 +250,13 @@ fun SupplementReminderSettingsCard(
                                     )
                                     if (enabled && !draft.enabled) onPermissionRequest()
                                 },
-                                modifier = Modifier.testTag(
-                                    "supplement-reminder-${supplement.id}-enabled"
-                                )
+                                modifier = Modifier
+                                    .testTag("supplement-reminder-${supplement.id}-enabled")
+                                    .semantics {
+                                        role = Role.Switch
+                                        stateDescription = if (draft.enabled) "On" else "Off"
+                                        contentDescription = "${supplement.name} reminder"
+                                    }
                             )
                         }
                         ReminderTimeInput(

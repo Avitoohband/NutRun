@@ -111,6 +111,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -242,9 +244,8 @@ fun NutRunRoot(
         }
     }
     val dark = state.session.darkMode
-    val colors = if (dark) androidx.compose.material3.darkColorScheme() else androidx.compose.material3.lightColorScheme()
 
-    MaterialTheme(colorScheme = colors) {
+    NutRunTheme(darkTheme = dark) {
         when {
             state.session.authenticatedEmail == null -> AuthenticationScreen(
                 onAuthenticate = app::authenticate,
@@ -638,7 +639,17 @@ private fun MainApp(
                                     }
                                 }
                             },
-                            modifier = Modifier.testTag("bottom-nav-${destination.route}"),
+                            modifier = Modifier
+                                .testTag("bottom-nav-${destination.route}")
+                                .semantics {
+                                    selected = route == destination.route
+                                    stateDescription = if (route == destination.route) {
+                                        "Selected"
+                                    } else {
+                                        "Not selected"
+                                    }
+                                    contentDescription = "${destination.label} tab"
+                                },
                             icon = { Icon(destination.icon, destination.label) },
                             label = { Text(destination.label, fontSize = 10.sp) }
                         )
