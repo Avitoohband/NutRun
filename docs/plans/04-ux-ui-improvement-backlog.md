@@ -228,9 +228,9 @@ Acceptance criteria:
 2. Task 11 - Training Information Architecture and Full-Screen Editor.
 3. Task 12 - Reminder Settings and Time Controls.
 4. Task 13 - Form Components and Validation.
-5. Task 15 - Accessibility and Responsive UI Foundation, applied alongside Tasks 10-14 and completed as a dedicated audit.
-6. Task 14 - Today Dashboard Actions and Empty States.
-7. Tasks 16-19 can proceed after the core daily workflows are stable.
+5. Task 14 - Today Dashboard Actions and Empty States.
+6. Task 15 - Accessibility and Responsive UI Foundation, applied during Tasks 12-14 and completed as a dedicated audit after Task 14.
+7. Tasks 16-19 proceed sequentially after the shared accessibility foundation is integrated.
 
 ## Quick-Wins Slice
 
