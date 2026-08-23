@@ -149,9 +149,9 @@ Retained limitations:
 - Task 11 does not add drag-and-drop assignment; accessible move-up/move-down controls preserve explicit ordering.
 - Customer acceptance issue #5 remains open for external verification.
 
-Next safe task: Task 12, Reminder Settings and Time Controls. Update this handover with Task 12 branch, starting commit, scope, and baseline before production edits.
+Task 12 complete: Reminder Settings and Time Controls merged to `origin/main` at `7d2c42a` (PR #9, 2026-08-23). Live handover: [`2026-08-22-task-12-live-handover.md`](2026-08-22-task-12-live-handover.md).
 
-Task 12 live resume point: [`2026-08-22-task-12-live-handover.md`](2026-08-22-task-12-live-handover.md). It must be updated before and after every implementation and validation checkpoint.
+Next safe task: Task 13, Form Components and Validation. Await Avi approval before production edits.
 
 ## Execution Order
 
@@ -159,7 +159,7 @@ Recommended order:
 
 1. Task 10 - Active Workout Focus Mode (complete).
 2. Task 11 - Training information architecture and full-screen editor (complete).
-3. Task 12 - Reminder settings and time controls.
+3. Task 12 - Reminder settings and time controls (complete).
 4. Task 13 - Shared forms and validation.
 5. Task 14 - Today dashboard.
 6. Task 15 - Complete the cross-app accessibility/responsive audit begun during Tasks 10-14.
