@@ -548,11 +548,17 @@ private fun MainApp(
 ) {
     val navController = rememberNavController()
     var waterFocusRequest by rememberSaveable { mutableStateOf(0) }
+    var foodFocusRequest by rememberSaveable { mutableStateOf(0) }
     var pendingSupplementsFocusRequestId by rememberSaveable {
         mutableStateOf<Long?>(null)
     }
-    fun navigateTo(destination: String, focusWater: Boolean = false) {
+    fun navigateTo(
+        destination: String,
+        focusWater: Boolean = false,
+        focusFood: Boolean = false
+    ) {
         if (focusWater) waterFocusRequest += 1
+        if (focusFood) foodFocusRequest += 1
         navController.navigate(destination) {
             launchSingleTop = true
         }
@@ -647,7 +653,13 @@ private fun MainApp(
                     state,
                     training,
                     onTrainingClick = { navigateTo("training") },
+                    onNutritionClick = { navigateTo("nutrition") },
                     onWaterClick = { navigateTo("nutrition", focusWater = true) },
+                    onWalkClick = { navigateTo("walk") },
+                    onFoodClick = { navigateTo("nutrition", focusFood = true) },
+                    onWorkoutClick = { navigateTo("training") },
+                    onQuickAddWater = { app.addWater(state.hydrationPlan.servingMl) },
+                    onLogWaterAmount = app::addWater,
                     onManageSupplements = { navController.navigate("supplements") },
                     supplementsFocusRequestId = pendingSupplementsFocusRequestId,
                     onSupplementsFocusConsumed = { requestId ->
@@ -658,7 +670,9 @@ private fun MainApp(
                 )
             }
             composable("training") { TrainingScreen(training) }
-            composable("nutrition") { NutritionScreen(app, state, waterFocusRequest) }
+            composable("nutrition") {
+                NutritionScreen(app, state, waterFocusRequest, foodFocusRequest)
+            }
             composable("walk") { WalkScreen(app, state) }
             composable("progress") { ProgressScreen(app, state, training) }
             composable("supplements") {
@@ -696,190 +710,6 @@ private fun MainApp(
                 )
             }
         }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun TodayScreen(
-    state: NutRunUiState,
-    training: TrainingViewModel,
-    onTrainingClick: () -> Unit,
-    onWaterClick: () -> Unit,
-    onManageSupplements: () -> Unit,
-    supplementsFocusRequestId: Long? = null,
-    onSupplementsFocusConsumed: (Long) -> Unit = {}
-) {
-    val profile = state.profile ?: return
-    val trainingReady = training.trainingMutationsReady
-    val context = LocalContext.current
-    val notificationPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) {}
-    fun requestNotificationPermission() {
-        if (
-            Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-    val listState = rememberLazyListState()
-    val supplementsHeadingRequester = remember { BringIntoViewRequester() }
-    LaunchedEffect(supplementsFocusRequestId) {
-        val requestId = supplementsFocusRequestId ?: return@LaunchedEffect
-        listState.animateScrollToItem(6)
-        supplementsHeadingRequester.bringIntoView()
-        onSupplementsFocusConsumed(requestId)
-    }
-    var addSupplement by remember { mutableStateOf(false) }
-    LaunchedEffect(trainingReady) {
-        if (!trainingReady) addSupplement = false
-    }
-    if (addSupplement && trainingReady) {
-        AddSupplementDialog(
-            onDismiss = { addSupplement = false },
-            onAdd = { name, dose, schedule, reminderEnabled, reminderMinute ->
-                training.addSupplement(name, dose, schedule, reminderEnabled, reminderMinute)
-                if (shouldRequestSupplementReminderPermission(null, reminderEnabled)) {
-                    requestNotificationPermission()
-                }
-                addSupplement = false
-            }
-        )
-    }
-    LazyColumn(
-        Modifier.fillMaxSize()
-            .padding(horizontal = 16.dp)
-            .testTag("today-list"),
-        state = listState,
-        contentPadding = PaddingValues(vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Text(
-                "Today",
-                modifier = Modifier.testTag("today-heading"),
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(formatToday(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("${state.nutrition.calories} of ${profile.calorieTarget} kcal")
-            LinearProgressIndicator(
-                progress = { (state.nutrition.calories / profile.calorieTarget.toFloat()).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-            )
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryCard(
-                    "${state.waterMl}",
-                    "mL water",
-                    Modifier.weight(1f),
-                    Color(0xFFDDEFFC),
-                    onClick = onWaterClick
-                )
-                SummaryCard("${state.nutrition.proteinGrams.roundToInt()} g", "protein", Modifier.weight(1f), Color(0xFFE3F3E8))
-                SummaryCard("${state.walks.firstOrNull()?.distanceMeters?.div(1_000)?.let { "%.1f".format(it) } ?: "0"} km", "last walk", Modifier.weight(1f), Color(0xFFFFE7DE))
-            }
-        }
-        item { SectionHeading("Today's training") }
-        item {
-            val today = LocalDate.now()
-            val todaySessions = training.sessionsForDate(today)
-            val upcoming = training.nextScheduledSession(today.plusDays(1))
-            ActionCard(
-                title = when {
-                    todaySessions.isNotEmpty() -> todaySessions.joinToString(" + ") { it.name }
-                    upcoming != null -> "Rest day"
-                    else -> "Create your first session"
-                },
-                subtitle = when {
-                    todaySessions.isNotEmpty() ->
-                        "${todaySessions.sumOf { it.logicalTargetCount() }} planned targets"
-                    upcoming != null ->
-                        "Next: ${upcoming.second.name} on ${formatToday(upcoming.first)}"
-                    else -> "Training is ready when you are."
-                },
-                icon = Icons.Default.FitnessCenter,
-                onClick = onTrainingClick,
-                testTag = "today-training-card"
-            )
-        }
-        item { SectionHeading("Hydration") }
-        item {
-            ActionCard(
-                "${state.waterMl} / ${state.hydrationPlan.goalMl} mL",
-                if (state.waterMl >= state.hydrationPlan.goalMl) "Daily goal reached" else "Keep a steady pace through your waking window.",
-                Icons.Default.WaterDrop,
-                onClick = onWaterClick,
-                testTag = "today-hydration-card"
-            )
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SectionHeading(
-                    "Supplements",
-                    Modifier
-                        .weight(1f)
-                        .bringIntoViewRequester(supplementsHeadingRequester)
-                        .testTag("today-supplements-heading")
-                )
-                TextButton(
-                    onClick = onManageSupplements,
-                    enabled = trainingReady,
-                    modifier = Modifier.testTag("manage-supplements")
-                ) {
-                    Text("Manage")
-                }
-                IconButton(
-                    onClick = { addSupplement = true },
-                    enabled = trainingReady
-                ) {
-                    Icon(Icons.Default.Add, "Add supplement")
-                }
-            }
-        }
-        val today = LocalDate.now()
-        val dueSupplements = if (trainingReady) dueSupplementsForDate(training.supplements, today) else emptyList()
-        if (!trainingReady) item {
-            Text("Loading supplements...", modifier = Modifier.testTag("today-supplements-loading"))
-        }
-        items(dueSupplements, key = { it.id }) { supplement ->
-            val completed = supplement.isCompletedOn(today)
-            Card(
-                shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (completed) {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    }
-                )
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = completed,
-                        onCheckedChange = { training.toggleSupplement(supplement.id, it) },
-                        enabled = trainingReady
-                    )
-                    Column {
-                        val color = if (completed) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        }
-                        Text(supplement.name, fontWeight = FontWeight.SemiBold, color = color)
-                        Text(supplement.dose, fontSize = 12.sp, color = color)
-                    }
-                }
-            }
-        }
-        if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
     }
 }
 
@@ -1249,7 +1079,8 @@ internal fun TrainingScreen(model: TrainingViewModel) {
 private fun NutritionScreen(
     app: NutRunViewModel,
     state: NutRunUiState,
-    waterFocusRequest: Int = 0
+    waterFocusRequest: Int = 0,
+    foodFocusRequest: Int = 0
 ) {
     var showFood by remember { mutableStateOf<FoodLogEntity?>(null) }
     var draftFood by remember { mutableStateOf<FoodCatalogItem?>(null) }
@@ -1268,6 +1099,9 @@ private fun NutritionScreen(
     val waterHeadingIndex = 2 + searchResults.size + if (searchBusy) 1 else 0
     LaunchedEffect(waterFocusRequest, waterHeadingIndex) {
         if (waterFocusRequest > 0) listState.animateScrollToItem(waterHeadingIndex)
+    }
+    LaunchedEffect(foodFocusRequest) {
+        if (foodFocusRequest > 0) listState.animateScrollToItem(1)
     }
 
     if (createFood || showFood != null || draftFood != null) {
@@ -1343,7 +1177,7 @@ private fun NutritionScreen(
                     query = it
                     app.searchFood(it)
                 },
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().testTag("nutrition-search"),
                 label = { Text("Search food") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 singleLine = true
@@ -1392,10 +1226,12 @@ private fun NutritionScreen(
                     }
                     Spacer(Modifier.width(8.dp))
                     Surface(
-                        modifier = Modifier.combinedClickable(
-                            onClick = { app.addWater(state.hydrationPlan.servingMl) },
-                            onLongClick = { waterAmounts = true }
-                        ),
+                        modifier = Modifier
+                            .combinedClickable(
+                                onClick = { app.addWater(state.hydrationPlan.servingMl) },
+                                onLongClick = { waterAmounts = true }
+                            )
+                            .testTag("nutrition-quick-add-water"),
                         color = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                         shape = RoundedCornerShape(8.dp)
@@ -1405,6 +1241,12 @@ private fun NutritionScreen(
                             Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
                             fontWeight = FontWeight.SemiBold
                         )
+                    }
+                    TextButton(
+                        onClick = { waterAmounts = true },
+                        modifier = Modifier.testTag("nutrition-choose-water-amount")
+                    ) {
+                        Text("Choose amount")
                     }
                 }
             }
@@ -1723,7 +1565,7 @@ private fun HydrationSettingsDialog(
 }
 
 @Composable
-private fun WaterAmountDialog(onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+internal fun WaterAmountDialog(onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
     var custom by rememberSaveable { mutableStateOf("") }
     var showCustom by rememberSaveable { mutableStateOf(false) }
     val parsed = custom.toIntOrNull()
@@ -3868,7 +3710,7 @@ private fun SectionHeading(title: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun AdPlacement() {
+internal fun AdPlacement() {
     AndroidView(
         modifier = Modifier.fillMaxWidth().height(50.dp),
         factory = { context ->
