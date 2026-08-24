@@ -16,7 +16,12 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.avitoohband.nutrun.NutritionTargets
+import com.avitoohband.nutrun.recommendedNutritionTargets
+import com.avitoohband.nutrun.toDomain
+import com.avitoohband.nutrun.toEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -86,6 +91,16 @@ class NutRunRepository @Inject constructor(
 
     val foodTemplates = userId.flatMapLatest { id ->
         id?.let(dao::observeFoodTemplates) ?: flowOf(emptyList())
+    }
+
+    val nutritionTargets = userId.flatMapLatest { accountId ->
+        if (accountId == null) {
+            flowOf(null)
+        } else {
+            combine(dao.observeNutritionTarget(accountId), dao.observeProfile(accountId)) { row, profile ->
+                row?.toDomain() ?: profile?.let { recommendedNutritionTargets(it.calorieTarget) }
+            }
+        }
     }
 
     val hydrationPlan = userId.flatMapLatest { accountId ->
@@ -370,6 +385,12 @@ class NutRunRepository @Inject constructor(
         require(entry.userId == accountId)
         dao.deleteFood(entry)
         queue(accountId, "foodLogs", entry.id, "DELETE", null)
+    }
+
+    suspend fun saveNutritionTargets(userId: String, targets: NutritionTargets) {
+        withExpectedRepositoryAccount(userId, { requireUserId() }) { accountId ->
+            dao.saveNutritionTarget(targets.copy(custom = true).toEntity(accountId))
+        }
     }
 
     suspend fun addWater(amountMl: Int, date: LocalDate = LocalDate.now()): Int {

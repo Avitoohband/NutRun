@@ -71,6 +71,12 @@ interface NutRunDao {
     @Delete
     suspend fun deleteFoodTemplate(template: FoodTemplateEntity)
 
+    @Query("SELECT * FROM nutrition_targets WHERE userId = :userId LIMIT 1")
+    fun observeNutritionTarget(userId: String): Flow<NutritionTargetEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveNutritionTarget(target: NutritionTargetEntity)
+
     @Query(
         "SELECT * FROM water_logs WHERE userId = :userId AND localDate = :date " +
             "ORDER BY loggedAtMillis DESC"

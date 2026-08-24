@@ -77,6 +77,7 @@ data class NutRunUiState(
     val food: List<FoodLogEntity> = emptyList(),
     val recentFoods: List<FoodLogEntity> = emptyList(),
     val foodTemplates: List<FoodTemplateEntity> = emptyList(),
+    val nutritionTargets: NutritionTargets? = null,
     val water: List<WaterLogEntity> = emptyList(),
     val hydrationPlan: HydrationPlanEntity = HydrationPlanEntity(),
     val trainingReminderSettings: TrainingReminderSettingsEntity = TrainingReminderSettingsEntity(),
@@ -142,6 +143,7 @@ internal interface NutRunViewModelReminderRuntime {
     val supplementReminderSettings: Flow<SupplementReminderSettingsEntity>
     val recentFoods: Flow<List<FoodLogEntity>>
     val foodTemplates: Flow<List<FoodTemplateEntity>>
+    val nutritionTargets: Flow<NutritionTargets?>
 
     fun food(date: LocalDate): Flow<List<FoodLogEntity>>
     fun water(date: LocalDate): Flow<List<WaterLogEntity>>
@@ -188,6 +190,7 @@ private class ProductionNutRunViewModelReminderRuntime(
     override val supplementReminderSettings = repository.supplementReminderSettings
     override val recentFoods = repository.recentFoods
     override val foodTemplates = repository.foodTemplates
+    override val nutritionTargets = repository.nutritionTargets
 
     override fun food(date: LocalDate): Flow<List<FoodLogEntity>> = repository.food(date)
 
@@ -291,7 +294,8 @@ class NutRunViewModel internal constructor(
         reminderRuntime.trainingReminderSettings,
         reminderRuntime.supplementReminderSettings,
         reminderRuntime.recentFoods,
-        reminderRuntime.foodTemplates
+        reminderRuntime.foodTemplates,
+        reminderRuntime.nutritionTargets
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         NutRunUiState(
@@ -307,7 +311,8 @@ class NutRunViewModel internal constructor(
             trainingReminderSettings = values[8] as TrainingReminderSettingsEntity,
             supplementReminderSettings = values[9] as SupplementReminderSettingsEntity,
             recentFoods = values[10] as List<FoodLogEntity>,
-            foodTemplates = values[11] as List<FoodTemplateEntity>
+            foodTemplates = values[11] as List<FoodTemplateEntity>,
+            nutritionTargets = values[12] as NutritionTargets?
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutRunUiState())
 
@@ -322,8 +327,8 @@ class NutRunViewModel internal constructor(
         .flatMapLatest { id -> id?.let(reminderRuntime::walkPoints) ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val foodSearchResults = MutableStateFlow<List<FoodCatalogItem>>(emptyList())
-    val foodSearchBusy = MutableStateFlow(false)
+    val foodSearchState = MutableStateFlow<FoodSearchUiState>(FoodSearchUiState.Idle)
+    val pendingNutritionDeletion = MutableStateFlow<PendingNutritionDeletion?>(null)
     val message = MutableStateFlow<String?>(null)
     lateinit var billingState: StateFlow<BillingUiState>
         private set
@@ -333,6 +338,8 @@ class NutRunViewModel internal constructor(
     val healthConnectPermissions: Set<String>
         get() = if (::healthConnectManager.isInitialized) healthConnectManager.permissions else emptySet()
     private var searchJob: Job? = null
+    private var searchGeneration = 0
+    private var deletionJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -417,9 +424,9 @@ class NutRunViewModel internal constructor(
             preferences.session
                 .map { it.authenticatedUserId }
                 .distinctUntilChanged()
-                .filterNotNull()
-                .collect { userId ->
-                    if (!isDemoAccount(userId)) {
+                .collect { accountId ->
+                    clearFoodSearch()
+                    if (accountId != null && !isDemoAccount(accountId)) {
                         billingManager.connect()
                         repository.synchronize()
                     }
@@ -532,23 +539,60 @@ class NutRunViewModel internal constructor(
     }
 
     fun searchFood(query: String) {
-        if (isDemoAccount(state.value.session.authenticatedUserId)) {
-            foodSearchResults.value = emptyList()
-            message.value = "Online food search is unavailable in the local demo account."
+        searchJob?.cancel()
+        val normalized = query.trim()
+        if (normalized.isEmpty()) {
+            clearFoodSearch()
             return
         }
-        searchJob?.cancel()
+        if (isDemoAccount(state.value.session.authenticatedUserId)) {
+            foodSearchState.value = FoodSearchUiState.Error(
+                normalized,
+                "Online food search is unavailable in the local demo account."
+            )
+            return
+        }
+        val generation = ++searchGeneration
+        foodSearchState.value = foodSearchStateForQuery(query)
         searchJob = viewModelScope.launch {
-            foodSearchBusy.value = true
-            runCatching { foodSearchService.search(query) }
-                .onSuccess { foodSearchResults.value = it }
-                .onFailure { message.value = it.message ?: "Food search is unavailable." }
-            foodSearchBusy.value = false
+            delay(300)
+            if (generation != searchGeneration) return@launch
+            runCatching { foodSearchService.search(normalized) }
+                .onSuccess { items ->
+                    resolveFoodSearchResult(searchGeneration, generation, normalized, items)
+                        ?.let { foodSearchState.value = it }
+                }
+                .onFailure { error ->
+                    resolveFoodSearchError(
+                        searchGeneration,
+                        generation,
+                        normalized,
+                        error.message ?: "Food search is unavailable."
+                    )?.let { foodSearchState.value = it }
+                }
+        }
+    }
+
+    fun clearFoodSearch() {
+        searchJob?.cancel()
+        searchJob = null
+        searchGeneration++
+        foodSearchState.value = FoodSearchUiState.Idle
+    }
+
+    fun saveNutritionTargets(targets: NutritionTargets) {
+        val userId = state.value.session.authenticatedUserId ?: return
+        viewModelScope.launch {
+            runCatching { repository.saveNutritionTargets(userId, targets) }
+                .onFailure { message.value = it.message ?: "Could not save nutrition targets." }
         }
     }
 
     fun saveFood(item: FoodCatalogItem, mealType: MealType, id: String? = null) {
-        viewModelScope.launch { repository.saveFood(item, mealType, id = id ?: java.util.UUID.randomUUID().toString()) }
+        viewModelScope.launch {
+            repository.saveFood(item, mealType, id = id ?: java.util.UUID.randomUUID().toString())
+            clearFoodSearch()
+        }
     }
 
     fun duplicateFood(id: String) {
@@ -583,11 +627,73 @@ class NutRunViewModel internal constructor(
     }
 
     fun deleteFoodTemplate(template: FoodTemplateEntity) {
-        viewModelScope.launch { repository.deleteFoodTemplate(template) }
+        requestTemplateDeletion(template)
     }
 
     fun deleteFood(entry: FoodLogEntity) {
-        viewModelScope.launch { repository.deleteFood(entry) }
+        requestFoodDeletion(entry)
+    }
+
+    fun requestFoodDeletion(entry: FoodLogEntity) {
+        viewModelScope.launch {
+            commitPendingNutritionDeletion()
+            val userId = state.value.session.authenticatedUserId ?: return@launch
+            if (entry.userId != userId) return@launch
+            pendingNutritionDeletion.value = PendingNutritionDeletion(
+                id = entry.id,
+                label = entry.name,
+                kind = NutritionDeletionKind.FOOD,
+                ownerUserId = userId,
+                foodEntry = entry
+            )
+            scheduleNutritionDeletionCommit()
+        }
+    }
+
+    fun requestTemplateDeletion(template: FoodTemplateEntity) {
+        viewModelScope.launch {
+            commitPendingNutritionDeletion()
+            val userId = state.value.session.authenticatedUserId ?: return@launch
+            if (template.userId != userId) return@launch
+            pendingNutritionDeletion.value = PendingNutritionDeletion(
+                id = template.id,
+                label = template.name,
+                kind = NutritionDeletionKind.TEMPLATE,
+                ownerUserId = userId,
+                template = template
+            )
+            scheduleNutritionDeletionCommit()
+        }
+    }
+
+    fun undoNutritionDeletion() {
+        val pending = pendingNutritionDeletion.value ?: return
+        val userId = state.value.session.authenticatedUserId
+        if (userId == null || pending.ownerUserId != userId) return
+        deletionJob?.cancel()
+        deletionJob = null
+        pendingNutritionDeletion.value = null
+    }
+
+    suspend fun commitPendingNutritionDeletion() {
+        deletionJob?.cancel()
+        deletionJob = null
+        val pending = pendingNutritionDeletion.value ?: return
+        val userId = state.value.session.authenticatedUserId
+        pendingNutritionDeletion.value = null
+        if (userId == null || pending.ownerUserId != userId) return
+        when (pending.kind) {
+            NutritionDeletionKind.FOOD -> pending.foodEntry?.let { repository.deleteFood(it) }
+            NutritionDeletionKind.TEMPLATE -> pending.template?.let { repository.deleteFoodTemplate(it) }
+        }
+    }
+
+    private fun scheduleNutritionDeletionCommit() {
+        deletionJob?.cancel()
+        deletionJob = viewModelScope.launch {
+            delay(NUTRITION_DELETION_WINDOW_MS)
+            commitPendingNutritionDeletion()
+        }
     }
 
     fun addWater(amountMl: Int) {
@@ -770,7 +876,9 @@ class NutRunViewModel internal constructor(
 
     fun signOut(): Job {
         clearSelectedWalk()
+        clearFoodSearch()
         return viewModelScope.launch {
+            commitPendingNutritionDeletion()
             val userId = reminderRuntime.currentSession().authenticatedUserId
             reminderRuntime.pauseWalk()
             if (userId != null) {

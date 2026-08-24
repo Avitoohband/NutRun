@@ -246,4 +246,30 @@ class ProductionDomainTest {
         assertNotNull(validateDecimalInput("10", FormValidationRules.restTimerRule, integerOnly = true).error)
         assertNotNull(validateDecimalInput("601", FormValidationRules.restTimerRule, integerOnly = true).error)
     }
+
+    @Test
+    fun pendingDeletionHidesOnlyMatchingFoodOrTemplateRows() {
+        val foodPending = PendingNutritionDeletion(
+            id = "food-1",
+            label = "Rice",
+            kind = NutritionDeletionKind.FOOD,
+            ownerUserId = "user-a",
+            foodEntry = null
+        )
+        val templatePending = PendingNutritionDeletion(
+            id = "template-1",
+            label = "Breakfast",
+            kind = NutritionDeletionKind.TEMPLATE,
+            ownerUserId = "user-a",
+            template = null
+        )
+
+        assertTrue(foodEntryVisible("food-1", null))
+        assertFalse(foodEntryVisible("food-1", foodPending))
+        assertTrue(foodEntryVisible("food-2", foodPending))
+
+        assertTrue(templateVisible("template-1", null))
+        assertFalse(templateVisible("template-1", templatePending))
+        assertTrue(templateVisible("template-2", templatePending))
+    }
 }

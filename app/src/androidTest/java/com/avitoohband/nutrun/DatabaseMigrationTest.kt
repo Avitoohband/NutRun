@@ -209,6 +209,44 @@ class DatabaseMigrationTest {
         migrated.close()
     }
 
+    @Test
+    @Throws(IOException::class)
+    fun migrationSixToSevenAddsNutritionTargetsWithoutChangingFoodLogs() {
+        helper.createDatabase(DATABASE_NAME_V7, 6).apply {
+            insert(
+                "food_logs",
+                SQLiteDatabase.CONFLICT_REPLACE,
+                ContentValues().apply {
+                    put("id", "food-1")
+                    put("userId", "user")
+                    put("localDate", "2026-08-24")
+                    put("mealType", "LUNCH")
+                    putNull("catalogId")
+                    put("name", "Rice")
+                    putNull("brand")
+                    put("servingGrams", 150.0)
+                    put("calories", 200)
+                    put("proteinGrams", 4.0)
+                    put("carbohydrateGrams", 45.0)
+                    put("fatGrams", 1.0)
+                    put("updatedAtMillis", 1L)
+                    put("pendingSync", 0)
+                }
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME_V7,
+            7,
+            true,
+            NutRunDatabase.MIGRATION_6_7
+        )
+        assertQueryValue(migrated, "SELECT name FROM food_logs WHERE id = 'food-1'", "Rice")
+        assertQueryValue(migrated, "SELECT COUNT(*) FROM nutrition_targets", 0)
+        migrated.close()
+    }
+
     private fun assertQueryValue(database: SupportSQLiteDatabase, query: String, expected: Any) {
         database.query(query).use { cursor ->
             cursor.moveToFirst()
@@ -225,5 +263,6 @@ class DatabaseMigrationTest {
         private const val DATABASE_NAME_V4 = "migration-test-v4"
         private const val DATABASE_NAME_V5 = "migration-test-v5"
         private const val DATABASE_NAME_V6 = "migration-test-v6"
+        private const val DATABASE_NAME_V7 = "migration-test-v7"
     }
 }

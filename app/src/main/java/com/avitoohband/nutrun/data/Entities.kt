@@ -73,6 +73,16 @@ data class WaterLogEntity(
     val pendingSync: Boolean = true
 )
 
+@Entity(tableName = "nutrition_targets", indices = [Index("userId", unique = true)])
+data class NutritionTargetEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val proteinGrams: Double,
+    val carbohydrateGrams: Double,
+    val fatGrams: Double,
+    val custom: Boolean
+)
+
 @Entity(tableName = "hydration_plan", indices = [Index("userId")])
 data class HydrationPlanEntity(
     @PrimaryKey val id: String = "",

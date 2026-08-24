@@ -21,9 +21,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TrainingReminderSettingsEntity::class,
         SupplementReminderSettingsEntity::class,
         ReminderDeliveryEntity::class,
-        SyncOperationEntity::class
+        SyncOperationEntity::class,
+        NutritionTargetEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class NutRunDatabase : RoomDatabase() {
@@ -188,6 +189,27 @@ abstract class NutRunDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS nutrition_targets (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        userId TEXT NOT NULL,
+                        proteinGrams REAL NOT NULL,
+                        carbohydrateGrams REAL NOT NULL,
+                        fatGrams REAL NOT NULL,
+                        custom INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_nutrition_targets_userId " +
+                        "ON nutrition_targets(userId)"
+                )
+            }
+        }
+
         @Volatile private var instance: NutRunDatabase? = null
 
         fun getInstance(context: Context): NutRunDatabase =
@@ -201,7 +223,8 @@ abstract class NutRunDatabase : RoomDatabase() {
                     MIGRATION_2_3,
                     MIGRATION_3_4,
                     MIGRATION_4_5,
-                    MIGRATION_5_6
+                    MIGRATION_5_6,
+                    MIGRATION_6_7
                 )
                     .build()
                     .also { instance = it }

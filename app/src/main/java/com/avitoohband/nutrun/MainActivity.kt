@@ -1124,17 +1124,8 @@ private fun NutritionScreen(
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) {}
-    val searchResults by app.foodSearchResults.collectAsState()
-    val searchBusy by app.foodSearchBusy.collectAsState()
-    var query by rememberSaveable { mutableStateOf("") }
-    val listState = rememberLazyListState()
-    val waterHeadingIndex = 2 + searchResults.size + if (searchBusy) 1 else 0
-    LaunchedEffect(waterFocusRequest, waterHeadingIndex) {
-        if (waterFocusRequest > 0) listState.animateScrollToItem(waterHeadingIndex)
-    }
-    LaunchedEffect(foodFocusRequest) {
-        if (foodFocusRequest > 0) listState.animateScrollToItem(1)
-    }
+    val foodSearchState by app.foodSearchState.collectAsState()
+    val pendingDeletion by app.pendingNutritionDeletion.collectAsState()
 
     if (createFood || showFood != null || draftFood != null) {
         FoodEntryDialog(
@@ -1187,217 +1178,32 @@ private fun NutritionScreen(
         )
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        state = listState,
-        contentPadding = PaddingValues(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Nutrition", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Text("${state.nutrition.calories} kcal | P ${state.nutrition.proteinGrams.roundToInt()} | C ${state.nutrition.carbohydrateGrams.roundToInt()} | F ${state.nutrition.fatGrams.roundToInt()}")
-                }
-                IconButton(onClick = { createFood = true }) { Icon(Icons.Default.Add, "Add food") }
-            }
-        }
-        item {
-            OutlinedTextField(
-                query,
-                {
-                    query = it
-                    app.searchFood(it)
-                },
-                Modifier.fillMaxWidth().testTag("nutrition-search"),
-                label = { Text("Search food") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                singleLine = true
-            )
-        }
-        if (searchBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        items(searchResults, key = { it.id }) { result ->
-            Card(
-                Modifier.fillMaxWidth().clickable {
-                    draftFood = result
-                    query = ""
-                    app.searchFood("")
-                },
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Row(Modifier.padding(12.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text(result.name, fontWeight = FontWeight.SemiBold)
-                        Text("${result.servingGrams.roundToInt()} g serving")
-                    }
-                    Text("${result.calories} kcal")
-                }
-            }
-        }
-        item(key = "water-heading") {
-            Row(
-                modifier = Modifier.testTag("water-section"),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SectionHeading("Water", Modifier.weight(1f))
-                TextButton(onClick = { hydrationSettings = true }) { Text("Settings") }
-            }
-        }
-        item {
-            Card(shape = RoundedCornerShape(8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${state.waterMl} / ${state.hydrationPlan.goalMl} mL", fontWeight = FontWeight.Bold)
-                        LinearProgressIndicator(
-                            progress = { (state.waterMl / state.hydrationPlan.goalMl.toFloat()).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        modifier = Modifier
-                            .combinedClickable(
-                                onClick = { app.addWater(state.hydrationPlan.servingMl) },
-                                onLongClick = { waterAmounts = true }
-                            )
-                            .testTag("nutrition-quick-add-water"),
-                        color = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            "+${state.hydrationPlan.servingMl} mL",
-                            Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    TextButton(
-                        onClick = { waterAmounts = true },
-                        modifier = Modifier.testTag("nutrition-choose-water-amount")
-                    ) {
-                        Text("Choose amount")
-                    }
-                }
-            }
-        }
-        if (state.foodTemplates.isNotEmpty() || state.recentFoods.isNotEmpty()) {
-            item { SectionHeading("Quick add") }
-        }
-        items(state.foodTemplates, key = { "template:${it.id}" }) { template ->
-            Card(shape = RoundedCornerShape(8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        if (template.kind == "FAVORITE") Icons.Default.Star else Icons.Default.LocalDining,
-                        null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(template.name, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            if (template.kind == "FAVORITE") "Favorite food" else "Saved meal",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = { app.logFoodTemplate(template) }) {
-                        Icon(Icons.Default.Add, "Add ${template.name}")
-                    }
-                    IconButton(onClick = { app.deleteFoodTemplate(template) }) {
-                        Icon(Icons.Default.Delete, "Delete ${template.name}")
-                    }
-                }
-            }
-        }
-        val recentFoods = state.recentFoods
-            .distinctBy { "${it.catalogId}:${it.name}:${it.servingGrams}" }
-            .take(5)
-        items(recentFoods, key = { "recent:${it.id}" }) { entry ->
-            Card(shape = RoundedCornerShape(8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(entry.name, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Recent | ${entry.calories} kcal",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = { app.saveFavoriteFood(entry) }) {
-                        Icon(Icons.Default.Star, "Favorite ${entry.name}")
-                    }
-                    IconButton(onClick = { app.logRecentFood(entry) }) {
-                        Icon(Icons.Default.Add, "Add ${entry.name}")
-                    }
-                }
-            }
-        }
-        MealType.entries.forEach { meal ->
-            val entries = state.food.filter { it.mealType == meal.name }
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionHeading(
-                        meal.name.lowercase().replaceFirstChar(Char::uppercase),
-                        Modifier.weight(1f)
-                    )
-                    if (entries.isNotEmpty()) {
-                        TextButton(onClick = { saveMealType = meal }) { Text("Save meal") }
-                    }
-                }
-            }
-            if (entries.isEmpty()) item { Text("Nothing logged", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(entries, key = { it.id }) { entry ->
-                FoodLogRow(
-                    entry,
-                    { showFood = entry },
-                    { app.duplicateFood(entry.id) },
-                    { app.saveFavoriteFood(entry) },
-                    { app.deleteFood(entry) }
-                )
-            }
-        }
-        if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
-    }
-}
-
-@Composable
-private fun FoodLogRow(
-    entry: FoodLogEntity,
-    edit: () -> Unit,
-    duplicate: () -> Unit,
-    favorite: () -> Unit,
-    delete: () -> Unit
-) {
-    var menu by remember { mutableStateOf(false) }
-    Card(shape = RoundedCornerShape(8.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(entry.name, fontWeight = FontWeight.SemiBold)
-                Text("${entry.servingGrams.roundToInt()} g | ${entry.calories} kcal")
-            }
-            Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Food actions") }
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem({ Text("Edit") }, { menu = false; edit() }, leadingIcon = { Icon(Icons.Default.Edit, null) })
-                    DropdownMenuItem({ Text("Duplicate") }, { menu = false; duplicate() }, leadingIcon = { Icon(Icons.Default.Add, null) })
-                    DropdownMenuItem({ Text("Add to favorites") }, { menu = false; favorite() }, leadingIcon = { Icon(Icons.Default.Star, null) })
-                    DropdownMenuItem({ Text("Delete") }, { menu = false; delete() }, leadingIcon = { Icon(Icons.Default.Delete, null) })
-                }
-            }
-        }
-    }
+    NutritionOverviewContent(
+        state = state,
+        foodSearchState = foodSearchState,
+        pendingDeletion = pendingDeletion,
+        onSearchFood = app::searchFood,
+        onClearFoodSearch = app::clearFoodSearch,
+        onSaveFood = app::saveFood,
+        onDuplicateFood = app::duplicateFood,
+        onLogRecentFood = app::logRecentFood,
+        onSaveFavoriteFood = app::saveFavoriteFood,
+        onSaveMealTemplate = app::saveMealTemplate,
+        onLogFoodTemplate = app::logFoodTemplate,
+        onRequestFoodDeletion = app::requestFoodDeletion,
+        onRequestTemplateDeletion = app::requestTemplateDeletion,
+        onUndoNutritionDeletion = app::undoNutritionDeletion,
+        onAddWater = app::addWater,
+        onSetQuickServingAndAddWater = app::setQuickServingAndAddWater,
+        onHydrationSettings = { hydrationSettings = true },
+        onWaterAmounts = { waterAmounts = true },
+        onCreateFood = { createFood = true },
+        onEditFood = { showFood = it },
+        onDraftFood = { draftFood = it },
+        onSaveMeal = { saveMealType = it },
+        waterFocusRequest = waterFocusRequest,
+        foodFocusRequest = foodFocusRequest
+    )
 }
 
 @Composable

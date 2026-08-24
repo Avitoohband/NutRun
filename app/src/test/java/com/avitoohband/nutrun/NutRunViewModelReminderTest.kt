@@ -427,6 +427,7 @@ class NutRunViewModelReminderTest {
         override val supplementReminderSettings = MutableStateFlow(settingsFor(initialAccount))
         override val recentFoods = MutableStateFlow<List<FoodLogEntity>>(emptyList())
         override val foodTemplates = MutableStateFlow<List<FoodTemplateEntity>>(emptyList())
+        override val nutritionTargets = MutableStateFlow<NutritionTargets?>(null)
         private val food = MutableStateFlow<List<FoodLogEntity>>(emptyList())
         private val water = MutableStateFlow<List<WaterLogEntity>>(emptyList())
         private val walkPoints = MutableStateFlow<List<WalkPointEntity>>(emptyList())

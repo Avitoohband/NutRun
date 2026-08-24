@@ -286,7 +286,8 @@ class ProductionFlowTest {
         }
         composeRule.activityRule.scenario.recreate()
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText("Nutrition").fetchSemanticsNodes().size >= 2
+            composeRule.onAllNodesWithTag("nutrition-macro-progress").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag("bottom-nav-nutrition").fetchSemanticsNodes().isNotEmpty()
         }
 
         composeRule.onNodeWithTag("bottom-nav-today").performClick()
