@@ -343,6 +343,8 @@ class NutRunViewModel internal constructor(
     val foodSearchState = MutableStateFlow<FoodSearchUiState>(FoodSearchUiState.Idle)
     val pendingNutritionDeletion = MutableStateFlow<PendingNutritionDeletion?>(null)
     val walkGpsState: StateFlow<WalkGpsState> = walkMonitor.state
+    val authenticationUiState = MutableStateFlow(AuthenticationUiState())
+    val accountDeletionState = MutableStateFlow(AccountDeletionUiState())
     val message = MutableStateFlow<String?>(null)
     lateinit var billingState: StateFlow<BillingUiState>
         private set
@@ -456,18 +458,46 @@ class NutRunViewModel internal constructor(
         }
     }
 
+    fun setAuthenticationMode(mode: AuthenticationMode) {
+        authenticationUiState.value = AuthenticationUiState(mode = mode)
+    }
+
+    fun clearAuthenticationFeedback() {
+        authenticationUiState.value = authenticationUiState.value.copy(
+            emailError = null,
+            passwordError = null,
+            message = null
+        )
+    }
+
     fun authenticate(email: String, password: String, createAccount: Boolean) {
+        if (authenticationUiState.value.busy) return
         if (!createAccount && canUseDemoAccount(BuildConfig.DEBUG, email, password)) {
             enterDemo()
             return
         }
-        if (!email.contains('@') || password.length < 6) {
-            message.value = "Enter a valid email and a password with at least 6 characters."
+        val mode = if (createAccount) AuthenticationMode.CREATE_ACCOUNT else AuthenticationMode.SIGN_IN
+        val (emailError, passwordError) = authenticationValidationErrors(email, password, mode)
+        if (emailError != null || passwordError != null) {
+            authenticationUiState.value = authenticationUiState.value.copy(
+                mode = mode,
+                emailError = emailError,
+                passwordError = passwordError,
+                message = null
+            )
             return
         }
         viewModelScope.launch {
+            authenticationUiState.value = authenticationUiState.value.copy(
+                mode = mode,
+                busy = true,
+                emailError = null,
+                passwordError = null,
+                message = null
+            )
             authenticationGateway.authenticate(email.trim(), password, createAccount)
                 .onSuccess {
+                    authenticationUiState.value = AuthenticationUiState()
                     preferences.signIn(
                         userId = it.userId,
                         email = it.email,
@@ -477,7 +507,45 @@ class NutRunViewModel internal constructor(
                     repository.claimLegacyData(it.userId, it.email)
                     repository.synchronize()
                 }
-                .onFailure { message.value = it.message ?: "Authentication failed." }
+                .onFailure {
+                    authenticationUiState.value = authenticationUiState.value.copy(
+                        busy = false,
+                        message = it.message ?: "Authentication failed."
+                    )
+                }
+        }
+    }
+
+    fun sendPasswordReset(email: String) {
+        if (authenticationUiState.value.busy) return
+        val emailError = validateAuthenticationEmail(email, forReset = true)
+        if (emailError != null) {
+            authenticationUiState.value = authenticationUiState.value.copy(
+                mode = AuthenticationMode.RESET_PASSWORD,
+                emailError = emailError
+            )
+            return
+        }
+        viewModelScope.launch {
+            authenticationUiState.value = authenticationUiState.value.copy(
+                mode = AuthenticationMode.RESET_PASSWORD,
+                busy = true,
+                emailError = null,
+                message = null
+            )
+            authenticationGateway.sendPasswordReset(email.trim())
+                .onSuccess {
+                    authenticationUiState.value = AuthenticationUiState(
+                        mode = AuthenticationMode.SIGN_IN,
+                        message = passwordResetConfirmationMessage()
+                    )
+                }
+                .onFailure {
+                    authenticationUiState.value = authenticationUiState.value.copy(
+                        busy = false,
+                        message = "Could not send reset email. Try again later."
+                    )
+                }
         }
     }
 
@@ -893,6 +961,7 @@ class NutRunViewModel internal constructor(
     fun signOut(): Job {
         clearSelectedWalk()
         clearFoodSearch()
+        authenticationUiState.value = AuthenticationUiState()
         return viewModelScope.launch {
             commitPendingNutritionDeletion()
             val userId = reminderRuntime.currentSession().authenticatedUserId
@@ -927,20 +996,30 @@ class NutRunViewModel internal constructor(
 
     fun deleteAccount() {
         viewModelScope.launch {
-            val userId = state.value.session.authenticatedUserId
-                ?: return@launch
+            val userId = state.value.session.authenticatedUserId ?: return@launch
+            accountDeletionState.value = AccountDeletionUiState(busy = true)
             if (isDemoAccount(userId)) {
                 repository.clearAccountData(userId)
                 preferences.clearAccount(userId)
+                accountDeletionState.value = AccountDeletionUiState()
                 return@launch
             }
             authenticationGateway.deleteAccount()
                 .onSuccess {
                     repository.clearAccountData(userId)
                     preferences.clearAccount(userId)
+                    accountDeletionState.value = AccountDeletionUiState()
                 }
-                .onFailure { message.value = it.message ?: "Account deletion failed." }
+                .onFailure {
+                    accountDeletionState.value = AccountDeletionUiState(
+                        error = it.message ?: "Account deletion failed."
+                    )
+                }
         }
+    }
+
+    fun clearAccountDeletionState() {
+        accountDeletionState.value = AccountDeletionUiState()
     }
 
     fun clearMessage() {

@@ -1,6 +1,7 @@
 package com.avitoohband.nutrun.auth
 
 import android.content.Context
+import android.util.Log
 import com.avitoohband.nutrun.BuildConfig
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
@@ -28,6 +29,7 @@ interface AuthenticationGateway {
         password: String,
         createAccount: Boolean
     ): Result<AuthenticatedAccount>
+    suspend fun sendPasswordReset(email: String): Result<Unit>
     suspend fun deleteAccount(): Result<Unit>
     fun signOut()
 }
@@ -100,6 +102,30 @@ class FirebaseAuthenticationGateway @Inject constructor(
 
     override fun signOut() {
         firebaseAuth()?.signOut()
+    }
+
+    override suspend fun sendPasswordReset(email: String): Result<Unit> {
+        val auth = firebaseAuth()
+        if (auth == null) {
+            return if (BuildConfig.DEBUG) Result.success(Unit)
+            else Result.failure(IllegalStateException("Password reset is not configured."))
+        }
+        return suspendCancellableCoroutine { continuation ->
+            auth.sendPasswordResetEmail(email.trim()).addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    continuation.resume(Result.success(Unit))
+                } else {
+                    if (BuildConfig.DEBUG) {
+                        Log.w("NutRunAuth", "Password reset failed", task.exception)
+                    }
+                    continuation.resume(
+                        Result.failure(
+                            task.exception ?: IllegalStateException("Could not send reset email.")
+                        )
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun bootstrapSession(

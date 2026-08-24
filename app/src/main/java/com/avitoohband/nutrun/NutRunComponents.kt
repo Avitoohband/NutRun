@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -194,5 +196,69 @@ fun NutRunLoadingState(
     ) {
         CircularProgressIndicator(modifier = Modifier.size(24.dp))
         Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+fun <T> NutRunChoiceRow(
+    title: String,
+    values: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelected: (T) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        values.chunked(2).forEach { rowValues ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rowValues.forEach { value ->
+                    FilterChip(
+                        selected = value == selected,
+                        onClick = { onSelected(value) },
+                        label = { Text(label(value), fontSize = MaterialTheme.typography.labelMedium.fontSize) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun NutRunSettingsRow(
+    title: String,
+    subtitle: String? = null,
+    value: String? = null,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String? = null
+) {
+    val taggedModifier = testTag?.let { modifier.testTag(it) } ?: modifier
+    Card(
+        modifier = taggedModifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(NutRunSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NutRunSpacing.md)
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                subtitle?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            value?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+        }
     }
 }

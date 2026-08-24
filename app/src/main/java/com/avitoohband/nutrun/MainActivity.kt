@@ -85,6 +85,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -235,34 +237,46 @@ fun NutRunRoot(
 ) {
     val state by app.state.collectAsStateWithLifecycle()
     val message by app.message.collectAsState()
+    val authState by app.authenticationUiState.collectAsStateWithLifecycle()
     var hydrationCelebration by remember {
         mutableStateOf<HydrationGoalCelebration?>(null)
     }
+    val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(app) {
         app.hydrationGoalCelebrations.collect {
             hydrationCelebration = it
+        }
+    }
+    LaunchedEffect(message) {
+        message?.let {
+            snackbarHostState.showSnackbar(it)
+            app.clearMessage()
         }
     }
     val dark = state.session.darkMode
 
     NutRunTheme(darkTheme = dark) {
         when {
-            state.session.authenticatedEmail == null -> AuthenticationScreen(
+            state.session.authenticatedEmail == null -> AuthenticationOverviewContent(
+                state = authState,
                 onAuthenticate = app::authenticate,
+                onSendPasswordReset = app::sendPasswordReset,
+                onSetMode = app::setAuthenticationMode,
+                onClearFeedback = app::clearAuthenticationFeedback,
                 onDemo = app::enterDemo
             )
-            state.profile == null -> OnboardingScreen(
+            state.profile == null -> OnboardingOverviewContent(
+                accountId = state.session.authenticatedUserId.orEmpty(),
                 email = state.session.authenticatedEmail.orEmpty(),
                 onSave = app::saveProfile
             )
-            else -> MainApp(app, training, state, navigationRequest, onNavigationConsumed)
-        }
-        message?.let {
-            AlertDialog(
-                onDismissRequest = app::clearMessage,
-                title = { Text("NutRun") },
-                text = { Text(it) },
-                confirmButton = { TextButton(onClick = app::clearMessage) { Text("OK") } }
+            else -> MainApp(
+                app,
+                training,
+                state,
+                navigationRequest,
+                onNavigationConsumed,
+                snackbarHostState = snackbarHostState
             )
         }
         hydrationCelebration?.let { celebration ->
@@ -310,211 +324,6 @@ internal fun HydrationGoalTrophyDialog(
 }
 
 @Composable
-private fun AuthenticationScreen(
-    onAuthenticate: (String, String, Boolean) -> Unit,
-    onDemo: () -> Unit
-) {
-    var email by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("NutRun", fontSize = 34.sp, fontWeight = FontWeight.Bold)
-        Text("Sign in to keep your training and health log together.")
-        Spacer(Modifier.height(24.dp))
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(if (BuildConfig.DEBUG) "Email or demo username" else "Email") },
-            singleLine = true
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation()
-        )
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { onAuthenticate(email, password, false) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Sign in") }
-        OutlinedButton(
-            onClick = { onAuthenticate(email, password, true) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Create account") }
-        if (BuildConfig.DEBUG) {
-            OutlinedButton(
-                onClick = onDemo,
-                modifier = Modifier.fillMaxWidth().testTag("demo-login")
-            ) { Text("Enter demo") }
-        }
-        Text(
-            "A 30-day ad-free trial starts when the account is first created. No payment details required.",
-            modifier = Modifier.padding(top = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 13.sp
-        )
-    }
-}
-
-@Composable
-private fun OnboardingScreen(email: String, onSave: (UserProfile) -> Unit) {
-    var birthDateEpoch by rememberSaveable { mutableLongStateOf(LocalDate.of(1995, 1, 1).toEpochDay()) }
-    var sex by rememberSaveable { mutableStateOf(BiologicalSex.MALE) }
-    var height by rememberSaveable { mutableStateOf("175") }
-    var weight by rememberSaveable { mutableStateOf("75") }
-    var activity by rememberSaveable { mutableStateOf(ActivityLevel.MODERATE) }
-    var goal by rememberSaveable { mutableStateOf(HealthGoal.MAINTAIN) }
-    var units by rememberSaveable { mutableStateOf(UnitSystem.METRIC) }
-    var target by rememberSaveable { mutableStateOf("") }
-    var error by rememberSaveable { mutableStateOf<String?>(null) }
-    val birthDate = LocalDate.ofEpochDay(birthDateEpoch)
-    val birthDateRange = FormValidationRules.birthDateRange()
-    val heightValidation = validateDecimalInput(height, FormValidationRules.heightRule(units == UnitSystem.METRIC))
-    val weightValidation = validateDecimalInput(weight, FormValidationRules.weightRule(units == UnitSystem.METRIC))
-    val targetValidation = validateDecimalInput(
-        target,
-        FormValidationRules.optionalCalorieTargetRule,
-        integerOnly = true
-    )
-    val heightCm = heightValidation.value?.let { convertHeightInputToCm(it, units == UnitSystem.METRIC) }
-    val weightKg = weightValidation.value?.let { convertWeightInputToKg(it, units == UnitSystem.METRIC) }
-    val estimate = if (heightCm != null && weightKg != null) {
-        runCatching {
-            calculateHealthEstimate(birthDate, sex, heightCm, weightKg, activity, goal)
-        }.getOrNull()
-    } else {
-        null
-    }
-
-    LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Text("Set up your profile", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("These details calculate your starting BMI and energy estimates.")
-        }
-        item {
-            ValidatedDateField(
-                value = birthDate,
-                onValueChange = { selected -> selected?.let { birthDateEpoch = it.toEpochDay() } },
-                label = "Birth date",
-                allowedRange = birthDateRange,
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "onboarding-birth-date"
-            )
-        }
-        item { ChoiceRow("Biological sex", BiologicalSex.entries, sex, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { sex = it } }
-        item {
-            ChoiceRow(
-                "Units",
-                UnitSystem.entries,
-                units,
-                { it.name.lowercase().replaceFirstChar(Char::uppercase) }
-            ) { selected ->
-                if (selected != units) {
-                    val currentHeightCm = heightValidation.value?.let {
-                        convertHeightInputToCm(it, units == UnitSystem.METRIC)
-                    }
-                    val currentWeightKg = weightValidation.value?.let {
-                        convertWeightInputToKg(it, units == UnitSystem.METRIC)
-                    }
-                    units = selected
-                    currentHeightCm?.let { height = formatHeightForUnits(it, selected == UnitSystem.METRIC) }
-                    currentWeightKg?.let { weight = formatWeightForUnits(it, selected == UnitSystem.METRIC) }
-                }
-            }
-        }
-        item {
-            ValidatedNumberField(
-                value = height,
-                onValueChange = { height = it },
-                rule = FormValidationRules.heightRule(units == UnitSystem.METRIC),
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "onboarding-height"
-            )
-        }
-        item {
-            ValidatedNumberField(
-                value = weight,
-                onValueChange = { weight = it },
-                rule = FormValidationRules.weightRule(units == UnitSystem.METRIC),
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "onboarding-weight"
-            )
-        }
-        item { ChoiceRow("Activity", ActivityLevel.entries, activity, { it.name.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase) }) { activity = it } }
-        item { ChoiceRow("Goal", HealthGoal.entries, goal, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { goal = it } }
-        item {
-            ValidatedNumberField(
-                value = target,
-                onValueChange = { target = it },
-                rule = FormValidationRules.optionalCalorieTargetRule,
-                modifier = Modifier.fillMaxWidth(),
-                integerOnly = true,
-                testTag = "onboarding-calorie-target"
-            )
-        }
-        error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-        item {
-            Button(
-                onClick = {
-                    val dateError = validateDateInRange(birthDate, birthDateRange, "Birth date", required = true)
-                    val firstError = dateError
-                        ?: heightValidation.error
-                        ?: weightValidation.error
-                        ?: targetValidation.error
-                    if (firstError != null) {
-                        error = firstError
-                        return@Button
-                    }
-                    error = null
-                    val resolvedHeightCm = convertHeightInputToCm(heightValidation.value!!, units == UnitSystem.METRIC)
-                    val resolvedWeightKg = convertWeightInputToKg(weightValidation.value!!, units == UnitSystem.METRIC)
-                    val resolvedEstimate = calculateHealthEstimate(
-                        birthDate,
-                        sex,
-                        resolvedHeightCm,
-                        resolvedWeightKg,
-                        activity,
-                        goal
-                    )
-                    onSave(
-                        UserProfile(
-                            email,
-                            birthDate,
-                            sex,
-                            resolvedHeightCm,
-                            resolvedWeightKg,
-                            activity,
-                            goal,
-                            units,
-                            targetValidation.value?.toInt() ?: resolvedEstimate.calorieTarget
-                        )
-                    )
-                },
-                modifier = Modifier.fillMaxWidth().testTag("finish-onboarding")
-            ) { Text("Finish setup") }
-        }
-        item {
-            Text(
-                "Estimates are general guidance and are not medical advice.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp
-            )
-        }
-    }
-}
-
-@Composable
 private fun <T> ChoiceRow(
     title: String,
     values: List<T>,
@@ -545,7 +354,8 @@ private fun MainApp(
     training: TrainingViewModel,
     state: NutRunUiState,
     navigationRequest: NavigationRequest?,
-    onNavigationConsumed: (Long) -> Unit
+    onNavigationConsumed: (Long) -> Unit,
+    snackbarHostState: SnackbarHostState
 ) {
     val navController = rememberNavController()
     var waterFocusRequest by rememberSaveable { mutableStateOf(0) }
@@ -583,6 +393,7 @@ private fun MainApp(
     var accountMenu by remember { mutableStateOf(false) }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -714,12 +525,42 @@ private fun MainApp(
                 )
             }
             composable("profile") {
-                ProfileScreen(
-                    app,
-                    state,
+                val billing by app.billingState.collectAsStateWithLifecycle()
+                val accountDeletionState by app.accountDeletionState.collectAsStateWithLifecycle()
+                val activity = LocalActivity.current
+                ProfileOverviewContent(
+                    profile = state.profile ?: return@composable,
+                    entitlementLabel = when (state.session.entitlement()) {
+                        EntitlementKind.TRIAL -> "${state.session.trialDaysRemaining()} trial days remaining"
+                        EntitlementKind.SUBSCRIBER -> "Ad-free subscriber"
+                        EntitlementKind.FREE_AD_SUPPORTED -> "Free plan with ads"
+                    },
+                    darkMode = state.session.darkMode,
+                    authenticatedUserId = state.session.authenticatedUserId,
+                    billing = billing,
+                    accountDeletionState = accountDeletionState,
+                    billingActionsEnabled = activity != null && billing.connected,
                     onBack = { navController.popBackStack() },
                     onEditHealth = { navController.navigate("edit-health") },
-                    onNotifications = { navController.navigate("notifications") }
+                    onNotifications = { navController.navigate("notifications") },
+                    onDarkModeChange = app::setDarkMode,
+                    onPurchaseMonthly = { activity?.let { app.purchase(it, BillingManager.MONTHLY) } },
+                    onPurchaseAnnual = { activity?.let { app.purchase(it, BillingManager.ANNUAL) } },
+                    onRestorePurchases = app::restorePurchases,
+                    onSignOut = app::signOut,
+                    onDeleteAccount = app::deleteAccount,
+                    onClearAccountDeletionState = app::clearAccountDeletionState,
+                    onDevToggleSubscription = if (
+                        BuildConfig.DEBUG && !isDemoAccount(state.session.authenticatedUserId)
+                    ) {
+                        {
+                            app.setSubscriberForDevelopment(
+                                state.session.entitlement() != EntitlementKind.SUBSCRIBER
+                            )
+                        }
+                    } else {
+                        null
+                    }
                 )
             }
             composable("edit-health") {
@@ -2095,103 +1936,6 @@ private fun WeightDialog(profile: UserProfile, onSave: (UserProfile) -> Unit, on
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-@Composable
-private fun ProfileScreen(
-    app: NutRunViewModel,
-    state: NutRunUiState,
-    onBack: () -> Unit,
-    onEditHealth: () -> Unit,
-    onNotifications: () -> Unit
-) {
-    var confirmDelete by remember { mutableStateOf(false) }
-    val profile = state.profile ?: return
-    val billing by app.billingState.collectAsStateWithLifecycle()
-    val activity = LocalActivity.current
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete account and data?") },
-            text = { Text("This permanently removes local logs. The configured backend is also responsible for deleting cloud records, routes, and MCP tokens.") },
-            confirmButton = { Button(onClick = app::deleteAccount) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
-        )
-    }
-    LazyColumn(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item { TextButton(onClick = onBack) { Text("Back") } }
-        item {
-            ActionCard(
-                profile.email,
-                when (state.session.entitlement()) {
-                    EntitlementKind.TRIAL -> "${state.session.trialDaysRemaining()} trial days remaining"
-                    EntitlementKind.SUBSCRIBER -> "Ad-free subscriber"
-                    EntitlementKind.FREE_AD_SUPPORTED -> "Free plan with ads"
-                },
-                Icons.Default.Person
-            )
-        }
-        item {
-            OutlinedButton(onClick = onEditHealth, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Edit, null)
-                Text("Edit health details")
-            }
-        }
-        item {
-            OutlinedButton(onClick = onNotifications, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.WaterDrop, null)
-                Text("Notification settings")
-            }
-        }
-        item {
-            Card(shape = RoundedCornerShape(8.dp)) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Dark theme", Modifier.weight(1f))
-                    Switch(state.session.darkMode, app::setDarkMode)
-                }
-            }
-        }
-        if (!isDemoAccount(state.session.authenticatedUserId)) item {
-            Card(shape = RoundedCornerShape(8.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("Ad-free subscription", fontWeight = FontWeight.Bold)
-                    billing.message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { activity?.let { app.purchase(it, BillingManager.MONTHLY) } },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = activity != null && billing.connected
-                    ) { Text("Monthly ad-free") }
-                    OutlinedButton(
-                        onClick = { activity?.let { app.purchase(it, BillingManager.ANNUAL) } },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = activity != null && billing.connected
-                    ) { Text("Annual ad-free") }
-                    TextButton(onClick = app::restorePurchases, modifier = Modifier.fillMaxWidth()) {
-                        Text("Restore purchases")
-                    }
-                }
-            }
-        }
-        if (BuildConfig.DEBUG && !isDemoAccount(state.session.authenticatedUserId)) item {
-            OutlinedButton(
-                onClick = { app.setSubscriberForDevelopment(state.session.entitlement() != EntitlementKind.SUBSCRIBER) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Toggle test subscription") }
-        }
-        item {
-            OutlinedButton(onClick = app::signOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
-        }
-        item {
-            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Delete, null)
-                Text("Delete account")
-            }
-        }
-    }
 }
 
 @Composable

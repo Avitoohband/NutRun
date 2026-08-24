@@ -93,17 +93,18 @@ class ProductionFlowTest {
 
     @Test
     fun invalidCredentialsCannotBypassRequiredSetup() {
-        composeRule.onNodeWithText("Email or demo username").performTextInput("not-an-email")
-        composeRule.onNodeWithText("Password").performTextInput("123")
-        composeRule.onNodeWithText("Sign in").performClick()
+        composeRule.onNodeWithTag("auth-email").performTextInput("not-an-email")
+        composeRule.onNodeWithTag("auth-password").performTextInput("123")
+        composeRule.onNodeWithTag("auth-sign-in").performClick()
 
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule
-                .onAllNodesWithText("Enter a valid email and a password with at least 6 characters.")
+                .onAllNodesWithText("Enter a valid email address.")
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
-        composeRule.onNodeWithText("Set up your profile").assertDoesNotExist()
+        composeRule.onNodeWithText("Password must be at least 6 characters.").assertIsDisplayed()
+        composeRule.onNodeWithTag("onboarding-screen").assertDoesNotExist()
     }
 
     @Test
@@ -168,7 +169,7 @@ class ProductionFlowTest {
         enterDemo()
         composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
         composeRule.onNodeWithText("Profile and settings").performClick()
-        composeRule.onNodeWithText("Edit health details").performClick()
+        composeRule.onNodeWithTag("profile-edit-health").performClick()
         composeRule.onNodeWithTag("edit-health-birth-date").assertIsDisplayed()
         composeRule.onNodeWithTag("edit-health-email").assertIsDisplayed()
         composeRule.onNodeWithTag("edit-health-birth-date-calendar").performClick()
@@ -180,7 +181,7 @@ class ProductionFlowTest {
         enterDemo()
         composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
         composeRule.onNodeWithText("Profile and settings").performClick()
-        composeRule.onNodeWithText("Edit health details").performClick()
+        composeRule.onNodeWithTag("profile-edit-health").performClick()
         composeRule.onNodeWithTag("edit-health-height").performTextClearance()
         composeRule.onNodeWithTag("edit-health-height").performTextInput("180")
         composeRule.onNodeWithTag("edit-health-back").performClick()
@@ -229,11 +230,15 @@ class ProductionFlowTest {
                 )
             }
 
+            composeRule.activityRule.scenario.recreate()
             composeRule.waitUntil(timeoutMillis = 10_000) {
                 composeRule.onAllNodesWithTag("bottom-nav-walk").fetchSemanticsNodes().isNotEmpty()
             }
             composeRule.onNodeWithTag("bottom-nav-walk").performClick()
-            composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                composeRule.onAllNodesWithText("Recorded walks").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.onAllNodesWithTag("walk-history-card").fetchSemanticsNodes().size == 2
             }
 
@@ -305,7 +310,7 @@ class ProductionFlowTest {
     fun todayOpensAllSupplementManagement() {
         enterDemo()
         cleanupTask5SupplementsFromToday()
-        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+        openManageSupplementsFromToday()
 
         composeRule.onNodeWithText("Manage supplements").assertIsDisplayed()
         composeRule.onNodeWithText("All supplements and their scheduled days").assertIsDisplayed()
@@ -327,9 +332,14 @@ class ProductionFlowTest {
         cleanupTask5SupplementsFromToday()
         composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
         composeRule.onNodeWithText("Profile and settings").performClick()
-        composeRule.onNodeWithText("Notification settings").performClick()
+        composeRule.onNodeWithTag("profile-notification-settings").performClick()
 
-        composeRule.onNodeWithText("Supplement reminders").performScrollTo().assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("notification-settings-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("notification-settings-list")
+            .performScrollToNode(hasText("Supplement reminders"))
+        composeRule.onNodeWithText("Supplement reminders").assertIsDisplayed()
         composeRule.onNodeWithTag("supplement-reminders-master").assertIsOff()
         // Task 12 collapses per-supplement controls when the master is off; enable it first.
         composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
@@ -398,11 +408,20 @@ class ProductionFlowTest {
             composeRule.onNodeWithTag("supplement-reminders-master").performClick().assertIsOn()
         }
         composeRule.onNodeWithTag("save-notification-settings").performClick()
-        composeRule.onNodeWithText("Notification settings").performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText("Loading supplement reminders").fetchSemanticsNodes().isEmpty()
+            composeRule.onAllNodesWithTag("profile-screen").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithTag("notification-settings-list").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText("Supplement reminders").performScrollTo().assertIsDisplayed()
+        if (composeRule.onAllNodesWithTag("profile-screen").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithTag("profile-notification-settings").performClick()
+        }
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("notification-settings-list").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText("Loading supplement reminders").fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithTag("notification-settings-list")
+            .performScrollToNode(hasText("Supplement reminders"))
+        composeRule.onNodeWithText("Supplement reminders").assertIsDisplayed()
         composeRule.onNodeWithTag("supplement-reminders-master").assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-enabled").assertIsOn()
         composeRule.onNodeWithTag("supplement-reminder-supplement-1-time")
@@ -479,7 +498,7 @@ class ProductionFlowTest {
         composeRule.onNodeWithTag("supplement-dialog-reminder-time").performTextInput("09:30")
         composeRule.onNodeWithTag("supplement-dialog-save").performClick()
 
-        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+        openManageSupplementsFromToday()
         composeRule.onNodeWithContentDescription("Edit Task 5 Magnesium").performClick()
         composeRule.onNodeWithTag("supplement-dialog-reminder-enabled")
             .performScrollTo()
@@ -502,8 +521,25 @@ class ProductionFlowTest {
         }
     }
 
+    private fun navigateToTodayDashboard() {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("bottom-nav-today").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("bottom-nav-today").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun openManageSupplementsFromToday() {
+        navigateToTodayDashboard()
+        composeRule.onNodeWithTag("today-list")
+            .performScrollToNode(hasTestTag("manage-supplements"))
+        composeRule.onNodeWithTag("manage-supplements").performClick()
+    }
+
     private fun cleanupTask5SupplementsFromToday() {
-        composeRule.onNodeWithTag("manage-supplements").performScrollTo().performClick()
+        openManageSupplementsFromToday()
         removeTask5SupplementsFromManagement()
         composeRule.onNodeWithContentDescription("Back").performClick()
     }
