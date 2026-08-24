@@ -1,6 +1,6 @@
 # NutRun UX/UI Tasks 10-19 Plan Index
 
-**Status:** Tasks 10–16 completed and validated on `main`; Task 17 completed; Tasks 18–19 planned.
+**Status:** Tasks 10–17 completed and validated on `main`; Task 18 completed; Task 19 planned.
 
 **Audit/spec:** [`../../plans/04-ux-ui-improvement-backlog.md`](../../plans/04-ux-ui-improvement-backlog.md)
 
@@ -20,7 +20,7 @@
 | 15 | [`Task 15 - Accessibility and Responsive Foundation`](2026-08-21-task-15-accessibility-responsive-foundation.md) | P1 | 3-5 days | Apply during Tasks 10-14; close after them | Completed and validated |
 | 16 | [`Task 16 - Progress Trends`](2026-08-21-task-16-progress-trends.md) | P2 | 5-8 days | Task 15 shared components | Completed and validated |
 | 17 | [`Task 17 - Nutrition Logging Refinement`](2026-08-21-task-17-nutrition-logging-refinement.md) | P2 | 4-6 days | Tasks 13 and 15 | Completed and validated |
-| 18 | [`Task 18 - Walk Recording Confidence`](2026-08-21-task-18-walk-recording-confidence.md) | P2 | 4-6 days | Task 15 shared components | Planned |
+| 18 | [`Task 18 - Walk Recording Confidence`](2026-08-21-task-18-walk-recording-confidence.md) | P2 | 4-6 days | Task 15 shared components | Completed and validated |
 | 19 | [`Task 19 - Auth, Profile, and Product Polish`](2026-08-21-task-19-auth-profile-product-polish.md) | P2 | 3-5 days | Tasks 13 and 15 | Planned |
 
 ## Dependency Rules

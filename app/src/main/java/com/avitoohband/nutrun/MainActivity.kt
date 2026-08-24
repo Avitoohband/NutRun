@@ -1454,25 +1454,10 @@ internal fun WaterAmountDialog(onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
 
 @Composable
 private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
-    val context = LocalContext.current
-    val active = state.activeWalk
     val points by appViewModel.routePoints.collectAsStateWithLifecycle()
     val selectedWalkId by appViewModel.selectedWalkId.collectAsStateWithLifecycle()
     val selectedWalkRoutePoints by appViewModel.selectedWalkRoutePoints.collectAsStateWithLifecycle()
-    var permissionDenied by remember { mutableStateOf(false) }
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val locationGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        if (locationGranted) {
-            sendWalkAction(
-                context,
-                WalkRecordingService.ACTION_START,
-                state.session.authenticatedUserId
-            )
-        }
-        else permissionDenied = true
-    }
+    val walkGpsState by appViewModel.walkGpsState.collectAsStateWithLifecycle()
 
     selectedWalkId?.let { id ->
         state.walks.firstOrNull { it.id == id }?.let { walk ->
@@ -1485,163 +1470,14 @@ private fun WalkScreen(appViewModel: NutRunViewModel, state: NutRunUiState) {
         }
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Text("Recorded walks", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            Text("Route tracking runs only after you press Start.")
-        }
-        item { RouteMap(points, testTag = "active-walk-route-map") }
-        active?.let { walk ->
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SummaryCard("%.2f".format(walk.distanceMeters / 1_000), "km", Modifier.weight(1f), Color(0xFFDDEFFC))
-                    SummaryCard(walk.steps?.toString() ?: "--", "steps", Modifier.weight(1f), Color(0xFFE3F3E8))
-                    SummaryCard((walk.accumulatedDurationMillis / 60_000).toString(), "minutes", Modifier.weight(1f), Color(0xFFFFE7DE))
-                }
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            sendWalkAction(
-                                context,
-                                if (walk.state == WalkState.PAUSED.name) WalkRecordingService.ACTION_RESUME
-                                else WalkRecordingService.ACTION_PAUSE,
-                                state.session.authenticatedUserId
-                            )
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(if (walk.state == WalkState.PAUSED.name) Icons.Default.PlayArrow else Icons.Default.Pause, null)
-                        Text(if (walk.state == WalkState.PAUSED.name) "Resume" else "Pause")
-                    }
-                    Button(
-                        onClick = {
-                            sendWalkAction(
-                                context,
-                                WalkRecordingService.ACTION_FINISH,
-                                state.session.authenticatedUserId
-                            )
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Stop, null)
-                        Text("Finish")
-                    }
-                }
-            }
-        } ?: item {
-            Button(
-                onClick = {
-                    val permissions = buildList {
-                        add(Manifest.permission.ACCESS_FINE_LOCATION)
-                        if (android.os.Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACTIVITY_RECOGNITION)
-                        if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                    if (
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        sendWalkAction(
-                            context,
-                            WalkRecordingService.ACTION_START,
-                            state.session.authenticatedUserId
-                        )
-                    }
-                    else permissionLauncher.launch(permissions.toTypedArray())
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.PlayArrow, null)
-                Text("Start walk")
-            }
-        }
-        if (permissionDenied) item {
-            Text("Location permission is required to record a route. Step count may be unavailable if activity permission or the sensor is missing.", color = MaterialTheme.colorScheme.error)
-        }
-        item { SectionHeading("History") }
-        items(state.walks.filter { it.state == WalkState.FINISHED.name }, key = { it.id }) { walk ->
-            ActionCard(
-                title = "%.2f km".format(walk.distanceMeters / 1_000),
-                subtitle = "${formatWalkDate(walk.startedAtMillis)} | " +
-                    "${formatWalkDuration(walk.accumulatedDurationMillis)} | " +
-                    formatWalkStepSummary(walk.steps),
-                icon = Icons.AutoMirrored.Filled.DirectionsRun,
-                onClick = { appViewModel.selectCompletedWalk(walk.id) },
-                testTag = "walk-history-card"
-            )
-        }
-    }
-}
-
-private fun sendWalkAction(context: Context, action: String, userId: String?) {
-    val intent = Intent(context, WalkRecordingService::class.java)
-        .setAction(action)
-        .putExtra(WalkRecordingService.EXTRA_USER_ID, userId)
-    ContextCompat.startForegroundService(context, intent)
-}
-
-@Composable
-private fun RouteMap(points: List<WalkPointEntity>, testTag: String? = null) {
-    val modifier = (testTag?.let(Modifier::testTag) ?: Modifier).semantics {
-        contentDescription = if (points.size > 1) {
-            "Saved route with ${points.size} points"
-        } else {
-            "No saved route"
-        }
-    }
-    Card(
-        modifier.fillMaxWidth().height(240.dp),
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        if (BuildConfig.MAPS_CONFIGURED) {
-            val cameraPositionState = rememberCameraPositionState()
-            val framing = walkRouteCameraFraming(points)
-            var mapLoaded by remember { mutableStateOf(false) }
-            var mapSize by remember { mutableStateOf(IntSize.Zero) }
-            LaunchedEffect(mapLoaded, mapSize, framing) {
-                if (!mapLoaded) return@LaunchedEffect
-                when (framing) {
-                    WalkRouteCameraFraming.None -> Unit
-                    is WalkRouteCameraFraming.Center -> cameraPositionState.move(
-                        CameraUpdateFactory.newLatLngZoom(
-                            LatLng(framing.latitude, framing.longitude),
-                            16f
-                        )
-                    )
-                    is WalkRouteCameraFraming.Bounds -> {
-                        if (mapSize.width <= 192 || mapSize.height <= 192) return@LaunchedEffect
-                        val bounds = LatLngBounds(
-                            LatLng(framing.south, framing.west),
-                            LatLng(framing.north, framing.east)
-                        )
-                        cameraPositionState.move(
-                            CameraUpdateFactory.newLatLngBounds(
-                                bounds,
-                                mapSize.width,
-                                mapSize.height,
-                                96
-                            )
-                        )
-                    }
-                }
-            }
-            GoogleMap(
-                modifier = Modifier.fillMaxSize().onSizeChanged { mapSize = it },
-                cameraPositionState = cameraPositionState,
-                onMapLoaded = { mapLoaded = true }
-            ) {
-                if (points.size > 1) {
-                    Polyline(points = points.map { LatLng(it.latitude, it.longitude) })
-                }
-            }
-        } else {
-            RouteFallback(points)
-        }
-    }
+    WalkOverviewContent(
+        state = state,
+        routePoints = points,
+        walkGpsState = walkGpsState,
+        onStartGpsMonitoring = appViewModel::startWalkGpsMonitoring,
+        onStopGpsMonitoring = appViewModel::stopWalkGpsMonitoring,
+        onSelectCompletedWalk = appViewModel::selectCompletedWalk
+    )
 }
 
 @Composable
@@ -1684,7 +1520,7 @@ private fun WalkDetailsScreen(
                 }
             }
         }
-        item { RouteMap(points, testTag = "walk-details-route-map") }
+        item { WalkRouteMap(points, testTag = "walk-details-route-map") }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SummaryCard(
@@ -1715,38 +1551,6 @@ private fun WalkDetailsScreen(
                     Modifier.weight(1f),
                     Color(0xFFF5E5D7)
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RouteFallback(points: List<WalkPointEntity>) {
-    Box(Modifier.fillMaxSize().background(Color(0xFFE9EEF1)), contentAlignment = Alignment.Center) {
-        if (points.size < 2) {
-            Text("Your route will appear here", color = Color(0xFF4F5B62))
-        } else {
-            Canvas(Modifier.fillMaxSize().padding(20.dp)) {
-                val minLat = points.minOf { it.latitude }
-                val maxLat = points.maxOf { it.latitude }
-                val minLon = points.minOf { it.longitude }
-                val maxLon = points.maxOf { it.longitude }
-                val latRange = (maxLat - minLat).takeIf { it > 0 } ?: 1.0
-                val lonRange = (maxLon - minLon).takeIf { it > 0 } ?: 1.0
-                points.zipWithNext().forEach { (a, b) ->
-                    drawLine(
-                        color = Color(0xFF0B6E69),
-                        start = Offset(
-                            ((a.longitude - minLon) / lonRange * size.width).toFloat(),
-                            (size.height - (a.latitude - minLat) / latRange * size.height).toFloat()
-                        ),
-                        end = Offset(
-                            ((b.longitude - minLon) / lonRange * size.width).toFloat(),
-                            (size.height - (b.latitude - minLat) / latRange * size.height).toFloat()
-                        ),
-                        strokeWidth = 7f
-                    )
-                }
             }
         }
     }

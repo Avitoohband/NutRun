@@ -27,6 +27,9 @@ import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.calculateHealthEstimate
 import com.avitoohband.nutrun.domain.crossedHydrationGoal
 import com.avitoohband.nutrun.health.NutRunHealthConnectManager
+import com.avitoohband.nutrun.walk.WalkGpsMonitor
+import com.avitoohband.nutrun.walk.WalkGpsState
+import com.avitoohband.nutrun.walk.WalkLocationMonitor
 import com.avitoohband.nutrun.reminders.HydrationScheduler
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
 import com.avitoohband.nutrun.reminders.ReminderSystem
@@ -59,6 +62,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -258,12 +262,21 @@ private class ProductionNutRunViewModelReminderRuntime(
 private fun productionNutRunViewModelScope(): CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+private class FallbackWalkLocationMonitor : WalkGpsMonitor {
+    private val _state = MutableStateFlow<WalkGpsState>(WalkGpsState.PermissionRequired)
+    override val state: StateFlow<WalkGpsState> = _state.asStateFlow()
+    override fun start() = Unit
+    override fun stop() = Unit
+}
+
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class NutRunViewModel internal constructor(
     private val reminderRuntime: NutRunViewModelReminderRuntime,
-    coroutineScope: CoroutineScope
+    coroutineScope: CoroutineScope,
+    walkLocationMonitor: WalkGpsMonitor? = null
 ) : ViewModel(coroutineScope) {
+    private val walkMonitor: WalkGpsMonitor = walkLocationMonitor ?: FallbackWalkLocationMonitor()
     private lateinit var repository: NutRunRepository
     private lateinit var preferences: AppPreferences
     private lateinit var foodSearchService: FoodSearchService
@@ -329,6 +342,7 @@ class NutRunViewModel internal constructor(
 
     val foodSearchState = MutableStateFlow<FoodSearchUiState>(FoodSearchUiState.Idle)
     val pendingNutritionDeletion = MutableStateFlow<PendingNutritionDeletion?>(null)
+    val walkGpsState: StateFlow<WalkGpsState> = walkMonitor.state
     val message = MutableStateFlow<String?>(null)
     lateinit var billingState: StateFlow<BillingUiState>
         private set
@@ -388,7 +402,8 @@ class NutRunViewModel internal constructor(
         supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator,
         billingManager: BillingManager,
         authenticationGateway: AuthenticationGateway,
-        healthConnectManager: NutRunHealthConnectManager
+        healthConnectManager: NutRunHealthConnectManager,
+        walkLocationMonitor: WalkLocationMonitor
     ) : this(
         ProductionNutRunViewModelReminderRuntime(
             repository,
@@ -399,7 +414,8 @@ class NutRunViewModel internal constructor(
             supplementReminderSchedulingCoordinator,
             authenticationGateway
         ),
-        productionNutRunViewModelScope()
+        productionNutRunViewModelScope(),
+        walkLocationMonitor
     ) {
         this.repository = repository
         this.preferences = preferences
@@ -899,6 +915,14 @@ class NutRunViewModel internal constructor(
 
     fun clearSelectedWalk() {
         _selectedWalkId.value = null
+    }
+
+    fun startWalkGpsMonitoring() {
+        walkMonitor.start()
+    }
+
+    fun stopWalkGpsMonitoring() {
+        walkMonitor.stop()
     }
 
     fun deleteAccount() {

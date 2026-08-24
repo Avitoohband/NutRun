@@ -83,6 +83,7 @@ class WalkRecordingService : Service(), SensorEventListener {
                 ACTION_PAUSE -> pauseSession()
                 ACTION_RESUME -> resumeSession()
                 ACTION_FINISH -> finishSession()
+                ACTION_DISCARD -> discardSession()
                 else -> restoreSession()
             }
         }
@@ -153,8 +154,16 @@ class WalkRecordingService : Service(), SensorEventListener {
     }
 
     private suspend fun finishSession() {
-        val userId = requestedUserId ?: return
-        val walk = dao.activeWalk(userId) ?: return
+        val userId = requestedUserId
+        if (userId == null) {
+            stopForegroundAndSelf()
+            return
+        }
+        val walk = dao.activeWalk(userId)
+        if (walk == null) {
+            stopForegroundAndSelf()
+            return
+        }
         val now = System.currentTimeMillis()
         val finished = walk.copy(
                 state = WalkState.FINISHED.name,
@@ -171,6 +180,26 @@ class WalkRecordingService : Service(), SensorEventListener {
         dao.updateWalk(finished)
         enqueueFinishedWalk(finished)
         currentSession = null
+        stopForegroundAndSelf()
+    }
+
+    private suspend fun discardSession() {
+        val userId = requestedUserId
+        if (userId == null) {
+            stopForegroundAndSelf()
+            return
+        }
+        val walk = dao.activeWalk(userId)
+        if (walk == null) {
+            stopForegroundAndSelf()
+            return
+        }
+        dao.discardActiveWalk(userId, walk.id)
+        currentSession = null
+        stopForegroundAndSelf()
+    }
+
+    private fun stopForegroundAndSelf() {
         locationClient.removeLocationUpdates(locationCallback)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -321,6 +350,7 @@ class WalkRecordingService : Service(), SensorEventListener {
         const val ACTION_PAUSE = "com.avitoohband.nutrun.walk.PAUSE"
         const val ACTION_RESUME = "com.avitoohband.nutrun.walk.RESUME"
         const val ACTION_FINISH = "com.avitoohband.nutrun.walk.FINISH"
+        const val ACTION_DISCARD = "com.avitoohband.nutrun.walk.DISCARD"
         const val EXTRA_USER_ID = "user_id"
         private const val CHANNEL_ID = "walk-recording"
         private const val NOTIFICATION_ID = 1_001

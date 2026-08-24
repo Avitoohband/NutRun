@@ -47,6 +47,22 @@ class WalkPresentationTest {
     }
 
     @Test
+    fun activeWalkElapsedMillisIncludesActiveSegment() {
+        val walk = WalkSessionEntity(
+            id = "walk-1",
+            userId = "user-1",
+            state = "ACTIVE",
+            startedAtMillis = 0L,
+            endedAtMillis = null,
+            accumulatedDurationMillis = 60_000L,
+            resumedAtMillis = 1_000L,
+            stepBaseline = null,
+            steps = null
+        )
+        assertEquals(90_000L, activeWalkElapsedMillis(walk, nowMillis = 31_000L))
+    }
+
+    @Test
     fun walkStepSummaryDistinguishesRecordedAndUnavailableSteps() {
         assertEquals("4500 steps", formatWalkStepSummary(4_500L))
         assertEquals("Steps unavailable", formatWalkStepSummary(null))

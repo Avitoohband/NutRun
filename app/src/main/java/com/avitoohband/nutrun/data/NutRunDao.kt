@@ -233,6 +233,22 @@ interface NutRunDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun saveWalkPoints(points: List<WalkPointEntity>)
 
+    @Query("DELETE FROM walk_points WHERE userId = :userId AND sessionId = :sessionId")
+    suspend fun deleteWalkPointsForSession(userId: String, sessionId: String)
+
+    @Query(
+        "DELETE FROM walk_sessions WHERE userId = :userId AND id = :sessionId AND state != 'FINISHED'"
+    )
+    suspend fun deleteUnfinishedWalkSession(userId: String, sessionId: String): Int
+
+    @Transaction
+    suspend fun discardActiveWalk(userId: String, sessionId: String): Boolean {
+        val session = walk(userId, sessionId) ?: return false
+        if (session.state == "FINISHED") return false
+        deleteWalkPointsForSession(userId, sessionId)
+        return deleteUnfinishedWalkSession(userId, sessionId) > 0
+    }
+
     @Query("SELECT * FROM training_state WHERE userId = :userId")
     fun observeTrainingState(userId: String): Flow<TrainingStateEntity?>
 

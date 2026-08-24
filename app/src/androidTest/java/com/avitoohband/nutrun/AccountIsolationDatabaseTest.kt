@@ -6,11 +6,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.avitoohband.nutrun.data.FoodLogEntity
 import com.avitoohband.nutrun.data.NutRunDatabase
 import com.avitoohband.nutrun.data.UserProfileEntity
+import com.avitoohband.nutrun.data.WalkPointEntity
+import com.avitoohband.nutrun.data.WalkSessionEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,6 +46,52 @@ class AccountIsolationDatabaseTest {
         assertNull(dao.profile("user-b"))
         assertEquals(1, dao.observeFood("user-a", "2026-07-23").first().size)
         assertEquals(0, dao.observeFood("user-b", "2026-07-23").first().size)
+    }
+
+    @Test
+    fun discardActiveWalkRemovesOnlyMatchingUnfinishedSessionAndPoints() = runBlocking {
+        val dao = database.dao()
+        dao.saveWalk(
+            WalkSessionEntity(
+                id = "walk-active",
+                userId = "user-a",
+                state = "ACTIVE",
+                startedAtMillis = 1L,
+                endedAtMillis = null,
+                resumedAtMillis = 1L,
+                stepBaseline = null,
+                steps = null
+            )
+        )
+        dao.saveWalkPoint(
+            WalkPointEntity(
+                id = "point-1",
+                userId = "user-a",
+                sessionId = "walk-active",
+                latitude = 32.0,
+                longitude = 34.0,
+                accuracyMeters = 5f,
+                recordedAtMillis = 1L
+            )
+        )
+        dao.saveWalk(
+            WalkSessionEntity(
+                id = "walk-finished",
+                userId = "user-a",
+                state = "FINISHED",
+                startedAtMillis = 2L,
+                endedAtMillis = 3L,
+                resumedAtMillis = null,
+                stepBaseline = null,
+                steps = 100L
+            )
+        )
+
+        assertTrue(dao.discardActiveWalk("user-a", "walk-active"))
+        assertNull(dao.walk("user-a", "walk-active"))
+        assertEquals(0, dao.walkPoints("user-a", "walk-active").size)
+        assertFalse(dao.discardActiveWalk("user-a", "walk-finished"))
+        assertFalse(dao.discardActiveWalk("user-b", "walk-active"))
     }
 
     private fun profile(userId: String, email: String) = UserProfileEntity(

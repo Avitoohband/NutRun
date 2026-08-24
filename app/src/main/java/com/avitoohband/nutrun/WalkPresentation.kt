@@ -10,6 +10,9 @@ import java.util.Locale
 private val walkDateFormatter = DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.US)
 private val walkTimeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
 
+fun activeWalkElapsedMillis(walk: WalkSessionEntity, nowMillis: Long): Long =
+    walk.accumulatedDurationMillis + (walk.resumedAtMillis?.let { nowMillis - it } ?: 0L)
+
 fun activeRouteSessionId(activeWalk: WalkSessionEntity?): String? = activeWalk?.id
 
 fun formatWalkDate(startedAtMillis: Long): String =

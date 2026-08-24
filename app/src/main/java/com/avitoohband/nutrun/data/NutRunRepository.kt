@@ -497,6 +497,11 @@ class NutRunRepository @Inject constructor(
     suspend fun waterTotal(date: LocalDate = LocalDate.now()): Int =
         dao.waterTotal(requireUserId(), date.toString())
 
+    suspend fun discardActiveWalk(userId: String, sessionId: String): Boolean =
+        withExpectedRepositoryAccount(userId, { requireUserId() }) { accountId ->
+            dao.discardActiveWalk(accountId, sessionId)
+        }
+
     suspend fun updateWalkState(state: WalkState) {
         val accountId = requireUserId()
         val walk = dao.activeWalk(accountId) ?: return
