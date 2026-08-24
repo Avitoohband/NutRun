@@ -108,6 +108,55 @@ class ProductionFlowTest {
     }
 
     @Test
+    fun demoAccountDoesNotShowTutorialWelcomePrompt() {
+        ensureSignedOut()
+        enterDemo()
+        composeRule.onNodeWithTag("tutorial-welcome-dialog").assertDoesNotExist()
+    }
+
+    @Test
+    fun demoProfileCanReplayTutorialFromHelp() {
+        ensureSignedOut()
+        enterDemo()
+        composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
+        composeRule.onNodeWithText("Profile and settings").performClick()
+        composeRule.onNodeWithTag("profile-list")
+            .performScrollToNode(hasTestTag("profile-run-tutorial"))
+        composeRule.onNodeWithTag("profile-run-tutorial").performClick()
+        composeRule.onNodeWithTag("tutorial-screen").assertIsDisplayed()
+        composeRule.onNodeWithText("Step 1 of 5").assertIsDisplayed()
+    }
+
+    @Test
+    fun tutorialWelcomePromptStartsTutorialForSignedInProfile() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val preferences = AppPreferences(context)
+        val dao = NutRunDatabase.getInstance(context).dao()
+        val userId = "tutorial-welcome-user"
+        runBlocking {
+            preferences.signOut()
+            preferences.clearAccount(userId)
+            dao.clearAccountData(userId)
+            dao.saveProfile(testTutorialProfile(userId))
+            preferences.signIn(
+                userId = userId,
+                email = "tutorial@example.com",
+                trialStartedAtMillis = System.currentTimeMillis(),
+                subscriber = false
+            )
+        }
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("tutorial-welcome-dialog").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("tutorial-welcome-start").performClick()
+        composeRule.onNodeWithTag("tutorial-screen").assertIsDisplayed()
+        composeRule.onNodeWithTag("tutorial-next").performClick()
+        composeRule.onNodeWithText("Training").assertIsDisplayed()
+        composeRule.onNodeWithTag("tutorial-done").assertDoesNotExist()
+    }
+
+    @Test
     fun demoShowsWeeklyScheduleAndSetLogger() {
         composeRule.onNodeWithTag("demo-login").performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
@@ -568,6 +617,21 @@ class ProductionFlowTest {
             composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()
         }
     }
+
+    private fun testTutorialProfile(userId: String) = UserProfileEntity(
+        id = "profile:$userId",
+        userId = userId,
+        email = "tutorial@example.com",
+        birthDate = "1990-01-01",
+        biologicalSex = "MALE",
+        heightCm = 180.0,
+        weightKg = 80.0,
+        activityLevel = "MODERATE",
+        goal = "MAINTAIN",
+        unitSystem = "METRIC",
+        calorieTarget = 2_400,
+        updatedAtMillis = System.currentTimeMillis()
+    )
 
     private fun testWalkHistoryProfile() = UserProfileEntity(
         id = "profile:$WALK_HISTORY_TEST_USER_ID",

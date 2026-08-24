@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -56,6 +57,7 @@ fun ProfileOverviewContent(
     onSignOut: () -> Unit,
     onDeleteAccount: () -> Unit,
     onClearAccountDeletionState: () -> Unit,
+    onRunTutorial: () -> Unit,
     onDevToggleSubscription: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -280,6 +282,18 @@ fun ProfileOverviewContent(
                         Text("Toggle test subscription")
                     }
                 }
+            }
+            item {
+                ProfileSectionHeading("Help", testTag = "profile-section-help")
+            }
+            item {
+                NutRunSettingsRow(
+                    title = "Run tutorial again",
+                    subtitle = "Replay the five-step NutRun overview",
+                    icon = Icons.Default.Help,
+                    onClick = onRunTutorial,
+                    testTag = "profile-run-tutorial"
+                )
             }
             item {
                 OutlinedButton(

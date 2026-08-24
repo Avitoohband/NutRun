@@ -45,7 +45,8 @@ class ProfileContentTest {
                     onRestorePurchases = {},
                     onSignOut = {},
                     onDeleteAccount = {},
-                    onClearAccountDeletionState = {}
+                    onClearAccountDeletionState = {},
+                    onRunTutorial = {}
                 )
             }
         }
@@ -57,6 +58,7 @@ class ProfileContentTest {
         composeRule.onNodeWithTag("profile-section-subscription").assertIsDisplayed()
         composeRule.onNodeWithTag("profile-section-data").assertIsDisplayed()
         composeRule.onNodeWithTag("profile-sign-out").assertIsDisplayed()
+        composeRule.onNodeWithTag("profile-section-help").assertIsDisplayed()
 
         composeRule.onNodeWithTag("profile-list")
             .performScrollToNode(hasTestTag("profile-delete-account"))
@@ -87,7 +89,8 @@ class ProfileContentTest {
                     onRestorePurchases = {},
                     onSignOut = {},
                     onDeleteAccount = {},
-                    onClearAccountDeletionState = {}
+                    onClearAccountDeletionState = {},
+                    onRunTutorial = {}
                 )
             }
         }
@@ -99,6 +102,40 @@ class ProfileContentTest {
             "Demo account data is removed from this device only. Cloud records are not involved."
         ).assertIsDisplayed()
         composeRule.onNodeWithTag("profile-section-subscription").assertDoesNotExist()
+    }
+
+    @Test
+    fun profileHelpSectionRunsTutorialAgain() {
+        var tutorialRequested = false
+        composeRule.setContent {
+            NutRunTheme {
+                ProfileOverviewContent(
+                    profile = testProfile(),
+                    entitlementLabel = "30 trial days remaining",
+                    darkMode = false,
+                    authenticatedUserId = "user-1",
+                    billing = BillingUiState(),
+                    accountDeletionState = AccountDeletionUiState(),
+                    billingActionsEnabled = false,
+                    onBack = {},
+                    onEditHealth = {},
+                    onNotifications = {},
+                    onDarkModeChange = {},
+                    onPurchaseMonthly = {},
+                    onPurchaseAnnual = {},
+                    onRestorePurchases = {},
+                    onSignOut = {},
+                    onDeleteAccount = {},
+                    onClearAccountDeletionState = {},
+                    onRunTutorial = { tutorialRequested = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("profile-list")
+            .performScrollToNode(hasTestTag("profile-run-tutorial"))
+        composeRule.onNodeWithTag("profile-run-tutorial").performClick()
+        org.junit.Assert.assertTrue(tutorialRequested)
     }
 
     private fun testProfile(): UserProfile = UserProfile(

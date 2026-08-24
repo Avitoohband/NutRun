@@ -109,6 +109,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import dagger.hilt.android.EntryPointAccessors
+import com.avitoohband.nutrun.ads.AdConsentEntryPoint
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
@@ -156,7 +158,9 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import com.avitoohband.nutrun.ads.AdConsentManager
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import java.time.LocalDate
 import java.time.DayOfWeek
 import kotlin.math.roundToInt
@@ -169,10 +173,13 @@ import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject lateinit var adConsentManager: AdConsentManager
+
     private var navigationRequest by mutableStateOf<NavigationRequest?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        adConsentManager.requestConsentAndInitializeAds(this)
         navigationRequest = intent.toNavigationRequest()
         setContent {
             NutRunRoot(
@@ -391,6 +398,25 @@ private fun MainApp(
     val entry by navController.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: "today"
     var accountMenu by remember { mutableStateOf(false) }
+    val shouldPromptTutorial = shouldShowTutorialWelcomePrompt(state.profile, state.session)
+    var tutorialWelcomeDismissed by rememberSaveable(state.session.authenticatedUserId) {
+        mutableStateOf(false)
+    }
+    val mainTabRoutes = setOf("today", "training", "nutrition", "walk", "progress")
+    if (shouldPromptTutorial && !tutorialWelcomeDismissed && route in mainTabRoutes) {
+        TutorialWelcomeDialog(
+            onStart = {
+                tutorialWelcomeDismissed = true
+                navController.navigate("tutorial") {
+                    launchSingleTop = true
+                }
+            },
+            onSkip = {
+                tutorialWelcomeDismissed = true
+                app.skipTutorial()
+            }
+        )
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -403,6 +429,7 @@ private fun MainApp(
                             "edit-health" -> "Health details"
                             "notifications" -> "Notifications"
                             "supplements" -> "Supplements"
+                            "tutorial" -> "Tutorial"
                             else -> "NutRun"
                         },
                         fontWeight = FontWeight.Bold
@@ -431,7 +458,7 @@ private fun MainApp(
             )
         },
         bottomBar = {
-            if (route !in setOf("profile", "edit-health", "notifications", "supplements")) {
+            if (route !in setOf("profile", "edit-health", "notifications", "supplements", "tutorial")) {
                 NavigationBar {
                     destinations.forEach { destination ->
                         NavigationBarItem(
@@ -524,6 +551,20 @@ private fun MainApp(
                     onBack = { navController.popBackStack() }
                 )
             }
+            composable("tutorial") {
+                TutorialOverviewContent(
+                    accountId = state.session.authenticatedUserId.orEmpty(),
+                    onComplete = {
+                        app.completeTutorial()
+                        navController.popBackStack()
+                    },
+                    onSkip = {
+                        app.skipTutorial()
+                        navController.popBackStack()
+                    },
+                    onBackFromTutorial = { navController.popBackStack() }
+                )
+            }
             composable("profile") {
                 val billing by app.billingState.collectAsStateWithLifecycle()
                 val accountDeletionState by app.accountDeletionState.collectAsStateWithLifecycle()
@@ -550,6 +591,11 @@ private fun MainApp(
                     onSignOut = app::signOut,
                     onDeleteAccount = app::deleteAccount,
                     onClearAccountDeletionState = app::clearAccountDeletionState,
+                    onRunTutorial = {
+                        navController.navigate("tutorial") {
+                            launchSingleTop = true
+                        }
+                    },
                     onDevToggleSubscription = if (
                         BuildConfig.DEBUG && !isDemoAccount(state.session.authenticatedUserId)
                     ) {
@@ -2968,6 +3014,14 @@ private fun SectionHeading(title: String, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun AdPlacement() {
+    val context = LocalContext.current
+    val consentManager = remember {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            AdConsentEntryPoint::class.java
+        ).adConsentManager()
+    }
+    if (!consentManager.canRequestAds()) return
     AndroidView(
         modifier = Modifier.fillMaxWidth().height(50.dp),
         factory = { context ->
