@@ -685,7 +685,28 @@ private fun MainApp(
                 NutritionScreen(app, state, waterFocusRequest, foodFocusRequest)
             }
             composable("walk") { WalkScreen(app, state) }
-            composable("progress") { ProgressScreen(app, state, training) }
+            composable("progress") {
+                ProgressScreen(
+                    app = app,
+                    state = state,
+                    training = training,
+                    onNavigateToTraining = {
+                        navController.navigate("training") {
+                            launchSingleTop = true
+                        }
+                    },
+                    onNavigateToWalk = {
+                        navController.navigate("walk") {
+                            launchSingleTop = true
+                        }
+                    },
+                    onNavigateToNutrition = {
+                        navController.navigate("nutrition") {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
             composable("supplements") {
                 SupplementsScreen(
                     training = training,
@@ -1929,7 +1950,10 @@ private fun RouteFallback(points: List<WalkPointEntity>) {
 private fun ProgressScreen(
     app: NutRunViewModel,
     state: NutRunUiState,
-    training: TrainingViewModel
+    training: TrainingViewModel,
+    onNavigateToTraining: () -> Unit,
+    onNavigateToWalk: () -> Unit,
+    onNavigateToNutrition: () -> Unit
 ) {
     var editWeight by remember { mutableStateOf(false) }
     var selectedWorkoutId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1944,7 +1968,6 @@ private fun ProgressScreen(
         }
     }
     val profile = state.profile ?: return
-    val estimate = state.healthEstimate ?: return
     training.workoutHistory
         .firstOrNull { it.id == selectedWorkoutId }
         ?.let { workout ->
@@ -1984,152 +2007,21 @@ private fun ProgressScreen(
             }
         )
     }
-    LazyColumn(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item { Text("Progress", fontSize = 26.sp, fontWeight = FontWeight.Bold) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryCard("%.1f".format(estimate.bmi), "BMI", Modifier.weight(1f), Color(0xFFE3F3E8))
-                SummaryCard("${estimate.bmrKcal}", "BMR kcal", Modifier.weight(1f), Color(0xFFDDEFFC))
-                SummaryCard("${estimate.tdeeKcal}", "TDEE kcal", Modifier.weight(1f), Color(0xFFFFE7DE))
-            }
-        }
-        item {
-            Text("General guidance only, not medical advice.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-        }
-        item { SectionHeading("Health Connect") }
-        item {
-            Card(shape = RoundedCornerShape(8.dp)) {
-                Column(
-                    Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        when {
-                            !healthConnect.available -> "Health Connect is unavailable on this device."
-                            healthConnect.permissionGranted -> "Connected"
-                            else -> "Share only the health records you approve."
-                        },
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    if (healthConnect.importedSteps > 0) {
-                        Text("${healthConnect.importedSteps} steps imported today")
-                    }
-                    healthConnect.lastSyncMessage?.let {
-                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (healthConnect.busy) {
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                    }
-                    Button(
-                        onClick = {
-                            if (healthConnect.permissionGranted) {
-                                app.synchronizeHealthConnect(training.workoutHistory)
-                            } else {
-                                healthPermissionLauncher.launch(app.healthConnectPermissions)
-                            }
-                        },
-                        enabled = healthConnect.available && !healthConnect.busy,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (healthConnect.permissionGranted) "Sync Health Connect" else "Connect Health Connect")
-                    }
-                }
-            }
-        }
-        item {
-            SectionHeading("Training overview", Modifier.testTag("training-overview"))
-        }
-        item {
-            val week = trainingWeek()
-            val planned = week.sumOf { training.sessionsForDate(it).size }
-            val completed = training.workoutHistory.count { it.performedOn in week.first()..week.last() }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryCard(
-                    "$completed / $planned",
-                    "workouts this week",
-                    Modifier.weight(1f),
-                    Color(0xFFE3F3E8)
-                )
-                SummaryCard(
-                    "${training.weeklyVolume().roundToInt()} kg",
-                    "weekly volume",
-                    Modifier.weight(1f),
-                    Color(0xFFDDEFFC)
-                )
-            }
-        }
-        item {
-            SectionHeading("Recent training", Modifier.testTag("recent-training-heading"))
-        }
-        val structuredHistory = training.workoutHistory.take(10)
-        val legacyHistory = recentTrainingHistory(training.history).take(10)
-        if (structuredHistory.isEmpty() && legacyHistory.isEmpty()) {
-            item {
-                Text(
-                    "Completed workouts will appear here.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else if (structuredHistory.isNotEmpty()) {
-            items(structuredHistory, key = WorkoutRecord::id) { workout ->
-                ActionCard(
-                    workout.sessionName,
-                    "${formatToday(workout.performedOn)} | " +
-                        "${workout.completedLogicalTargets}/${workout.totalLogicalTargets} targets | " +
-                        "${workout.totalVolumeKg.roundToInt()} kg volume",
-                    Icons.Default.FitnessCenter,
-                    onClick = { selectedWorkoutId = workout.id },
-                    testTag = "recent-workout-card"
-                )
-            }
-        } else {
-            items(legacyHistory) { entry ->
-                ActionCard(
-                    entry,
-                    "Workout completed",
-                    Icons.Default.FitnessCenter,
-                    onClick = { selectedLegacyWorkout = entry }
-                )
-            }
-        }
-        val records = training.personalRecords().take(8)
-        if (records.isNotEmpty()) {
-            item { SectionHeading("Personal records") }
-            items(records, key = ExerciseRecord::exerciseId) { record ->
-                val exercise = training.exerciseLibrary.firstOrNull { it.id == record.exerciseId }
-                ActionCard(
-                    exercise?.name ?: record.exerciseId,
-                    "Best ${displayWeight(record.bestWeightKg, training.usesMetricUnits)} | " +
-                        "Estimated 1RM ${displayWeight(record.estimatedOneRepMaxKg, training.usesMetricUnits)}",
-                    Icons.Default.FitnessCenter
-                )
-            }
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SectionHeading("Weight history", Modifier.weight(1f))
-                TextButton(onClick = { editWeight = true }) { Text("Add weight") }
-            }
-        }
-        items(state.weights.take(12), key = { it.id }) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Text(java.time.Instant.ofEpochMilli(it.recordedAtMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString(), Modifier.weight(1f))
-                Text(displayWeight(it.weightKg, profile.unitSystem == UnitSystem.METRIC), fontWeight = FontWeight.SemiBold)
-            }
-        }
-        item { SectionHeading("Walking") }
-        item {
-            ActionCard(
-                "${state.walks.count { it.state == WalkState.FINISHED.name }} completed walks",
-                "%.1f km total".format(state.walks.sumOf { it.distanceMeters } / 1_000),
-                Icons.AutoMirrored.Filled.DirectionsRun
-            )
-        }
-        if (state.session.entitlement() == EntitlementKind.FREE_AD_SUPPORTED) item { AdPlacement() }
-    }
+    ProgressOverviewContent(
+        state = state,
+        training = training,
+        healthConnect = healthConnect,
+        onWorkoutClick = { selectedWorkoutId = it },
+        onLegacyWorkoutClick = { selectedLegacyWorkout = it },
+        onAddWeight = { editWeight = true },
+        onNavigateToTraining = onNavigateToTraining,
+        onNavigateToWalk = onNavigateToWalk,
+        onNavigateToNutrition = onNavigateToNutrition,
+        onConnectHealthConnect = {
+            healthPermissionLauncher.launch(app.healthConnectPermissions)
+        },
+        onSyncHealthConnect = { app.synchronizeHealthConnect(training.workoutHistory) }
+    )
 }
 
 @Composable

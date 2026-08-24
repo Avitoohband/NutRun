@@ -1,10 +1,12 @@
 # NutRun UX/UI Tasks 10-19 Plan Index
 
-**Status:** Tasks 10, 11, and 12 completed and validated; Task 13 is next; Tasks 14-19 planned.
+**Status:** Tasks 10–15 completed and validated on `main`; Task 16 completed; Tasks 17–19 planned.
 
 **Audit/spec:** [`../../plans/04-ux-ui-improvement-backlog.md`](../../plans/04-ux-ui-improvement-backlog.md)
 
 **Execution handover:** [`../../handovers/2026-08-21-ux-ui-tasks-10-19-handover.md`](../../handovers/2026-08-21-ux-ui-tasks-10-19-handover.md)
+
+**Future ideas:** [`../../future/product-backlog-notes.md`](../../future/product-backlog-notes.md)
 
 ## Plans
 
@@ -13,10 +15,10 @@
 | 10 | [`Task 10 - Active Workout Focus Mode`](2026-08-21-task-10-active-workout-focus-mode.md) | P0 | 4-6 days | Tasks 1-9 baseline | Completed and validated |
 | 11 | [`Task 11 - Training Information Architecture`](2026-08-21-task-11-training-information-architecture.md) | P0 | 5-7 days | Task 10 active-workout extraction | Completed and validated |
 | 12 | [`Task 12 - Reminder Settings and Time Controls`](2026-08-21-task-12-reminder-settings-time-controls.md) | P1 | 2-3 days | Tasks 1-9 baseline | Completed and validated |
-| 13 | [`Task 13 - Form Components and Validation`](2026-08-21-task-13-form-components-validation.md) | P1 | 3-4 days | Task 12 may reuse time-input conventions | Planned |
-| 14 | [`Task 14 - Today Dashboard`](2026-08-21-task-14-today-dashboard.md) | P1 | 2-3 days | Stable navigation from Tasks 10-13 | Planned |
-| 15 | [`Task 15 - Accessibility and Responsive Foundation`](2026-08-21-task-15-accessibility-responsive-foundation.md) | P1 | 3-5 days | Apply during Tasks 10-14; close after them | Planned |
-| 16 | [`Task 16 - Progress Trends`](2026-08-21-task-16-progress-trends.md) | P2 | 5-8 days | Task 15 shared components | Planned |
+| 13 | [`Task 13 - Form Components and Validation`](2026-08-21-task-13-form-components-validation.md) | P1 | 3-4 days | Task 12 may reuse time-input conventions | Completed and validated |
+| 14 | [`Task 14 - Today Dashboard`](2026-08-21-task-14-today-dashboard.md) | P1 | 2-3 days | Stable navigation from Tasks 10-13 | Completed and validated |
+| 15 | [`Task 15 - Accessibility and Responsive Foundation`](2026-08-21-task-15-accessibility-responsive-foundation.md) | P1 | 3-5 days | Apply during Tasks 10-14; close after them | Completed and validated |
+| 16 | [`Task 16 - Progress Trends`](2026-08-21-task-16-progress-trends.md) | P2 | 5-8 days | Task 15 shared components | Completed and validated |
 | 17 | [`Task 17 - Nutrition Logging Refinement`](2026-08-21-task-17-nutrition-logging-refinement.md) | P2 | 4-6 days | Tasks 13 and 15 | Planned |
 | 18 | [`Task 18 - Walk Recording Confidence`](2026-08-21-task-18-walk-recording-confidence.md) | P2 | 4-6 days | Task 15 shared components | Planned |
 | 19 | [`Task 19 - Auth, Profile, and Product Polish`](2026-08-21-task-19-auth-profile-product-polish.md) | P2 | 3-5 days | Tasks 13 and 15 | Planned |

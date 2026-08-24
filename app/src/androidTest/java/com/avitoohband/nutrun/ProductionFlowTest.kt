@@ -140,9 +140,13 @@ class ProductionFlowTest {
         composeRule.onNodeWithTag("finish-anyway").performClick()
         composeRule.onNodeWithText("Done").performClick()
         composeRule.onNodeWithTag("bottom-nav-progress").performClick()
-        composeRule.onNodeWithTag("recent-training-heading").performScrollTo()
+        composeRule.onNodeWithTag("progress-list").performScrollToNode(
+            hasTestTag("recent-training-heading")
+        )
+        composeRule.onNodeWithTag("progress-list").performScrollToNode(
+            hasTestTag("recent-workout-card")
+        )
         composeRule.onAllNodesWithTag("recent-workout-card")[0]
-            .performScrollTo()
             .performClick()
         composeRule.onNodeWithTag("workout-details-heading").assertIsDisplayed()
         composeRule.onNodeWithText("Exercises").assertIsDisplayed()
@@ -189,9 +193,13 @@ class ProductionFlowTest {
     fun editWorkoutHistoryUsesValidatedDateField() {
         enterDemo()
         composeRule.onNodeWithTag("bottom-nav-progress").performClick()
-        composeRule.onNodeWithTag("recent-training-heading").performScrollTo()
+        composeRule.onNodeWithTag("progress-list").performScrollToNode(
+            hasTestTag("recent-training-heading")
+        )
+        composeRule.onNodeWithTag("progress-list").performScrollToNode(
+            hasTestTag("recent-workout-card")
+        )
         composeRule.onAllNodesWithTag("recent-workout-card")[0]
-            .performScrollTo()
             .performClick()
         composeRule.onNodeWithTag("edit-workout-history").performClick()
         composeRule.onNodeWithTag("edit-workout-date").assertIsDisplayed()

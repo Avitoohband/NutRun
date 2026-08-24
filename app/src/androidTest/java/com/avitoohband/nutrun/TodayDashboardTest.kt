@@ -145,7 +145,7 @@ class TodayDashboardTest {
             dose = "1 capsule",
             schedule = SupplementSchedule(
                 type = RecurrenceType.WEEKDAYS,
-                weekdays = setOf(DayOfWeek.MONDAY)
+                weekdays = setOf(DayOfWeek.TUESDAY)
             ),
             reminderEnabled = false,
             reminderMinute = 8 * 60
