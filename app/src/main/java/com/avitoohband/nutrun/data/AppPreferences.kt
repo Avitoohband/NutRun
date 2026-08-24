@@ -3,6 +3,7 @@ package com.avitoohband.nutrun.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -23,7 +24,9 @@ data class SessionPreferences(
     val authenticatedEmail: String? = null,
     val trialStartedAtMillis: Long? = null,
     val subscriber: Boolean = false,
-    val darkMode: Boolean = false
+    val darkMode: Boolean = false,
+    val tutorialAcknowledgedVersion: Int = 0,
+    val tutorialCompletedAtMillis: Long? = null
 ) {
     fun entitlement(nowMillis: Long = System.currentTimeMillis()): EntitlementKind {
         if (subscriber) return EntitlementKind.SUBSCRIBER
@@ -53,6 +56,10 @@ class AppPreferences @Inject constructor(
         fun subscriber(userId: String) = booleanPreferencesKey("account_${userId}_subscriber")
         fun reminderRecoverySystems(userId: String) = stringPreferencesKey("account_${userId}_reminder_recovery")
         fun reminderRecoveryClosing(userId: String) = booleanPreferencesKey("account_${userId}_reminder_recovery_closing")
+        fun tutorialAcknowledgedVersion(userId: String) =
+            intPreferencesKey("account_${userId}_tutorial_ack_version")
+        fun tutorialCompletedAt(userId: String) =
+            longPreferencesKey("account_${userId}_tutorial_completed_at")
     }
 
     val session: Flow<SessionPreferences> = context.dataStore.data.map { values ->
@@ -62,7 +69,11 @@ class AppPreferences @Inject constructor(
             authenticatedEmail = userId?.let { values[Keys.email(it)] },
             trialStartedAtMillis = userId?.let { values[Keys.trialStartedAt(it)] },
             subscriber = userId?.let { values[Keys.subscriber(it)] } ?: false,
-            darkMode = values[Keys.darkMode] ?: false
+            darkMode = values[Keys.darkMode] ?: false,
+            tutorialAcknowledgedVersion = userId?.let {
+                values[Keys.tutorialAcknowledgedVersion(it)] ?: 0
+            } ?: 0,
+            tutorialCompletedAtMillis = userId?.let { values[Keys.tutorialCompletedAt(it)] }
         )
     }
 
@@ -94,6 +105,21 @@ class AppPreferences @Inject constructor(
         context.dataStore.edit { it[Keys.subscriber(userId)] = enabled }
     }
 
+    suspend fun acknowledgeTutorial(
+        userId: String,
+        version: Int,
+        completedAtMillis: Long? = null
+    ) {
+        context.dataStore.edit { values ->
+            values[Keys.tutorialAcknowledgedVersion(userId)] = version
+            if (completedAtMillis != null) {
+                values[Keys.tutorialCompletedAt(userId)] = completedAtMillis
+            } else {
+                values.remove(Keys.tutorialCompletedAt(userId))
+            }
+        }
+    }
+
     suspend fun clearAccount(userId: String) {
         context.dataStore.edit { values ->
             values.remove(Keys.email(userId))
@@ -101,6 +127,8 @@ class AppPreferences @Inject constructor(
             values.remove(Keys.subscriber(userId))
             values.remove(Keys.reminderRecoverySystems(userId))
             values.remove(Keys.reminderRecoveryClosing(userId))
+            values.remove(Keys.tutorialAcknowledgedVersion(userId))
+            values.remove(Keys.tutorialCompletedAt(userId))
             if (values[Keys.currentUserId] == userId) values.remove(Keys.currentUserId)
         }
     }

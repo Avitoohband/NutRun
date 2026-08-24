@@ -573,6 +573,36 @@ class NutRunViewModel internal constructor(
         }
     }
 
+    fun skipTutorial() {
+        viewModelScope.launch {
+            val userId = state.value.session.authenticatedUserId ?: return@launch
+            runCatching {
+                preferences.acknowledgeTutorial(
+                    userId = userId,
+                    version = CURRENT_TUTORIAL_VERSION,
+                    completedAtMillis = null
+                )
+            }.onFailure {
+                message.value = it.message ?: "Could not save tutorial preference."
+            }
+        }
+    }
+
+    fun completeTutorial() {
+        viewModelScope.launch {
+            val userId = state.value.session.authenticatedUserId ?: return@launch
+            runCatching {
+                preferences.acknowledgeTutorial(
+                    userId = userId,
+                    version = CURRENT_TUTORIAL_VERSION,
+                    completedAtMillis = System.currentTimeMillis()
+                )
+            }.onFailure {
+                message.value = it.message ?: "Could not save tutorial preference."
+            }
+        }
+    }
+
     fun refreshHealthConnectStatus() {
         viewModelScope.launch {
             val available = healthConnectManager.isAvailable()
