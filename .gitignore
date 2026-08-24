@@ -12,3 +12,5 @@ keystore.properties
 *.jks
 *.keystore
 .worktrees/
+hs_err_pid*.log
+replay_pid*.log

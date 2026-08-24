@@ -2,19 +2,11 @@
 
 ## Current Status
 
-Tasks 10 and 11 are implemented and validated. Task 10 is pushed on `main`; Task 11 is complete on its feature branch and ready for integration. Tasks 12-19 remain planned.
+Tasks 10–19 are implemented, validated, and pushed on `main` at `bc1e7ce` (2026-08-24). Customer acceptance issue #5 remains open and must not be closed as part of Tasks 10–19 engineering work.
 
-Task 10 starts from `2b0189d52c5d5a32509e0b11c482db68de998d1d` on `origin/main`. Its implementation was developed on:
+Next engineering milestone: Task 20 first-run and replayable tutorial, then stabilization, production readiness, and internal Play Store release candidate.
 
-```text
-Worktree: C:\Users\Avi_OP_PC\Documents\FitnessApp\.issue-2-worktree
-Branch: codex/task-10-active-workout-focus
-Upstream: origin/main
-```
-
-Task 10 is integrated into `main` and pushed to `origin/main` after the validation recorded below. Inspect `git status --short --branch` and confirm local and remote heads match before resuming.
-
-Customer acceptance issue #5 remains open and must not be closed as part of Tasks 10-19 engineering work.
+Task 10 starts from `2b0189d52c5d5a32509e0b11c482db68de998d1d` on `origin/main`.
 
 ## Required Reading
 
@@ -151,7 +143,46 @@ Retained limitations:
 
 Task 12 complete: Reminder Settings and Time Controls merged to `origin/main` at `7d2c42a` (PR #9, 2026-08-23). Live handover: [`2026-08-22-task-12-live-handover.md`](2026-08-22-task-12-live-handover.md).
 
-Next safe task: Task 13, Form Components and Validation. Await Avi approval before production edits.
+## Tasks 13–19 Completion (main through `bc1e7ce`)
+
+| Task | Head commit | Notes |
+| --- | --- | --- |
+| 13 Form components | `8eb48a2` | Validated date/number inputs; `e7973ff` base |
+| 14 Today dashboard | `693dfb9` | Actionable metric cards |
+| 15 Accessibility foundation | `5fd0d9f` | `NutRunScreen`, shared components |
+| 16 Progress trends | `b63dba2` | Charts, drill-down, `ProgressContent` |
+| 17 Nutrition refinement | `22ef48a` | Room v6→7 nutrition targets migration |
+| 18 Walk confidence | `04deab4` | GPS readiness, discard, walk content extraction |
+| 19 Auth/profile polish | `bc1e7ce` | Auth/onboarding/profile extraction, snackbar feedback, `assembleRelease` |
+
+### Task 19 validation (2026-08-24)
+
+- Device: Pixel 10 AVD (Android 17), `emulator-5554`.
+- `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`: passed (2026-08-24 tutorial gate).
+- `assembleRelease` / `bundleRelease`: passed with production Gradle properties supplied at build time (unsigned without local `keystore.properties`).
+- Tutorial-focused connected tests passed via `adb instrument`; full `connectedDebugAndroidTest` suite running on Pixel 10 AVD (prior baseline: 106/107 with one emulator timeout flake at Task 19).
+
+### Deferred after Task 19
+
+- ~~First-run and replayable tutorial (Task 20).~~ Completed 2026-08-24.
+- Physical-device regression matrix and customer acceptance issue #5 sign-off (Task 21 — checklist prepared).
+- ~~Production Maps/Firebase/AdMob credentials validation, UMP consent, privacy policy, Play Console assets (Task 22).~~ Engineering scaffolding complete; production secrets remain operator-supplied.
+- ~~Signed internal-track release candidate (Task 23).~~ Release bundle builds with Gradle properties; Play upload awaits signing keystore and acceptance.
+
+## Task 20 — Tutorial (2026-08-24)
+
+- Versioned welcome prompt, five-page tutorial, Profile Help replay, account-scoped DataStore persistence.
+- Validation: [`task-20-tutorial-validation.md`](../../testing/task-20-tutorial-validation.md).
+- Gate: `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest`, `assembleRelease` (with production Gradle properties), tutorial-focused connected tests green on Pixel 10 AVD.
+
+## Tasks 21–23 — Stabilization and release (2026-08-24)
+
+- Task 21 acceptance checklist: [`task-21-stabilization-acceptance.md`](../../testing/task-21-stabilization-acceptance.md). Issue #5 remains open for customer closure.
+- Task 22: release Gradle property validation, UMP `AdConsentManager`, release signing hook, privacy/terms docs, production-services update.
+- Task 23: `versionCode` 2 / `0.2.0`, `bundleRelease` produces `app-release.aab` when properties set; see [`internal-play-store-rc.md`](../../release/internal-play-store-rc.md).
+
+Next safe task: customer acceptance on physical device and Play Console upload with production credentials.
+
 
 ## Execution Order
 

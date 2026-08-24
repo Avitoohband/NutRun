@@ -70,4 +70,4 @@ Unsafe parallel work:
 
 ## Next Task
 
-Tasks 10, 11, and 12 are complete. Task 13 is next and must preserve canonical units, existing repository operations, and the validation conventions established by Task 12 time inputs.
+Tasks 10–20 and release-readiness scaffolding are on `main` after the tutorial/release roadmap (2026-08-24). Remaining operator work: physical-device regression (Task 21), production credential injection, signed `bundleRelease` upload to Play internal testing, and customer acceptance for issue #5.
