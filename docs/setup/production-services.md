@@ -16,6 +16,14 @@ ADMOB_APP_ID=ca-app-pub-your-production-app-id
 ADMOB_BANNER_ID=ca-app-pub-your-production-banner-id
 ```
 
+Release builds fail at `assembleRelease` when any of the properties above are missing. Debug builds
+continue to use Google test AdMob IDs and placeholder Maps keys.
+
+Before showing production ads, NutRun runs the Google User Messaging Platform (UMP) consent flow
+when `ADMOB_APP_ID` and `ADMOB_BANNER_ID` are configured. Ads appear only for the free
+ad-supported entitlement and never on onboarding, tutorial, active workout, or active walk recording
+screens.
+
 The Maps key must be restricted to `com.avitoohband.nutrun` and the release
 signing certificate. Create separate development and production Firebase
 projects, add `google-services.json` only through protected local/CI secret

@@ -6,8 +6,16 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+import java.util.Properties
+
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
 android {
@@ -18,14 +26,17 @@ android {
         applicationId = "com.avitoohband.nutrun"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val mapsApiKey = providers.gradleProperty("MAPS_API_KEY").orNull
+        val backendBaseUrl = providers.gradleProperty("BACKEND_BASE_URL").orNull
         val admobAppId = providers.gradleProperty("ADMOB_APP_ID").orNull
         val admobBannerId = providers.gradleProperty("ADMOB_BANNER_ID").orNull
-        buildConfigField("String", "BACKEND_BASE_URL", "\"${providers.gradleProperty("BACKEND_BASE_URL").orNull ?: ""}\"")
+        val productionAdsConfigured = !admobAppId.isNullOrBlank() && !admobBannerId.isNullOrBlank()
+        buildConfigField("String", "BACKEND_BASE_URL", "\"${backendBaseUrl ?: ""}\"")
         buildConfigField("boolean", "MAPS_CONFIGURED", (mapsApiKey != null).toString())
+        buildConfigField("boolean", "PRODUCTION_ADS_CONFIGURED", productionAdsConfigured.toString())
         buildConfigField(
             "String",
             "ADMOB_BANNER_ID",
@@ -36,10 +47,24 @@ android {
             admobAppId ?: "ca-app-pub-3940256099942544~3347511713"
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
@@ -79,6 +104,7 @@ dependencies {
     implementation(libs.maps.compose)
     implementation(libs.billing.ktx)
     implementation(libs.play.services.ads)
+    implementation(libs.user.messaging.platform)
     implementation(libs.firebase.auth)
     implementation(libs.androidx.health.connect.client)
     ksp(libs.androidx.room.compiler)
@@ -99,4 +125,26 @@ android.sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
     arg("room.incremental", "true")
+}
+
+val releaseGradleProperties = listOf(
+    "MAPS_API_KEY",
+    "BACKEND_BASE_URL",
+    "ADMOB_APP_ID",
+    "ADMOB_BANNER_ID"
+)
+
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    doFirst {
+        val missing = releaseGradleProperties.filter { name ->
+            providers.gradleProperty(name).orNull.isNullOrBlank()
+        }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Release builds require Gradle properties: ${missing.joinToString()}. " +
+                    "Set them in gradle.properties or ~/.gradle/gradle.properties. " +
+                    "See docs/setup/production-services.md."
+            )
+        }
+    }
 }
