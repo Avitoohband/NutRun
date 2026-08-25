@@ -1,6 +1,7 @@
 package com.avitoohband.nutrun
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -11,24 +12,32 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -325,42 +334,355 @@ private fun ActiveExerciseCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            model.activeSetLogs[target.id].orEmpty().forEach { set ->
-                val input = setDrafts[set.id] ?: set.toWorkoutSetInput(model.usesMetricUnits)
-                WorkoutSetEditor(
-                    set = set,
-                    input = input,
-                    onInputChange = { setDrafts[set.id] = it },
-                    metric = model.usesMetricUnits,
-                    hasPrevious = previousSets.any { it.setNumber == set.setNumber },
-                    onCopyPrevious = {
-                        if (
-                            model.copyPreviousSet(target.id, set.setNumber) ==
-                            TrainingMutationResult.Success
-                        ) {
-                            model.activeSetLogs[target.id]
-                                .orEmpty()
-                                .firstOrNull { it.setNumber == set.setNumber }
-                                ?.let { copied ->
-                                    setDrafts[set.id] =
-                                        copied.toWorkoutSetInput(model.usesMetricUnits)
+            ActiveWorkoutLayoutToggle(
+                mode = model.activeWorkoutLayoutMode,
+                onModeChange = model::updateActiveWorkoutLayoutMode
+            )
+            val sets = model.activeSetLogs[target.id].orEmpty()
+            when (model.activeWorkoutLayoutMode) {
+                ActiveWorkoutLayoutMode.LIST -> {
+                    sets.forEach { set ->
+                        val input = setDrafts[set.id] ?: set.toWorkoutSetInput(model.usesMetricUnits)
+                        WorkoutSetEditor(
+                            set = set,
+                            input = input,
+                            onInputChange = { setDrafts[set.id] = it },
+                            metric = model.usesMetricUnits,
+                            hasPrevious = previousSets.any { it.setNumber == set.setNumber },
+                            onCopyPrevious = {
+                                if (
+                                    model.copyPreviousSet(target.id, set.setNumber) ==
+                                    TrainingMutationResult.Success
+                                ) {
+                                    model.activeSetLogs[target.id]
+                                        .orEmpty()
+                                        .firstOrNull { it.setNumber == set.setNumber }
+                                        ?.let { copied ->
+                                            setDrafts[set.id] =
+                                                copied.toWorkoutSetInput(model.usesMetricUnits)
+                                        }
                                 }
-                        }
-                    },
-                    onChange = { reps, weightKg, durationSeconds, rpe, completed ->
-                        model.updateWorkoutSet(
-                            targetId = target.id,
-                            setNumber = set.setNumber,
-                            reps = reps,
-                            weightKg = weightKg,
-                            durationSeconds = durationSeconds,
-                            rpe = rpe,
-                            completed = completed
+                            },
+                            onChange = { reps, weightKg, durationSeconds, rpe, completed ->
+                                model.updateWorkoutSet(
+                                    targetId = target.id,
+                                    setNumber = set.setNumber,
+                                    reps = reps,
+                                    weightKg = weightKg,
+                                    durationSeconds = durationSeconds,
+                                    rpe = rpe,
+                                    completed = completed
+                                )
+                            }
                         )
+                    }
+                }
+                ActiveWorkoutLayoutMode.GRID -> {
+                    WorkoutSetGrid(
+                        sets = sets,
+                        setDrafts = setDrafts,
+                        metric = model.usesMetricUnits,
+                        previousSetNumbers = previousSets.map { it.setNumber },
+                        onCopyPrevious = { set ->
+                            if (
+                                model.copyPreviousSet(target.id, set.setNumber) ==
+                                TrainingMutationResult.Success
+                            ) {
+                                model.activeSetLogs[target.id]
+                                    .orEmpty()
+                                    .firstOrNull { it.setNumber == set.setNumber }
+                                    ?.let { copied ->
+                                        setDrafts[set.id] =
+                                            copied.toWorkoutSetInput(model.usesMetricUnits)
+                                    }
+                            }
+                        },
+                        onChange = { set, reps, weightKg, durationSeconds, rpe, completed ->
+                            model.updateWorkoutSet(
+                                targetId = target.id,
+                                setNumber = set.setNumber,
+                                reps = reps,
+                                weightKg = weightKg,
+                                durationSeconds = durationSeconds,
+                                rpe = rpe,
+                                completed = completed
+                            )
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActiveWorkoutLayoutToggle(
+    mode: ActiveWorkoutLayoutMode,
+    onModeChange: (ActiveWorkoutLayoutMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    SingleChoiceSegmentedButtonRow(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("active-workout-layout-toggle")
+    ) {
+        ActiveWorkoutLayoutMode.entries.forEachIndexed { index, option ->
+            SegmentedButton(
+                selected = mode == option,
+                onClick = { onModeChange(option) },
+                shape = SegmentedButtonDefaults.itemShape(
+                    index,
+                    ActiveWorkoutLayoutMode.entries.size
+                ),
+                modifier = Modifier.testTag(
+                    when (option) {
+                        ActiveWorkoutLayoutMode.LIST -> "active-workout-layout-list"
+                        ActiveWorkoutLayoutMode.GRID -> "active-workout-layout-grid"
+                    }
+                )
+            ) {
+                Text(
+                    when (option) {
+                        ActiveWorkoutLayoutMode.LIST -> "List"
+                        ActiveWorkoutLayoutMode.GRID -> "Grid"
                     }
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun WorkoutSetGrid(
+    sets: List<WorkoutSetLog>,
+    setDrafts: MutableMap<String, WorkoutSetInput>,
+    metric: Boolean,
+    previousSetNumbers: List<Int>,
+    onCopyPrevious: (WorkoutSetLog) -> Unit,
+    onChange: (
+        WorkoutSetLog,
+        Int?,
+        Double?,
+        Int?,
+        Double?,
+        Boolean
+    ) -> Unit
+) {
+    val durationTarget = sets.any { it.durationSeconds != null }
+    val scrollState = rememberScrollState()
+    Row(Modifier.horizontalScroll(scrollState)) {
+        Column(
+            modifier = Modifier.testTag("active-workout-set-grid"),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GridHeaderCell("Set", Modifier.width(44.dp))
+                if (!durationTarget) {
+                    GridHeaderCell(
+                        if (metric) "Wt (kg)" else "Wt (lb)",
+                        Modifier.width(72.dp)
+                    )
+                }
+                GridHeaderCell(
+                    if (durationTarget) "Min" else "Reps",
+                    Modifier.width(64.dp)
+                )
+                GridHeaderCell("RPE", Modifier.width(56.dp))
+                GridHeaderCell("Done", Modifier.width(52.dp))
+            }
+            sets.forEach { set ->
+                val input = setDrafts[set.id] ?: set.toWorkoutSetInput(metric)
+                WorkoutSetGridRow(
+                    set = set,
+                    input = input,
+                    durationTarget = set.durationSeconds != null,
+                    metric = metric,
+                    hasPrevious = previousSetNumbers.contains(set.setNumber),
+                    onInputChange = { setDrafts[set.id] = it },
+                    onCopyPrevious = { onCopyPrevious(set) },
+                    onChange = { reps, weightKg, durationSeconds, rpe, completed ->
+                        onChange(set, reps, weightKg, durationSeconds, rpe, completed)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GridHeaderCell(label: String, modifier: Modifier = Modifier) {
+    Text(
+        label,
+        modifier = modifier,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold
+    )
+}
+
+@Composable
+private fun WorkoutSetGridRow(
+    set: WorkoutSetLog,
+    input: WorkoutSetInput,
+    durationTarget: Boolean,
+    metric: Boolean,
+    hasPrevious: Boolean,
+    onInputChange: (WorkoutSetInput) -> Unit,
+    onCopyPrevious: () -> Unit,
+    onChange: (Int?, Double?, Int?, Double?, Boolean) -> Unit
+) {
+    val validation = validateWorkoutSetInput(input, durationTarget, metric)
+
+    fun submit(next: WorkoutSetInput, completed: Boolean = set.completed) {
+        submitWorkoutSetInput(
+            input = next,
+            durationTarget = durationTarget,
+            metric = metric,
+            completed = completed,
+            onInputChange = onInputChange,
+            onChange = onChange
+        )
+    }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier.width(44.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                set.setNumber.toString(),
+                modifier = Modifier.testTag("workout-grid-set-${set.id}"),
+                fontWeight = FontWeight.SemiBold
+            )
+            if (hasPrevious) {
+                IconButton(
+                    onClick = onCopyPrevious,
+                    modifier = Modifier.testTag("copy-previous-${set.id}")
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Copy previous set ${set.setNumber}"
+                    )
+                }
+            }
+        }
+        if (!durationTarget) {
+            WorkoutCompactDecimalField(
+                value = input.weight,
+                onValueChange = { submit(input.copy(weight = it)) },
+                error = validation.weightError,
+                tag = "workout-weight-${set.id}",
+                modifier = Modifier.width(72.dp)
+            )
+        }
+        if (durationTarget) {
+            WorkoutCompactDecimalField(
+                value = input.minutes,
+                onValueChange = { submit(input.copy(minutes = it)) },
+                error = validation.minutesError,
+                tag = "workout-minutes-${set.id}",
+                modifier = Modifier.width(64.dp)
+            )
+        } else {
+            WorkoutCompactNumberField(
+                value = input.reps,
+                onValueChange = { submit(input.copy(reps = it)) },
+                error = validation.repsError,
+                tag = "workout-reps-${set.id}",
+                modifier = Modifier.width(64.dp)
+            )
+        }
+        WorkoutCompactDecimalField(
+            value = input.rpe,
+            onValueChange = { submit(input.copy(rpe = it)) },
+            error = validation.rpeError,
+            tag = "workout-effort-${set.id}",
+            modifier = Modifier.width(56.dp)
+        )
+        Row(
+            modifier = Modifier
+                .width(52.dp)
+                .heightIn(min = 48.dp)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = if (set.completed) {
+                        "Set ${set.setNumber} completed"
+                    } else {
+                        "Mark set ${set.setNumber} complete"
+                    }
+                    stateDescription = if (set.completed) "Completed" else "Not completed"
+                }
+                .clickable { submit(input, completed = !set.completed) }
+                .testTag("workout-set-completed-${set.id}"),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(checked = set.completed, onCheckedChange = null)
+        }
+    }
+}
+
+@Composable
+private fun WorkoutCompactDecimalField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    error: String?,
+    tag: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier.testTag(tag),
+        isError = error != null,
+        supportingText = if (error != null) {
+            { Text(error, maxLines = 1) }
+        } else {
+            null
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun WorkoutCompactNumberField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    error: String?,
+    tag: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier.testTag(tag),
+        isError = error != null,
+        supportingText = if (error != null) {
+            { Text(error, maxLines = 1) }
+        } else {
+            null
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true
+    )
+}
+
+private fun submitWorkoutSetInput(
+    input: WorkoutSetInput,
+    durationTarget: Boolean,
+    metric: Boolean,
+    completed: Boolean,
+    onInputChange: (WorkoutSetInput) -> Unit,
+    onChange: (Int?, Double?, Int?, Double?, Boolean) -> Unit
+) {
+    onInputChange(input)
+    validateWorkoutSetInput(input, durationTarget, metric).value?.let { value ->
+        onChange(value.reps, value.weightKg, value.durationSeconds, value.rpe, completed)
     }
 }
 
@@ -378,10 +700,14 @@ private fun WorkoutSetEditor(
     val validation = validateWorkoutSetInput(input, durationTarget, metric)
 
     fun submit(next: WorkoutSetInput, completed: Boolean = set.completed) {
-        onInputChange(next)
-        validateWorkoutSetInput(next, durationTarget, metric).value?.let { value ->
-            onChange(value.reps, value.weightKg, value.durationSeconds, value.rpe, completed)
-        }
+        submitWorkoutSetInput(
+            input = next,
+            durationTarget = durationTarget,
+            metric = metric,
+            completed = completed,
+            onInputChange = onInputChange,
+            onChange = onChange
+        )
     }
 
     Column(

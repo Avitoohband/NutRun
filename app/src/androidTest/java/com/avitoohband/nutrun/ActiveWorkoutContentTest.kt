@@ -20,12 +20,116 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
 class ActiveWorkoutContentTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun layoutToggleShowsListAndGridOptions() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("active-workout-layout-toggle").assertIsDisplayed()
+        composeRule.onNodeWithTag("active-workout-layout-list").assertIsDisplayed()
+        composeRule.onNodeWithTag("active-workout-layout-grid").assertIsDisplayed()
+    }
+
+    @Test
+    fun switchingToGridRetainsPartialDraftValues() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        val firstTarget = session.exercises.first()
+        val firstSet = model.activeSetLogs.getValue(firstTarget.id).first()
+
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}").performTextInput("75")
+        composeRule.onNodeWithTag("active-workout-layout-grid").performClick()
+        composeRule.onNodeWithTag("active-workout-set-grid").assertIsDisplayed()
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}")
+            .assertTextContains("75")
+    }
+
+    @Test
+    fun gridModeAllowsEditingAndCompletingSets() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        val target = session.exercises.first()
+        val set = model.activeSetLogs.getValue(target.id).first()
+
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("active-workout-layout-grid").performClick()
+        composeRule.onNodeWithTag("workout-reps-${set.id}").performTextInput("8")
+        composeRule.onNodeWithTag("workout-weight-${set.id}").performTextInput("60")
+        composeRule.onNodeWithTag("workout-set-completed-${set.id}").performClick()
+
+        composeRule.runOnIdle {
+            val saved = model.activeSetLogs.getValue(target.id).first()
+            assertEquals(8, saved.reps)
+            assertEquals(60.0, saved.weightKg!!, 0.001)
+            assertTrue(saved.completed)
+        }
+    }
+
+    @Test
+    fun gridModeShowsMinutesColumnForDurationTargets() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-sunday-cardio" }
+        model.startWorkout(session.id)
+        val target = session.exercises.first()
+        val set = model.activeSetLogs.getValue(target.id).first()
+
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("active-workout-layout-grid").performClick()
+        composeRule.onNodeWithTag("workout-minutes-${set.id}").assertIsDisplayed()
+        composeRule.onNodeWithTag("workout-reps-${set.id}").assertDoesNotExist()
+    }
 
     @Test
     fun compactLargeTextWorkoutKeepsFocusNavigationAndActionsStable() {
