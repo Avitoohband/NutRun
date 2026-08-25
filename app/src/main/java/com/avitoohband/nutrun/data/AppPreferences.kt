@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.avitoohband.nutrun.ActiveWorkoutLayoutMode
 import com.avitoohband.nutrun.domain.EntitlementKind
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Duration
@@ -26,7 +27,8 @@ data class SessionPreferences(
     val subscriber: Boolean = false,
     val darkMode: Boolean = false,
     val tutorialAcknowledgedVersion: Int = 0,
-    val tutorialCompletedAtMillis: Long? = null
+    val tutorialCompletedAtMillis: Long? = null,
+    val activeWorkoutLayoutMode: ActiveWorkoutLayoutMode = ActiveWorkoutLayoutMode.LIST
 ) {
     fun entitlement(nowMillis: Long = System.currentTimeMillis()): EntitlementKind {
         if (subscriber) return EntitlementKind.SUBSCRIBER
@@ -60,6 +62,8 @@ class AppPreferences @Inject constructor(
             intPreferencesKey("account_${userId}_tutorial_ack_version")
         fun tutorialCompletedAt(userId: String) =
             longPreferencesKey("account_${userId}_tutorial_completed_at")
+        fun activeWorkoutLayoutMode(userId: String) =
+            stringPreferencesKey("account_${userId}_active_workout_layout")
     }
 
     val session: Flow<SessionPreferences> = context.dataStore.data.map { values ->
@@ -73,7 +77,10 @@ class AppPreferences @Inject constructor(
             tutorialAcknowledgedVersion = userId?.let {
                 values[Keys.tutorialAcknowledgedVersion(it)] ?: 0
             } ?: 0,
-            tutorialCompletedAtMillis = userId?.let { values[Keys.tutorialCompletedAt(it)] }
+            tutorialCompletedAtMillis = userId?.let { values[Keys.tutorialCompletedAt(it)] },
+            activeWorkoutLayoutMode = userId?.let {
+                ActiveWorkoutLayoutMode.fromStoredValue(values[Keys.activeWorkoutLayoutMode(it)])
+            } ?: ActiveWorkoutLayoutMode.LIST
         )
     }
 
@@ -120,6 +127,12 @@ class AppPreferences @Inject constructor(
         }
     }
 
+    suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode) {
+        context.dataStore.edit { values ->
+            values[Keys.activeWorkoutLayoutMode(userId)] = mode.name
+        }
+    }
+
     suspend fun clearAccount(userId: String) {
         context.dataStore.edit { values ->
             values.remove(Keys.email(userId))
@@ -129,6 +142,7 @@ class AppPreferences @Inject constructor(
             values.remove(Keys.reminderRecoveryClosing(userId))
             values.remove(Keys.tutorialAcknowledgedVersion(userId))
             values.remove(Keys.tutorialCompletedAt(userId))
+            values.remove(Keys.activeWorkoutLayoutMode(userId))
             if (values[Keys.currentUserId] == userId) values.remove(Keys.currentUserId)
         }
     }

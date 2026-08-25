@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -1494,6 +1495,56 @@ class TrainingViewModelTest {
     }
 
     @Test
+    fun sessionFlowPropagatesActiveWorkoutLayoutMode() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(
+                authenticatedUserId = "account-a",
+                activeWorkoutLayoutMode = ActiveWorkoutLayoutMode.GRID
+            )
+        )
+        val model = TrainingViewModel(runtime, this)
+        runtime.trainingStates.emit(TrainingStateEntity("account-a", "{}", 1L))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+
+        assertEquals(ActiveWorkoutLayoutMode.GRID, model.activeWorkoutLayoutMode)
+    }
+
+    @Test
+    fun setActiveWorkoutLayoutModePersistsThroughRuntime() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val model = TrainingViewModel(runtime, this)
+        runtime.trainingStates.emit(TrainingStateEntity("account-a", "{}", 1L))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+
+        model.updateActiveWorkoutLayoutMode(ActiveWorkoutLayoutMode.GRID)
+        withTimeout(5_000) {
+            while (model.activeWorkoutLayoutMode != ActiveWorkoutLayoutMode.GRID) yield()
+        }
+
+        assertEquals(ActiveWorkoutLayoutMode.GRID, model.activeWorkoutLayoutMode)
+        assertEquals(ActiveWorkoutLayoutMode.GRID, runtime.session.first().activeWorkoutLayoutMode)
+    }
+
+    @Test
+    fun setActiveWorkoutLayoutModeSurfacesPersistenceFailure() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.layoutModeFailure = RuntimeException("layout save failed")
+        val model = TrainingViewModel(runtime, this)
+        runtime.trainingStates.emit(TrainingStateEntity("account-a", "{}", 1L))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+
+        model.updateActiveWorkoutLayoutMode(ActiveWorkoutLayoutMode.GRID)
+        withTimeout(5_000) { while (model.mutationError == null) yield() }
+
+        assertEquals(ActiveWorkoutLayoutMode.LIST, model.activeWorkoutLayoutMode)
+        assertEquals("layout save failed", model.mutationError)
+    }
+
+    @Test
     fun zeroEffortValueCanCompleteAWorkoutSet() {
         val model = TrainingViewModel(null, null)
         val session = model.sessions.first { it.id == "session-monday-push-biceps" }
@@ -2016,6 +2067,7 @@ class TrainingViewModelTest {
         var saveFailure: Throwable? = null
         var trainingScheduleFailure: Throwable? = null
         var supplementScheduleFailure: Throwable? = null
+        var layoutModeFailure: Throwable? = null
 
         fun prepareSave(
             gate: CompletableDeferred<Unit>? = null,
@@ -2103,6 +2155,11 @@ class TrainingViewModelTest {
 
         override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) {
             recoverySchedules += userId to system
+        }
+
+        override suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode) {
+            layoutModeFailure?.let { throw it }
+            sessionState.value = sessionState.value.copy(activeWorkoutLayoutMode = mode)
         }
 
         private data class SaveControl(

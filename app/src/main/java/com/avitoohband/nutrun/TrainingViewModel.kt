@@ -103,6 +103,7 @@ internal interface TrainingViewModelRuntime {
     fun scheduleTraining(userId: String, settings: TrainingReminderSettingsEntity)
     suspend fun scheduleSupplement(userId: String, settings: SupplementReminderSettingsEntity)
     suspend fun scheduleRecovery(userId: String, system: ReminderSystem)
+    suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode)
 }
 
 private class ProductionTrainingViewModelRuntime(
@@ -153,6 +154,10 @@ private class ProductionTrainingViewModelRuntime(
 
     override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) {
         reminderRescheduleRecoveryScheduler?.schedule(userId, setOf(system))
+    }
+
+    override suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode) {
+        preferences.setActiveWorkoutLayoutMode(userId, mode)
     }
 }
 
@@ -241,6 +246,8 @@ class TrainingViewModel private constructor(
         private set
     var defaultRestTimerSeconds by mutableIntStateOf(90)
         private set
+    var activeWorkoutLayoutMode by mutableStateOf(ActiveWorkoutLayoutMode.LIST)
+        private set
 
     var mutationError by mutableStateOf<String?>(null)
         private set
@@ -282,6 +289,7 @@ class TrainingViewModel private constructor(
                     supplementReminderReadyAccountId = null
                     supplementReminderUpdatesReady = false
                     profileUnitReadyAccountId = null
+                    activeWorkoutLayoutMode = session.activeWorkoutLayoutMode
                     resetTrainingState()
                     session.authenticatedUserId?.let { userId ->
                         runtime.trainingState(userId)
@@ -318,6 +326,21 @@ class TrainingViewModel private constructor(
 
     fun setNotificationPermission(granted: Boolean) {
         notificationPermissionGranted = granted
+    }
+
+    fun updateActiveWorkoutLayoutMode(mode: ActiveWorkoutLayoutMode) {
+        if (!trainingMutationsReady) return
+        val userId = currentUserId ?: return
+        val previous = activeWorkoutLayoutMode
+        activeWorkoutLayoutMode = mode
+        modelScope.launch {
+            runCatching {
+                runtime?.setActiveWorkoutLayoutMode(userId, mode)
+            }.onFailure {
+                activeWorkoutLayoutMode = previous
+                mutationError = it.message ?: "Could not save workout layout preference."
+            }
+        }
     }
 
     fun toggleSupplement(id: String, checked: Boolean) {

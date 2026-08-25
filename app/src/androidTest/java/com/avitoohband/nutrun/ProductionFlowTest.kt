@@ -1088,6 +1088,10 @@ class SupplementReminderSettingsCardComposeTest {
             settings: SupplementReminderSettingsEntity
         ) = Unit
         override suspend fun scheduleRecovery(userId: String, system: ReminderSystem) = Unit
+        override suspend fun setActiveWorkoutLayoutMode(
+            userId: String,
+            mode: ActiveWorkoutLayoutMode
+        ) = Unit
     }
 }
 
