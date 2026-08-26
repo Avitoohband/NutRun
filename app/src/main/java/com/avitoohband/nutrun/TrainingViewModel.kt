@@ -330,12 +330,13 @@ class TrainingViewModel private constructor(
 
     fun updateActiveWorkoutLayoutMode(mode: ActiveWorkoutLayoutMode) {
         if (!trainingMutationsReady) return
-        val userId = currentUserId ?: return
         val previous = activeWorkoutLayoutMode
         activeWorkoutLayoutMode = mode
+        val userId = currentUserId
+        if (userId == null || runtime == null) return
         modelScope.launch {
             runCatching {
-                runtime?.setActiveWorkoutLayoutMode(userId, mode)
+                runtime.setActiveWorkoutLayoutMode(userId, mode)
             }.onFailure {
                 activeWorkoutLayoutMode = previous
                 mutationError = it.message ?: "Could not save workout layout preference."

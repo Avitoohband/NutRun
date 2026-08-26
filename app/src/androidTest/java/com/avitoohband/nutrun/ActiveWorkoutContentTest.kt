@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -68,9 +69,13 @@ class ActiveWorkoutContentTest {
             }
         }
 
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}").performClick()
+        composeRule.onNodeWithTag("workout-weight-${firstSet.id}").performTextClearance()
         composeRule.onNodeWithTag("workout-weight-${firstSet.id}").performTextInput("75")
         composeRule.onNodeWithTag("active-workout-layout-grid").performClick()
-        composeRule.onNodeWithTag("active-workout-set-grid").assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("active-workout-set-grid").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag("workout-weight-${firstSet.id}")
             .assertTextContains("75")
     }
@@ -95,7 +100,14 @@ class ActiveWorkoutContentTest {
         }
 
         composeRule.onNodeWithTag("active-workout-layout-grid").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("active-workout-set-grid").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("workout-reps-${set.id}").performClick()
+        composeRule.onNodeWithTag("workout-reps-${set.id}").performTextClearance()
         composeRule.onNodeWithTag("workout-reps-${set.id}").performTextInput("8")
+        composeRule.onNodeWithTag("workout-weight-${set.id}").performClick()
+        composeRule.onNodeWithTag("workout-weight-${set.id}").performTextClearance()
         composeRule.onNodeWithTag("workout-weight-${set.id}").performTextInput("60")
         composeRule.onNodeWithTag("workout-set-completed-${set.id}").performClick()
 
