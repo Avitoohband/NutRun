@@ -1,5 +1,6 @@
 package com.avitoohband.nutrun
 
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
@@ -10,12 +11,13 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import com.avitoohband.nutrun.billing.BillingUiState
-import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.ActivityLevel
 import com.avitoohband.nutrun.domain.BiologicalSex
 import com.avitoohband.nutrun.domain.HealthGoal
 import com.avitoohband.nutrun.domain.UnitSystem
+import com.avitoohband.nutrun.domain.UserProfile
 import java.time.LocalDate
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -25,29 +27,9 @@ class ProfileContentTest {
 
     @Test
     fun profileSectionsAndDeleteConfirmationRequireTypedEmail() {
-        val profile = testProfile()
         composeRule.setContent {
             NutRunTheme {
-                ProfileOverviewContent(
-                    profile = profile,
-                    entitlementLabel = "30 trial days remaining",
-                    darkMode = false,
-                    authenticatedUserId = "user-1",
-                    billing = BillingUiState(),
-                    accountDeletionState = AccountDeletionUiState(),
-                    billingActionsEnabled = false,
-                    onBack = {},
-                    onEditHealth = {},
-                    onNotifications = {},
-                    onDarkModeChange = {},
-                    onPurchaseMonthly = {},
-                    onPurchaseAnnual = {},
-                    onRestorePurchases = {},
-                    onSignOut = {},
-                    onDeleteAccount = {},
-                    onClearAccountDeletionState = {},
-                    onRunTutorial = {}
-                )
+                profileOverviewContent()
             }
         }
 
@@ -64,7 +46,7 @@ class ProfileContentTest {
             .performScrollToNode(hasTestTag("profile-delete-account"))
         composeRule.onNodeWithTag("profile-delete-account").performClick()
         composeRule.onNodeWithTag("profile-delete-confirm").assertIsNotEnabled()
-        composeRule.onNodeWithTag("profile-delete-email-confirm").performTextInput(profile.email)
+        composeRule.onNodeWithTag("profile-delete-email-confirm").performTextInput(testProfile().email)
         composeRule.onNodeWithTag("profile-delete-confirm").assertIsDisplayed()
     }
 
@@ -72,25 +54,10 @@ class ProfileContentTest {
     fun demoProfileShowsLocalOnlyDeletionCopy() {
         composeRule.setContent {
             NutRunTheme {
-                ProfileOverviewContent(
+                profileOverviewContent(
                     profile = defaultDemoProfile(),
                     entitlementLabel = "Ad-free subscriber",
-                    darkMode = false,
-                    authenticatedUserId = DEMO_USER_ID,
-                    billing = BillingUiState(),
-                    accountDeletionState = AccountDeletionUiState(),
-                    billingActionsEnabled = false,
-                    onBack = {},
-                    onEditHealth = {},
-                    onNotifications = {},
-                    onDarkModeChange = {},
-                    onPurchaseMonthly = {},
-                    onPurchaseAnnual = {},
-                    onRestorePurchases = {},
-                    onSignOut = {},
-                    onDeleteAccount = {},
-                    onClearAccountDeletionState = {},
-                    onRunTutorial = {}
+                    authenticatedUserId = DEMO_USER_ID
                 )
             }
         }
@@ -109,33 +76,77 @@ class ProfileContentTest {
         var tutorialRequested = false
         composeRule.setContent {
             NutRunTheme {
-                ProfileOverviewContent(
-                    profile = testProfile(),
-                    entitlementLabel = "30 trial days remaining",
-                    darkMode = false,
-                    authenticatedUserId = "user-1",
-                    billing = BillingUiState(),
-                    accountDeletionState = AccountDeletionUiState(),
-                    billingActionsEnabled = false,
-                    onBack = {},
-                    onEditHealth = {},
-                    onNotifications = {},
-                    onDarkModeChange = {},
-                    onPurchaseMonthly = {},
-                    onPurchaseAnnual = {},
-                    onRestorePurchases = {},
-                    onSignOut = {},
-                    onDeleteAccount = {},
-                    onClearAccountDeletionState = {},
-                    onRunTutorial = { tutorialRequested = true }
-                )
+                profileOverviewContent(onRunTutorial = { tutorialRequested = true })
             }
         }
 
         composeRule.onNodeWithTag("profile-list")
             .performScrollToNode(hasTestTag("profile-run-tutorial"))
         composeRule.onNodeWithTag("profile-run-tutorial").performClick()
-        org.junit.Assert.assertTrue(tutorialRequested)
+        assertTrue(tutorialRequested)
+    }
+
+    @Test
+    fun helpAndDataSectionsExposePolicyLinks() {
+        var privacyOpened = false
+        var termsOpened = false
+        composeRule.setContent {
+            NutRunTheme {
+                profileOverviewContent(
+                    privacyPolicyUrl = "https://example.com/privacy",
+                    termsOfServiceUrl = "https://example.com/terms",
+                    onOpenPrivacyPolicy = { privacyOpened = true },
+                    onOpenTermsOfService = { termsOpened = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("profile-list")
+            .performScrollToNode(hasTestTag("profile-privacy-policy"))
+        composeRule.onNodeWithTag("profile-privacy-policy").performClick()
+        assertTrue(privacyOpened)
+
+        composeRule.onNodeWithTag("profile-list")
+            .performScrollToNode(hasTestTag("profile-terms-of-service"))
+        composeRule.onNodeWithTag("profile-terms-of-service").performClick()
+        assertTrue(termsOpened)
+    }
+
+    @Composable
+    private fun profileOverviewContent(
+        profile: UserProfile = testProfile(),
+        entitlementLabel: String = "30 trial days remaining",
+        authenticatedUserId: String = "user-1",
+        privacyPolicyUrl: String = "",
+        termsOfServiceUrl: String = "",
+        onOpenPrivacyPolicy: () -> Unit = {},
+        onOpenTermsOfService: () -> Unit = {},
+        onRunTutorial: () -> Unit = {}
+    ) {
+        ProfileOverviewContent(
+            profile = profile,
+            entitlementLabel = entitlementLabel,
+            darkMode = false,
+            authenticatedUserId = authenticatedUserId,
+            billing = BillingUiState(),
+            accountDeletionState = AccountDeletionUiState(),
+            billingActionsEnabled = false,
+            onBack = {},
+            onEditHealth = {},
+            onNotifications = {},
+            onDarkModeChange = {},
+            onPurchaseMonthly = {},
+            onPurchaseAnnual = {},
+            onRestorePurchases = {},
+            onSignOut = {},
+            onDeleteAccount = {},
+            onClearAccountDeletionState = {},
+            onRunTutorial = onRunTutorial,
+            privacyPolicyUrl = privacyPolicyUrl,
+            termsOfServiceUrl = termsOfServiceUrl,
+            onOpenPrivacyPolicy = onOpenPrivacyPolicy,
+            onOpenTermsOfService = onOpenTermsOfService
+        )
     }
 
     private fun testProfile(): UserProfile = UserProfile(

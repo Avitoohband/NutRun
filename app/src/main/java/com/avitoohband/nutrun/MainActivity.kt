@@ -10,6 +10,8 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.provider.Settings
 import android.content.pm.PackageManager
+import android.app.Activity
+import android.net.Uri
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -224,6 +226,11 @@ private fun Intent.toNavigationRequest(): NavigationRequest? =
             focusSupplements = getBooleanExtra(MainActivity.EXTRA_SUPPLEMENTS_SECTION, false)
         )
     }
+
+private fun openHttpsUrl(activity: Activity?, url: String) {
+    if (activity == null || !url.startsWith("https://")) return
+    activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+}
 
 private data class Destination(val route: String, val label: String, val icon: ImageVector)
 
@@ -595,6 +602,14 @@ private fun MainApp(
                         navController.navigate("tutorial") {
                             launchSingleTop = true
                         }
+                    },
+                    privacyPolicyUrl = BuildConfig.PRIVACY_POLICY_URL,
+                    termsOfServiceUrl = BuildConfig.TERMS_OF_SERVICE_URL,
+                    onOpenPrivacyPolicy = {
+                        openHttpsUrl(activity, BuildConfig.PRIVACY_POLICY_URL)
+                    },
+                    onOpenTermsOfService = {
+                        openHttpsUrl(activity, BuildConfig.TERMS_OF_SERVICE_URL)
                     },
                     onDevToggleSubscription = if (
                         BuildConfig.DEBUG && !isDemoAccount(state.session.authenticatedUserId)

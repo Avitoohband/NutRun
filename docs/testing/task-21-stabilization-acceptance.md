@@ -23,6 +23,28 @@ Exercise on at least one physical Android device after the emulator gate is gree
 - Treat infrastructure timeouts as evidence, not silent passes.
 - Freeze feature work when this milestone is green; fix release-blocking defects only.
 
+## Windows Gradle lock recovery
+
+Use only after a confirmed stale lock (for example `Unable to delete directory` under `app\build`). Close Android Studio builds first; do not run Gradle from the terminal and Android Studio at the same time.
+
+```powershell
+.\gradlew.bat --stop
+taskkill /F /IM java.exe
+Remove-Item -Recurse -Force app\build -ErrorAction SilentlyContinue
+```
+
+Rerun the failed Gradle command once after recovery.
+
+## Sequential release gate
+
+Run from the repository root without concurrent Android Studio builds:
+
+```bash
+cd backend && npm ci && npm test && cd ..
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest --no-daemon --console=plain
+git diff --check
+```
+
 ## Customer acceptance (GitHub issue #5)
 
 Engineering prepares evidence; only the customer/user closes issue #5.

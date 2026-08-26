@@ -14,10 +14,14 @@ MAPS_API_KEY=your_package_and_signing_restricted_key
 BACKEND_BASE_URL=https://your-cloud-run-service.example
 ADMOB_APP_ID=ca-app-pub-your-production-app-id
 ADMOB_BANNER_ID=ca-app-pub-your-production-banner-id
+PRIVACY_POLICY_URL=https://your-domain.example/privacy
+TERMS_OF_SERVICE_URL=https://your-domain.example/terms
 ```
 
-Release builds fail at `assembleRelease` when any of the properties above are missing. Debug builds
-continue to use Google test AdMob IDs and placeholder Maps keys.
+Release builds fail at `assembleRelease` or `bundleRelease` when any property above is missing,
+when `keystore.properties` is absent locally, when Maps/AdMob values are still placeholders or
+Google test IDs, or when backend and policy URLs are not HTTPS. Debug builds continue to use
+Google test AdMob IDs and placeholder Maps keys.
 
 Before showing production ads, NutRun runs the Google User Messaging Platform (UMP) consent flow
 when `ADMOB_APP_ID` and `ADMOB_BANNER_ID` are configured. Ads appear only for the free

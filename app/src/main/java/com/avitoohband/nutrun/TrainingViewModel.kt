@@ -29,6 +29,8 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
@@ -197,7 +199,11 @@ class TrainingViewModel private constructor(
         coroutineScope: CoroutineScope
     ) : this(runtime, coroutineScope, true)
 
-    private val modelScope: CoroutineScope get() = coroutineScope ?: viewModelScope
+    private val isolatedTestScope: CoroutineScope? =
+        if (runtime == null && coroutineScope == null) CoroutineScope(Dispatchers.Unconfined) else null
+
+    private val modelScope: CoroutineScope
+        get() = coroutineScope ?: isolatedTestScope ?: viewModelScope
     private fun id(prefix: String) = "$prefix-${UUID.randomUUID()}"
     private var currentUserId: String? = null
     private var persistJob: Job? = null
@@ -1533,5 +1539,18 @@ class TrainingViewModel private constructor(
         lastWorkoutSummary = null
         suggestionDecision = SuggestionDecision.PENDING
         suggestedWeightKg = 42.5
+    }
+
+    internal fun disposeForTests() {
+        onCleared()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        persistJob?.cancel()
+        when {
+            coroutineScope != null -> coroutineScope.cancel()
+            isolatedTestScope != null -> isolatedTestScope.cancel()
+        }
     }
 }

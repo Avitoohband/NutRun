@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
@@ -58,6 +60,10 @@ fun ProfileOverviewContent(
     onDeleteAccount: () -> Unit,
     onClearAccountDeletionState: () -> Unit,
     onRunTutorial: () -> Unit,
+    privacyPolicyUrl: String = "",
+    termsOfServiceUrl: String = "",
+    onOpenPrivacyPolicy: () -> Unit,
+    onOpenTermsOfService: () -> Unit,
     onDevToggleSubscription: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -285,6 +291,28 @@ fun ProfileOverviewContent(
             }
             item {
                 ProfileSectionHeading("Help", testTag = "profile-section-help")
+            }
+            if (privacyPolicyUrl.startsWith("https://")) {
+                item {
+                    NutRunSettingsRow(
+                        title = "Privacy policy",
+                        subtitle = "Read how NutRun handles your data",
+                        icon = Icons.Default.Description,
+                        onClick = onOpenPrivacyPolicy,
+                        testTag = "profile-privacy-policy"
+                    )
+                }
+            }
+            if (termsOfServiceUrl.startsWith("https://")) {
+                item {
+                    NutRunSettingsRow(
+                        title = "Terms of service",
+                        subtitle = "Review NutRun usage terms",
+                        icon = Icons.Default.Gavel,
+                        onClick = onOpenTermsOfService,
+                        testTag = "profile-terms-of-service"
+                    )
+                }
             }
             item {
                 NutRunSettingsRow(

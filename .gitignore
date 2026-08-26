@@ -14,3 +14,9 @@ keystore.properties
 .worktrees/
 hs_err_pid*.log
 replay_pid*.log
+app/google-services.json
+google-services.json
+backend/.env
+backend/.env.*
+!backend/.env.example
+service-account*.json

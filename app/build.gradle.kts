@@ -34,6 +34,10 @@ android {
         val admobAppId = providers.gradleProperty("ADMOB_APP_ID").orNull
         val admobBannerId = providers.gradleProperty("ADMOB_BANNER_ID").orNull
         val productionAdsConfigured = !admobAppId.isNullOrBlank() && !admobBannerId.isNullOrBlank()
+        val privacyPolicyUrl = providers.gradleProperty("PRIVACY_POLICY_URL").orNull
+        val termsOfServiceUrl = providers.gradleProperty("TERMS_OF_SERVICE_URL").orNull
+        buildConfigField("String", "PRIVACY_POLICY_URL", "\"${privacyPolicyUrl ?: ""}\"")
+        buildConfigField("String", "TERMS_OF_SERVICE_URL", "\"${termsOfServiceUrl ?: ""}\"")
         buildConfigField("String", "BACKEND_BASE_URL", "\"${backendBaseUrl ?: ""}\"")
         buildConfigField("boolean", "MAPS_CONFIGURED", (mapsApiKey != null).toString())
         buildConfigField("boolean", "PRODUCTION_ADS_CONFIGURED", productionAdsConfigured.toString())
@@ -127,24 +131,55 @@ ksp {
     arg("room.incremental", "true")
 }
 
+tasks.withType<Test>().configureEach {
+    maxParallelForks = 1
+}
+
 val releaseGradleProperties = listOf(
     "MAPS_API_KEY",
     "BACKEND_BASE_URL",
     "ADMOB_APP_ID",
-    "ADMOB_BANNER_ID"
+    "ADMOB_BANNER_ID",
+    "PRIVACY_POLICY_URL",
+    "TERMS_OF_SERVICE_URL"
 )
 
-tasks.matching { it.name == "assembleRelease" }.configureEach {
+val googleTestAdMobPrefix = "ca-app-pub-3940256099942544"
+
+tasks.matching { it.name in setOf("assembleRelease", "bundleRelease") }.configureEach {
     doFirst {
+        check(keystorePropertiesFile.exists()) {
+            "Release builds require local keystore.properties."
+        }
         val missing = releaseGradleProperties.filter { name ->
             providers.gradleProperty(name).orNull.isNullOrBlank()
         }
-        if (missing.isNotEmpty()) {
-            throw GradleException(
-                "Release builds require Gradle properties: ${missing.joinToString()}. " +
-                    "Set them in gradle.properties or ~/.gradle/gradle.properties. " +
-                    "See docs/setup/production-services.md."
-            )
+        check(missing.isEmpty()) {
+            "Release builds require Gradle properties: ${missing.joinToString()}. " +
+                "Set them in gradle.properties or ~/.gradle/gradle.properties. " +
+                "See docs/setup/production-services.md."
+        }
+        val mapsKey = providers.gradleProperty("MAPS_API_KEY").orNull
+        check(mapsKey != "REPLACE_WITH_RESTRICTED_MAPS_KEY") {
+            "Release builds require a restricted Maps API key."
+        }
+        val backendUrl = providers.gradleProperty("BACKEND_BASE_URL").orNull.orEmpty()
+        check(backendUrl.startsWith("https://")) {
+            "BACKEND_BASE_URL must use HTTPS."
+        }
+        listOf("PRIVACY_POLICY_URL", "TERMS_OF_SERVICE_URL").forEach { propertyName ->
+            val url = providers.gradleProperty(propertyName).orNull.orEmpty()
+            check(url.startsWith("https://")) {
+                "$propertyName must use HTTPS."
+            }
+        }
+        val admobAppId = providers.gradleProperty("ADMOB_APP_ID").orNull.orEmpty()
+        val admobBannerId = providers.gradleProperty("ADMOB_BANNER_ID").orNull.orEmpty()
+        check(!admobAppId.startsWith(googleTestAdMobPrefix)) {
+            "ADMOB_APP_ID must be a production app id."
+        }
+        check(!admobBannerId.startsWith(googleTestAdMobPrefix)) {
+            "ADMOB_BANNER_ID must be a production banner id."
         }
     }
 }
