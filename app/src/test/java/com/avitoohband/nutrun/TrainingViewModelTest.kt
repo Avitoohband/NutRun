@@ -1406,6 +1406,131 @@ class TrainingViewModelTest {
     }
 
     @Test
+    fun quickWorkoutStartsEmptyAndDefaultsBlankName() {
+        val model = localTrainingViewModel()
+
+        assertEquals(TrainingMutationResult.Success, model.startQuickWorkout("  "))
+        assertEquals("Quick workout", model.activeWorkout?.name)
+        assertTrue(model.activeWorkout?.exercises.isNullOrEmpty())
+        assertNull(model.activeWorkout?.sourceTemplateId)
+    }
+
+    @Test
+    fun addingExerciseToActiveWorkoutDoesNotMutateSourceTemplate() {
+        val model = localTrainingViewModel()
+        val template = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        val originalTemplateSize = template.exercises.size
+        model.startWorkout(template.id)
+        val exercise = model.exerciseLibrary.first { candidate ->
+            model.activeWorkout!!.exercises.none { it.exercise.id == candidate.id }
+        }
+
+        assertEquals(
+            TrainingMutationResult.Success,
+            model.addExerciseToActiveWorkout(exercise.id)
+        )
+
+        assertEquals(originalTemplateSize + 1, model.activeWorkout!!.exercises.size)
+        assertEquals(
+            originalTemplateSize,
+            model.workoutTemplates.first { it.id == template.id }.exercises.size
+        )
+    }
+
+    @Test
+    fun duplicateActiveExerciseAdditionIsRejected() {
+        val model = localTrainingViewModel()
+        val template = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        model.startWorkout(template.id)
+        val existing = model.activeWorkout!!.exercises.first().exercise.id
+
+        assertTrue(model.addExerciseToActiveWorkout(existing) is TrainingMutationResult.ValidationError)
+        assertEquals(1, model.activeWorkout!!.exercises.count { it.exercise.id == existing })
+    }
+
+    @Test
+    fun skipAndRestoreActiveExercisePreservesPartialSetLogs() {
+        val model = localTrainingViewModel()
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val target = session.exercises.first()
+        model.startWorkout(session.id)
+        model.updateWorkoutSet(
+            targetId = target.id,
+            setNumber = 1,
+            reps = 8,
+            weightKg = 60.0,
+            durationSeconds = null,
+            rpe = 8.0,
+            completed = true
+        )
+
+        assertEquals(TrainingMutationResult.Success, model.skipActiveExercise(target.id))
+        assertTrue(target.id in model.activeWorkout!!.skippedTargetIds)
+        assertEquals(TrainingMutationResult.Success, model.restoreSkippedActiveExercise(target.id))
+        assertTrue(model.activeSetLogs[target.id]!!.first().completed)
+    }
+
+    @Test
+    fun activeSnapshotStaysIsolatedFromTemplateChanges() {
+        val model = localTrainingViewModel()
+        val template = model.workoutTemplates.first { it.exercises.size > 1 }
+        model.startWorkout(template.id)
+        val snapshotIds = model.activeWorkout!!.exercises.map(ExerciseTarget::id)
+        val index = model.workoutTemplates.indexOfFirst { it.id == template.id }
+        model.workoutTemplates[index] = model.workoutTemplates[index].copy(
+            exercises = model.workoutTemplates[index].exercises.drop(1)
+        )
+
+        assertEquals(snapshotIds, model.activeWorkout!!.exercises.map(ExerciseTarget::id))
+    }
+
+    @Test
+    fun finishingRecordsSkippedExercisesInHistory() {
+        val model = localTrainingViewModel()
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        val skipped = session.exercises.first()
+        model.startWorkout(session.id)
+        model.skipActiveExercise(skipped.id)
+        model.finishWorkout()
+
+        val record = model.workoutHistory.single()
+        assertEquals(1, record.skippedExercises.size)
+        assertEquals(skipped.id, record.skippedExercises.single().targetId)
+    }
+
+    @Test
+    fun restTimerSchedulesAndCancelsThroughRuntime() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        val program = defaultTrainingProgram(builtInExerciseCatalog())
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity(
+                "account-a",
+                encodeTrainingState(
+                    workoutTemplates = program.templates,
+                    weeklyDayPlans = program.dayPlans
+                ),
+                1L
+            )
+        )
+        val model = localTrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+        runtime.restTimerSchedules.clear()
+        runtime.restTimerCancellations.clear()
+
+        val template = model.workoutTemplates.first { it.exercises.isNotEmpty() }
+        model.startWorkout(template.id)
+        assertNotNull(model.activeWorkout)
+        model.startRestTimer(seconds = 30)
+
+        assertNotNull(model.restTimerEndAtMillis)
+        assertEquals(1, runtime.restTimerSchedules.size)
+        model.skipRestTimer()
+        assertEquals(1, runtime.restTimerCancellations.size)
+    }
+
+    @Test
     fun completedSetsCreateStructuredHistoryAndBecomePreviousValues() {
         val model = localTrainingViewModel()
         val session = model.sessions.first { it.id == "session-monday-push-biceps" }
@@ -1523,8 +1648,8 @@ class TrainingViewModelTest {
                 activeWorkoutLayoutMode = ActiveWorkoutLayoutMode.GRID
             )
         )
-        val model = localTrainingViewModel(runtime, this)
-        runtime.trainingStates.emit(TrainingStateEntity("account-a", "{}", 1L))
+        val model = localTrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", "{}", 1L))
         withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
 
         assertEquals(ActiveWorkoutLayoutMode.GRID, model.activeWorkoutLayoutMode)
@@ -1535,8 +1660,8 @@ class TrainingViewModelTest {
         val runtime = FakeTrainingViewModelRuntime(
             session = SessionPreferences(authenticatedUserId = "account-a")
         )
-        val model = localTrainingViewModel(runtime, this)
-        runtime.trainingStates.emit(TrainingStateEntity("account-a", "{}", 1L))
+        val model = localTrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", "{}", 1L))
         withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
 
         model.updateActiveWorkoutLayoutMode(ActiveWorkoutLayoutMode.GRID)
@@ -1554,8 +1679,8 @@ class TrainingViewModelTest {
             session = SessionPreferences(authenticatedUserId = "account-a")
         )
         runtime.layoutModeFailure = RuntimeException("layout save failed")
-        val model = localTrainingViewModel(runtime, this)
-        runtime.trainingStates.emit(TrainingStateEntity("account-a", "{}", 1L))
+        val model = localTrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        runtime.trainingStates.tryEmit(TrainingStateEntity("account-a", "{}", 1L))
         withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
 
         model.updateActiveWorkoutLayoutMode(ActiveWorkoutLayoutMode.GRID)
@@ -2181,6 +2306,17 @@ class TrainingViewModelTest {
         override suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode) {
             layoutModeFailure?.let { throw it }
             sessionState.value = sessionState.value.copy(activeWorkoutLayoutMode = mode)
+        }
+
+        val restTimerSchedules = mutableListOf<Triple<String, String, Long>>()
+        val restTimerCancellations = mutableListOf<String>()
+
+        override fun scheduleRestTimer(userId: String, activeWorkoutId: String, endAtMillis: Long) {
+            restTimerSchedules += Triple(userId, activeWorkoutId, endAtMillis)
+        }
+
+        override fun cancelRestTimer(userId: String) {
+            restTimerCancellations += userId
         }
 
         private data class SaveControl(

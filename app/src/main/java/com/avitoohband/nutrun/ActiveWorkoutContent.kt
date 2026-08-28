@@ -71,16 +71,36 @@ internal fun ActiveWorkoutContent(
     onCancelRequest: () -> Unit,
     onFinishRequest: () -> Unit
 ) {
+    val active = model.activeWorkout ?: return
     val session = model.activeSession() ?: return
     val targets = session.exercises
-    if (targets.isEmpty()) return
+    if (targets.isEmpty()) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize().testTag("active-workout"),
+            bottomBar = {
+                ActiveWorkoutBottomBar(
+                    focusedIndex = 0,
+                    lastIndex = 0,
+                    onPrevious = {},
+                    onNext = {},
+                    onCancelRequest = onCancelRequest,
+                    onFinishRequest = onFinishRequest
+                )
+            }
+        ) { innerPadding ->
+            QuickWorkoutEmptyState(
+                model = model,
+                onExerciseAdded = { /* recomposition updates list */ },
+                modifier = Modifier.fillMaxSize().padding(innerPadding)
+            )
+        }
+        return
+    }
     var focusedIndex by rememberSaveable(session.id) { mutableIntStateOf(0) }
     LaunchedEffect(session.id, targets.size) {
         focusedIndex = focusedIndex.coerceIn(0, targets.lastIndex)
     }
-    val startedAtMillis = remember(session.id, model.activeWorkoutStartedAtMillis) {
-        model.activeWorkoutStartedAtMillis ?: System.currentTimeMillis()
-    }
+    val startedAtMillis = active.startedAtMillis
     var elapsedClockMillis by remember(startedAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(startedAtMillis) {
         while (true) {
@@ -92,10 +112,11 @@ internal fun ActiveWorkoutContent(
     val setDrafts = remember(session.id, model.usesMetricUnits) {
         mutableStateMapOf<String, WorkoutSetInput>()
     }
-    val completedLogicalTargets = session.completedLogicalTargetCount(model.completedExerciseIds)
-    val totalLogicalTargets = session.logicalTargetCount()
+    val completedLogicalTargets = active.completedLogicalTargetCount()
+    val resolvedLogicalTargets = active.resolvedLogicalTargetCount()
+    val totalLogicalTargets = active.logicalTargetCount()
     fun requestFinish() {
-        if (completedLogicalTargets < totalLogicalTargets) {
+        if (resolvedLogicalTargets < totalLogicalTargets) {
             showFinishReview = true
         } else {
             onFinishRequest()
@@ -134,6 +155,8 @@ internal fun ActiveWorkoutContent(
         )
     }
     val target = targets[focusedIndex.coerceIn(0, targets.lastIndex)]
+    val isTargetSkipped = target.id in active.skippedTargetIds
+    val timerEnd = model.restTimerEndAtMillis
 
     Scaffold(
         modifier = Modifier.fillMaxSize().testTag("active-workout"),
@@ -181,6 +204,22 @@ internal fun ActiveWorkoutContent(
                         progress = { (focusedIndex + 1f) / targets.size },
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (timerEnd != null) {
+                        ActiveWorkoutRestTimer(
+                            endAtMillis = timerEnd,
+                            nowMillis = elapsedClockMillis,
+                            onAddTime = model::addRestTime,
+                            onSkip = model::skipRestTimer
+                        )
+                    }
+                    ActiveWorkoutActions(
+                        model = model,
+                        focusedTargetId = target.id,
+                        onExerciseAdded = { exerciseId ->
+                            val newIndex = targets.indexOfLast { it.exercise.id == exerciseId }
+                            if (newIndex >= 0) focusedIndex = newIndex
+                        }
+                    )
                 }
             }
         },
@@ -200,22 +239,20 @@ internal fun ActiveWorkoutContent(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            val timerEnd = model.restTimerEndAtMillis
-            if (timerEnd != null) {
-                item(key = "rest-timer") {
-                    ActiveRestTimer(
-                        endAtMillis = timerEnd,
-                        onAddTime = model::addRestTime,
-                        onSkip = model::skipRestTimer
+            item(key = target.id) {
+                if (isTargetSkipped) {
+                    SkippedExerciseCard(
+                        target = target,
+                        metric = model.usesMetricUnits,
+                        onUndo = { model.restoreSkippedActiveExercise(target.id) }
+                    )
+                } else {
+                    ActiveExerciseCard(
+                        model = model,
+                        target = target,
+                        setDrafts = setDrafts
                     )
                 }
-            }
-            item(key = target.id) {
-                ActiveExerciseCard(
-                    model = model,
-                    target = target,
-                    setDrafts = setDrafts
-                )
             }
             session.guidance.forEachIndexed { index, guidance ->
                 item(key = "guidance-$index") {
@@ -846,51 +883,6 @@ private fun WorkoutDecimalField(
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true
     )
-}
-
-@Composable
-private fun ActiveRestTimer(
-    endAtMillis: Long,
-    onAddTime: () -> Unit,
-    onSkip: () -> Unit
-) {
-    var currentTime by remember(endAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(endAtMillis) {
-        while (currentTime < endAtMillis) {
-            delay(1_000)
-            currentTime = System.currentTimeMillis()
-        }
-    }
-    val remainingSeconds = ((endAtMillis - currentTime + 999) / 1_000).coerceAtLeast(0).toInt()
-    if (remainingSeconds == 0) return
-    Card(
-        modifier = Modifier.semantics {
-            contentDescription = "Rest timer, ${remainingSeconds / 60}:${"%02d".format(remainingSeconds % 60)} remaining"
-        },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text("Rest", fontWeight = FontWeight.Bold)
-            Text("%d:%02d".format(remainingSeconds / 60, remainingSeconds % 60))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(
-                    onClick = onAddTime,
-                    modifier = Modifier.semantics { contentDescription = "Add 30 seconds to rest timer" }
-                ) {
-                    Text("Add 30 seconds")
-                }
-                TextButton(
-                    onClick = onSkip,
-                    modifier = Modifier.semantics { contentDescription = "Skip rest timer" }
-                ) {
-                    Text("Skip")
-                }
-            }
-        }
-    }
 }
 
 private fun WorkoutSetLog.toWorkoutSetInput(metric: Boolean) = WorkoutSetInput(

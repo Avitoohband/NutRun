@@ -163,6 +163,13 @@ data class WorkoutSetLog(
             ?.let { weight -> weight * (1.0 + (reps ?: 0) / 30.0) }
 }
 
+data class SkippedWorkoutExercise(
+    val targetId: String,
+    val exerciseId: String,
+    val exerciseName: String,
+    val completedSetCount: Int
+)
+
 data class WorkoutRecord(
     val id: String,
     val sessionId: String,
@@ -173,7 +180,8 @@ data class WorkoutRecord(
     val completedTargetIds: Set<String>,
     val completedLogicalTargets: Int,
     val totalLogicalTargets: Int,
-    val sets: List<WorkoutSetLog>
+    val sets: List<WorkoutSetLog>,
+    val skippedExercises: List<SkippedWorkoutExercise> = emptyList()
 ) {
     val totalVolumeKg: Double get() = sets.sumOf(WorkoutSetLog::volumeKg)
 }
@@ -291,7 +299,13 @@ data class WorkoutSummary(
     val sessionName: String,
     val completedExercises: Int,
     val totalExercises: Int,
-    val completedOn: LocalDate = LocalDate.now()
+    val completedOn: LocalDate = LocalDate.now(),
+    val skippedExercises: Int = 0,
+    val sourceTemplateId: String? = null,
+    val reusableExercises: List<ExerciseTarget> = emptyList(),
+    val guidance: List<String> = emptyList(),
+    val sessionChanged: Boolean = false,
+    val isQuickWorkout: Boolean = false
 )
 
 enum class SuggestionDecision { PENDING, ACCEPTED, POSTPONED, REJECTED }

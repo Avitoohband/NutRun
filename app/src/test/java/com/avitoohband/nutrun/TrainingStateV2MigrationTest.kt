@@ -31,9 +31,37 @@ class TrainingStateV2MigrationTest {
         )
         val restored = requireNotNull(decodeTrainingState(payload, builtInExerciseCatalog()))
 
-        assertEquals(2, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(3, JSONObject(payload).getInt("schemaVersion"))
         assertEquals(custom, restored.customExercises.single())
         assertEquals(4, restored.workoutTemplates.single().exercises.single().sets)
+    }
+
+    @Test
+    fun v3RoundTripPreservesActiveWorkoutSnapshot() {
+        val exercise = builtInExerciseCatalog().first { it.id == "bench-press" }
+        val template = WorkoutTemplate(
+            "template-active",
+            "Active day",
+            listOf(
+                ExerciseTarget(
+                    "target-1",
+                    exercise,
+                    sets = 3
+                )
+            )
+        )
+        val active = ActiveWorkoutSession.fromTemplate(template, startedAtMillis = 42L)
+        val payload = encodeTrainingState(
+            workoutTemplates = listOf(template),
+            activeWorkout = active
+        )
+
+        val restored = requireNotNull(decodeTrainingState(payload, builtInExerciseCatalog()))
+
+        assertEquals(3, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(template.exercises, restored.activeWorkout?.exercises)
+        assertEquals(42L, restored.activeWorkout?.startedAtMillis)
+        assertEquals(active.setLogs, restored.activeWorkout?.setLogs)
     }
 
     @Test

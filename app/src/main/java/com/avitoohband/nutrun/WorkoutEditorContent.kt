@@ -19,7 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -48,6 +51,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.UUID
@@ -83,6 +89,21 @@ internal fun WorkoutEditorContent(
     }
 
     BackHandler(onBack = requestBack)
+
+    val exerciseGroups = remember(targets.toList()) {
+        val groups = mutableListOf<List<ExerciseTarget>>()
+        val seenAlternativeGroups = mutableSetOf<String>()
+        for (target in targets) {
+            val groupId = target.alternativeGroupId
+            if (groupId == null) {
+                groups += listOf(target)
+            } else if (groupId !in seenAlternativeGroups) {
+                seenAlternativeGroups += groupId
+                groups += targets.filter { it.alternativeGroupId == groupId }
+            }
+        }
+        groups
+    }
 
     if (confirmDiscard) {
         AlertDialog(
@@ -197,16 +218,103 @@ internal fun WorkoutEditorContent(
             if (targets.isEmpty()) {
                 item { Text("No exercises yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            items(targets, key = ExerciseTarget::id) { target ->
-                TargetEditorRow(
-                    target = target,
-                    metric = model.usesMetricUnits,
-                    onSets = { sets ->
-                        val index = targets.indexOfFirst { it.id == target.id }
-                        if (index >= 0) targets[index] = targets[index].copy(sets = sets)
-                    },
-                    onRemove = { removeTarget = target }
-                )
+            items(exerciseGroups.size, key = { index -> exerciseGroups[index].first().id }) { groupIndex ->
+                val group = exerciseGroups[groupIndex]
+                val anchorTarget = group.first()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            customActions = listOf(
+                                CustomAccessibilityAction(
+                                    label = "Move up",
+                                    action = {
+                                        if (groupIndex > 0) {
+                                            val reordered = moveExerciseGroup(
+                                                targets.toList(),
+                                                anchorTarget.id,
+                                                groupIndex - 1
+                                            )
+                                            targets.clear()
+                                            targets.addAll(reordered)
+                                        }
+                                        true
+                                    }
+                                ),
+                                CustomAccessibilityAction(
+                                    label = "Move down",
+                                    action = {
+                                        if (groupIndex < exerciseGroups.lastIndex) {
+                                            val reordered = moveExerciseGroup(
+                                                targets.toList(),
+                                                anchorTarget.id,
+                                                groupIndex + 1
+                                            )
+                                            targets.clear()
+                                            targets.addAll(reordered)
+                                        }
+                                        true
+                                    }
+                                )
+                            )
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.DragHandle,
+                            contentDescription = "Reorder ${anchorTarget.exercise.name}",
+                            modifier = Modifier.testTag("workout-reorder-${anchorTarget.id}")
+                        )
+                        IconButton(
+                            onClick = {
+                                if (groupIndex > 0) {
+                                    val reordered = moveExerciseGroup(
+                                        targets.toList(),
+                                        anchorTarget.id,
+                                        groupIndex - 1
+                                    )
+                                    targets.clear()
+                                    targets.addAll(reordered)
+                                }
+                            },
+                            enabled = groupIndex > 0,
+                            modifier = Modifier.testTag("workout-move-up-${anchorTarget.id}")
+                        ) {
+                            Icon(Icons.Default.ArrowUpward, "Move up")
+                        }
+                        IconButton(
+                            onClick = {
+                                if (groupIndex < exerciseGroups.lastIndex) {
+                                    val reordered = moveExerciseGroup(
+                                        targets.toList(),
+                                        anchorTarget.id,
+                                        groupIndex + 1
+                                    )
+                                    targets.clear()
+                                    targets.addAll(reordered)
+                                }
+                            },
+                            enabled = groupIndex < exerciseGroups.lastIndex,
+                            modifier = Modifier.testTag("workout-move-down-${anchorTarget.id}")
+                        ) {
+                            Icon(Icons.Default.ArrowDownward, "Move down")
+                        }
+                    }
+                    group.forEach { target ->
+                        TargetEditorRow(
+                            target = target,
+                            metric = model.usesMetricUnits,
+                            onSets = { sets ->
+                                val index = targets.indexOfFirst { it.id == target.id }
+                                if (index >= 0) targets[index] = targets[index].copy(sets = sets)
+                            },
+                            onRemove = { removeTarget = target }
+                        )
+                    }
+                }
             }
             item {
                 HorizontalDivider()

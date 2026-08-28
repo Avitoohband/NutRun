@@ -75,6 +75,36 @@ fun filterWorkoutTemplates(
     return templates.filter { it.name.contains(normalizedQuery, ignoreCase = true) }
 }
 
+private fun List<ExerciseTarget>.toLogicalExerciseGroups(): List<List<ExerciseTarget>> {
+    val groups = mutableListOf<List<ExerciseTarget>>()
+    val seenAlternativeGroups = mutableSetOf<String>()
+    for (target in this) {
+        val groupId = target.alternativeGroupId
+        if (groupId == null) {
+            groups += listOf(target)
+        } else if (groupId !in seenAlternativeGroups) {
+            seenAlternativeGroups += groupId
+            groups += filter { it.alternativeGroupId == groupId }
+        }
+    }
+    return groups
+}
+
+fun moveExerciseGroup(
+    targets: List<ExerciseTarget>,
+    targetId: String,
+    destinationGroupIndex: Int
+): List<ExerciseTarget> {
+    val groups = targets.toLogicalExerciseGroups()
+    val source = groups.indexOfFirst { group -> group.any { it.id == targetId } }
+    if (source == -1 || destinationGroupIndex !in groups.indices || source == destinationGroupIndex) {
+        return targets
+    }
+    return groups.toMutableList().apply {
+        add(destinationGroupIndex, removeAt(source))
+    }.flatten()
+}
+
 fun moveAssignedWorkout(
     ids: List<String>,
     fromIndex: Int,

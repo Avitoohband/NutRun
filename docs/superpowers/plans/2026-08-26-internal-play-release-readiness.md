@@ -18,6 +18,10 @@
 - Do not add RTDN, Crashlytics, Google Sign-In, R8, mobile rate limiting, or sync pagination unless internal testing makes one a blocker.
 - Do not commit or push implementation changes unless Avi explicitly requests it.
 
+## Prerequisite: Flexible Workouts and Rest Timer
+
+Complete and stabilize the feature package in `docs/superpowers/plans/2026-08-27-flexible-workouts-and-rest-timer.md` before starting **Task 3** (Firebase/backend release configuration). Task 3 assumes schema-v3 active-workout snapshots, Quick workout, sticky rest timer, and notification countdown are green in CI and connected tests.
+
 ---
 
 ## Task 1: Establish a reproducible baseline and CI gate

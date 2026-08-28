@@ -19,6 +19,7 @@ import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingStateEntity
 import com.avitoohband.nutrun.reminders.ReminderRescheduleRecoveryScheduler
 import com.avitoohband.nutrun.reminders.ReminderSystem
+import com.avitoohband.nutrun.reminders.RestTimerNotificationCoordinator
 import com.avitoohband.nutrun.reminders.SupplementReminderScheduler
 import com.avitoohband.nutrun.reminders.TrainingReminderScheduler
 import com.avitoohband.nutrun.reminders.rescheduleReminderSystemsWithRecovery
@@ -79,11 +80,8 @@ private data class TrainingMutationSnapshot(
     val customExercises: List<Exercise>,
     val scheduleOverrides: List<TrainingScheduleOverride>,
     val selectedSessionId: String?,
-    val activeWorkoutSessionId: String?,
-    val activeWorkoutStartedAtMillis: Long?,
-    val completedExerciseIds: Map<String, Boolean>,
-    val activeSetLogs: Map<String, List<WorkoutSetLog>>,
-    val restTimerEndAtMillis: Long?
+    val activeWorkout: ActiveWorkoutSession?,
+    val lastWorkoutSummary: WorkoutSummary?
 )
 
 
@@ -106,6 +104,8 @@ internal interface TrainingViewModelRuntime {
     suspend fun scheduleSupplement(userId: String, settings: SupplementReminderSettingsEntity)
     suspend fun scheduleRecovery(userId: String, system: ReminderSystem)
     suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode)
+    fun scheduleRestTimer(userId: String, activeWorkoutId: String, endAtMillis: Long) = Unit
+    fun cancelRestTimer(userId: String) = Unit
 }
 
 private class ProductionTrainingViewModelRuntime(
@@ -114,7 +114,8 @@ private class ProductionTrainingViewModelRuntime(
     private val trainingReminderScheduler: TrainingReminderScheduler?,
     private val reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler?,
     private val supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator?,
-    private val supplementReminderScheduler: SupplementReminderScheduler?
+    private val supplementReminderScheduler: SupplementReminderScheduler?,
+    private val restTimerNotificationCoordinator: RestTimerNotificationCoordinator?
 ) : TrainingViewModelRuntime {
     override val session: Flow<SessionPreferences> = preferences.session
 
@@ -161,6 +162,14 @@ private class ProductionTrainingViewModelRuntime(
     override suspend fun setActiveWorkoutLayoutMode(userId: String, mode: ActiveWorkoutLayoutMode) {
         preferences.setActiveWorkoutLayoutMode(userId, mode)
     }
+
+    override fun scheduleRestTimer(userId: String, activeWorkoutId: String, endAtMillis: Long) {
+        restTimerNotificationCoordinator?.schedule(userId, activeWorkoutId, endAtMillis)
+    }
+
+    override fun cancelRestTimer(userId: String) {
+        restTimerNotificationCoordinator?.cancel(userId)
+    }
 }
 
 @HiltViewModel
@@ -176,7 +185,8 @@ class TrainingViewModel private constructor(
         trainingReminderScheduler: TrainingReminderScheduler? = null,
         reminderRescheduleRecoveryScheduler: ReminderRescheduleRecoveryScheduler? = null,
         supplementReminderSchedulingCoordinator: SupplementReminderSchedulingCoordinator? = null,
-        supplementReminderScheduler: SupplementReminderScheduler? = null
+        supplementReminderScheduler: SupplementReminderScheduler? = null,
+        restTimerNotificationCoordinator: RestTimerNotificationCoordinator? = null
     ) : this(
         runtime = if (repository != null && preferences != null) {
             ProductionTrainingViewModelRuntime(
@@ -185,7 +195,8 @@ class TrainingViewModel private constructor(
                 trainingReminderScheduler,
                 reminderRescheduleRecoveryScheduler,
                 supplementReminderSchedulingCoordinator,
-                supplementReminderScheduler
+                supplementReminderScheduler,
+                restTimerNotificationCoordinator
             )
         } else {
             null
@@ -240,6 +251,8 @@ class TrainingViewModel private constructor(
         private set
     var activeWorkoutSessionId by mutableStateOf<String?>(null)
         private set
+    var activeWorkout by mutableStateOf<ActiveWorkoutSession?>(null)
+        private set
     var lastWorkoutSummary by mutableStateOf<WorkoutSummary?>(null)
         private set
     var suggestionDecision by mutableStateOf(SuggestionDecision.PENDING)
@@ -280,6 +293,55 @@ class TrainingViewModel private constructor(
     val scheduleOverrides = mutableStateListOf<TrainingScheduleOverride>()
     val activeSetLogs = mutableStateMapOf<String, List<WorkoutSetLog>>()
 
+    private fun syncActiveCompatFromSnapshot(session: ActiveWorkoutSession?) {
+        activeWorkoutSessionId = session?.sourceTemplateId ?: session?.id
+        activeWorkoutStartedAtMillis = session?.startedAtMillis
+        restTimerEndAtMillis = session?.restTimerEndAtMillis
+        completedExerciseIds.clear()
+        session?.exercises?.forEach { target ->
+            completedExerciseIds[target.id] = target.id in session.completedTargetIds
+        }
+        activeSetLogs.clear()
+        session?.setLogs?.let { activeSetLogs.putAll(it) }
+    }
+
+    private fun applyActiveWorkout(session: ActiveWorkoutSession?) {
+        activeWorkout = session
+        syncActiveCompatFromSnapshot(session)
+    }
+
+    private fun updateActiveWorkout(transform: (ActiveWorkoutSession) -> ActiveWorkoutSession): Boolean {
+        val current = activeWorkout ?: return false
+        val updated = transform(current).sanitize()
+        applyActiveWorkout(updated)
+        return true
+    }
+
+    private fun scheduleRestTimerNotification(endAtMillis: Long) {
+        val userId = currentUserId ?: return
+        val activeId = activeWorkout?.id ?: return
+        runtime?.scheduleRestTimer(userId, activeId, endAtMillis)
+    }
+
+    private fun cancelRestTimerNotification() {
+        currentUserId?.let { runtime?.cancelRestTimer(it) }
+    }
+
+    private fun clearActiveWorkoutState() {
+        cancelRestTimerNotification()
+        applyActiveWorkout(null)
+    }
+
+    private fun restoreActiveTimerFromSnapshot(session: ActiveWorkoutSession): ActiveWorkoutSession {
+        val restoredEnd = session.restTimerEndAtMillis
+            ?.takeIf { it > System.currentTimeMillis() }
+        return if (restoredEnd == null && session.restTimerEndAtMillis != null) {
+            session.copy(restTimerEndAtMillis = null).sanitize()
+        } else {
+            session.copy(restTimerEndAtMillis = restoredEnd).sanitize()
+        }
+    }
+
     init {
         runtime?.let { runtime ->
             modelScope.launch {
@@ -287,7 +349,10 @@ class TrainingViewModel private constructor(
                     persistJob?.cancel()
                     persistenceGeneration += 1
                     supplementReschedulePending = false
+                    val previousUserId = currentUserId
                     currentUserId = session.authenticatedUserId
+                    previousUserId?.takeIf { it != session.authenticatedUserId }
+                        ?.let { runtime.cancelRestTimer(it) }
                     restoredPayload = null
                     mutationError = null
                     restoredUserId = null
@@ -964,28 +1029,134 @@ class TrainingViewModel private constructor(
 
     fun startWorkout(sessionId: String) {
         if (!trainingMutationsReady) return
-        val session = workoutTemplates.firstOrNull { it.id == sessionId } ?: return
-        if (session.exercises.isEmpty()) return
-        val startedAt = System.currentTimeMillis()
-        activeWorkoutSessionId = sessionId
-        activeWorkoutStartedAtMillis = startedAt
-        completedExerciseIds.clear()
-        activeSetLogs.clear()
-        session.exercises.forEach { target ->
-            activeSetLogs[target.id] = (1..target.sets.coerceAtLeast(1)).map { setNumber ->
-                WorkoutSetLog(
-                    id = "${target.id}:$startedAt:$setNumber",
-                    targetId = target.id,
-                    exerciseId = target.exercise.id,
-                    exerciseName = target.exercise.name,
-                    setNumber = setNumber,
-                    reps = target.reps.takeIf { target.durationMinutes == null },
-                    weightKg = target.weightKg,
-                    durationSeconds = target.durationMinutes?.times(60)
+        val template = workoutTemplates.firstOrNull { it.id == sessionId } ?: return
+        if (template.exercises.isEmpty()) return
+        val session = ActiveWorkoutSession.fromTemplate(template)
+        applyActiveWorkout(session)
+        persistTrainingState()
+    }
+
+    fun startQuickWorkout(name: String?): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val trimmed = name?.trim().orEmpty()
+        val workoutName = trimmed.ifEmpty { "Quick workout" }
+        val session = ActiveWorkoutSession.quickWorkout(workoutName)
+        applyActiveWorkout(session)
+        persistTrainingState()
+        return TrainingMutationResult.Success
+    }
+
+    fun addExerciseToActiveWorkout(exerciseId: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val active = activeWorkout
+            ?: return TrainingMutationResult.ValidationError("No active workout is available.")
+        val exercise = exerciseLibrary.firstOrNull { it.id == exerciseId }
+            ?: return TrainingMutationResult.ValidationError("Exercise not found.")
+        if (active.exercises.any { it.exercise.id == exerciseId }) {
+            return TrainingMutationResult.ValidationError("Exercise is already in this workout.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        val startedAt = active.startedAtMillis
+        val target = ExerciseTarget(id = id("target"), exercise = exercise)
+        val setLogs = (1..target.sets.coerceAtLeast(1)).map { setNumber ->
+            WorkoutSetLog(
+                id = "${target.id}:$startedAt:$setNumber",
+                targetId = target.id,
+                exerciseId = exercise.id,
+                exerciseName = exercise.name,
+                setNumber = setNumber,
+                reps = target.reps.takeIf { target.durationMinutes == null },
+                weightKg = target.weightKg,
+                durationSeconds = target.durationMinutes?.times(60)
+            )
+        }
+        if (
+            !updateActiveWorkout {
+                it.copy(
+                    exercises = it.exercises + target,
+                    setLogs = it.setLogs + (target.id to setLogs)
                 )
             }
+        ) {
+            return TrainingMutationResult.ValidationError("No active workout is available.")
         }
-        persistTrainingState()
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun skipActiveExercise(targetId: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val active = activeWorkout
+            ?: return TrainingMutationResult.ValidationError("No active workout is available.")
+        if (active.exercises.none { it.id == targetId }) {
+            return TrainingMutationResult.ValidationError("Exercise target not found.")
+        }
+        if (targetId in active.skippedTargetIds) {
+            return TrainingMutationResult.ValidationError("Exercise is already skipped.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        if (
+            !updateActiveWorkout {
+                it.copy(
+                    skippedTargetIds = it.skippedTargetIds + targetId,
+                    completedTargetIds = it.completedTargetIds - targetId
+                )
+            }
+        ) {
+            return TrainingMutationResult.ValidationError("No active workout is available.")
+        }
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun restoreSkippedActiveExercise(targetId: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val active = activeWorkout
+            ?: return TrainingMutationResult.ValidationError("No active workout is available.")
+        if (targetId !in active.skippedTargetIds) {
+            return TrainingMutationResult.ValidationError("Exercise is not skipped.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        if (!updateActiveWorkout { it.copy(skippedTargetIds = it.skippedTargetIds - targetId) }) {
+            return TrainingMutationResult.ValidationError("No active workout is available.")
+        }
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun applyLastWorkoutToSource(): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val summary = lastWorkoutSummary
+            ?: return TrainingMutationResult.ValidationError("No finished workout is available.")
+        val sourceId = summary.sourceTemplateId
+            ?: return TrainingMutationResult.ValidationError("This workout has no source template.")
+        val index = workoutTemplates.indexOfFirst { it.id == sourceId }
+        if (index < 0) {
+            return TrainingMutationResult.ValidationError("Source workout no longer exists.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        workoutTemplates[index] = workoutTemplates[index].copy(exercises = summary.reusableExercises)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun saveLastWorkoutAsTemplate(name: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val summary = lastWorkoutSummary
+            ?: return TrainingMutationResult.ValidationError("No finished workout is available.")
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            return TrainingMutationResult.ValidationError("Workout name cannot be blank.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        val template = WorkoutTemplate.userCreated(
+            name = trimmed,
+            exercises = summary.reusableExercises,
+            guidance = summary.guidance
+        )
+        workoutTemplates += template
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
     }
 
     fun updateWorkoutSet(
@@ -1002,13 +1173,13 @@ class TrainingViewModel private constructor(
         require(weightKg == null || weightKg in 0.0..2_000.0)
         require(durationSeconds == null || durationSeconds in 0..86_400)
         require(rpe == null || rpe in 0.0..10.0)
-        val session = activeSession() ?: return
+        val session = activeWorkout?.toTrainingSession() ?: return
         val target = session.exercises.firstOrNull { it.id == targetId } ?: return
         val wasCompleted = activeSetLogs[targetId]
             .orEmpty()
             .firstOrNull { it.setNumber == setNumber }
             ?.completed == true
-        activeSetLogs[targetId] = activeSetLogs[targetId].orEmpty().map { set ->
+        val updatedLogs = activeSetLogs[targetId].orEmpty().map { set ->
             if (set.setNumber == setNumber) {
                 set.copy(
                     reps = reps,
@@ -1021,6 +1192,7 @@ class TrainingViewModel private constructor(
                 set
             }
         }
+        activeSetLogs[targetId] = updatedLogs
         if (completed && target.alternativeGroupId != null) {
             session.exercises
                 .filter {
@@ -1033,9 +1205,32 @@ class TrainingViewModel private constructor(
                     completedExerciseIds[alternative.id] = false
                 }
         }
-        completedExerciseIds[targetId] =
-            activeSetLogs[targetId].orEmpty().isNotEmpty() &&
-                activeSetLogs[targetId].orEmpty().all(WorkoutSetLog::completed)
+        val targetCompleted = updatedLogs.isNotEmpty() && updatedLogs.all(WorkoutSetLog::completed)
+        completedExerciseIds[targetId] = targetCompleted
+        updateActiveWorkout { active ->
+            var completedIds = active.completedTargetIds
+            if (targetCompleted) {
+                completedIds = completedIds + targetId
+            } else {
+                completedIds = completedIds - targetId
+            }
+            if (completed && target.alternativeGroupId != null) {
+                session.exercises
+                    .filter { it.alternativeGroupId == target.alternativeGroupId && it.id != targetId }
+                    .forEach { alternative ->
+                        completedIds = completedIds - alternative.id
+                    }
+            }
+            active.copy(
+                setLogs = active.setLogs + (targetId to updatedLogs) +
+                    session.exercises
+                        .filter { it.alternativeGroupId == target.alternativeGroupId && it.id != targetId }
+                        .associate { alternative ->
+                            alternative.id to activeSetLogs[alternative.id].orEmpty()
+                        },
+                completedTargetIds = completedIds
+            )
+        }
         if (completed && !wasCompleted) startRestTimer()
         persistTrainingState()
     }
@@ -1095,23 +1290,34 @@ class TrainingViewModel private constructor(
 
     fun startRestTimer(seconds: Int = defaultRestTimerSeconds) {
         if (!trainingMutationsReady) return
-        restTimerEndAtMillis = System.currentTimeMillis() + seconds.coerceAtLeast(1) * 1_000L
+        val endAt = System.currentTimeMillis() + seconds.coerceAtLeast(1) * 1_000L
+        updateActiveWorkout { it.copy(restTimerEndAtMillis = endAt) }
+        restTimerEndAtMillis = endAt
+        scheduleRestTimerNotification(endAt)
+        persistTrainingState()
     }
 
     fun addRestTime(seconds: Int = 30) {
         if (!trainingMutationsReady) return
-        restTimerEndAtMillis = (restTimerEndAtMillis ?: System.currentTimeMillis()) +
+        val endAt = (restTimerEndAtMillis ?: System.currentTimeMillis()) +
             seconds.coerceAtLeast(1) * 1_000L
+        updateActiveWorkout { it.copy(restTimerEndAtMillis = endAt) }
+        restTimerEndAtMillis = endAt
+        scheduleRestTimerNotification(endAt)
+        persistTrainingState()
     }
 
     fun skipRestTimer() {
         if (!trainingMutationsReady) return
+        updateActiveWorkout { it.copy(restTimerEndAtMillis = null) }
         restTimerEndAtMillis = null
+        cancelRestTimerNotification()
+        persistTrainingState()
     }
 
     fun toggleExerciseComplete(targetId: String, completed: Boolean) {
         if (!trainingMutationsReady) return
-        val session = activeSession()
+        val session = activeWorkout?.toTrainingSession()
         val target = session?.exercises?.firstOrNull { it.id == targetId }
         if (completed && target?.alternativeGroupId != null) {
             session.exercises
@@ -1122,49 +1328,90 @@ class TrainingViewModel private constructor(
                 .forEach { completedExerciseIds[it.id] = false }
         }
         completedExerciseIds[targetId] = completed
+        updateActiveWorkout { active ->
+            var completedIds = if (completed) {
+                active.completedTargetIds + targetId
+            } else {
+                active.completedTargetIds - targetId
+            }
+            if (completed && target?.alternativeGroupId != null) {
+                session.exercises
+                    .filter { it.alternativeGroupId == target.alternativeGroupId && it.id != targetId }
+                    .forEach { alternative ->
+                        completedIds = completedIds - alternative.id
+                    }
+            }
+            active.copy(completedTargetIds = completedIds)
+        }
         persistTrainingState()
     }
 
     fun finishWorkout() {
         if (!trainingMutationsReady) return
-        val session = activeSession() ?: return
-        val completed = session.completedLogicalTargetCount(completedExerciseIds)
-        val total = session.logicalTargetCount()
+        val active = activeWorkout ?: return
+        val completed = active.completedLogicalTargetCount()
+        val resolved = active.resolvedLogicalTargetCount()
+        val total = active.logicalTargetCount()
         val finishedAt = System.currentTimeMillis()
+        val nonSkippedExercises = active.exercises.filter { it.id !in active.skippedTargetIds }
+        val skippedHistory = active.exercises
+            .filter { it.id in active.skippedTargetIds }
+            .map { target ->
+                SkippedWorkoutExercise(
+                    targetId = target.id,
+                    exerciseId = target.exercise.id,
+                    exerciseName = target.exercise.name,
+                    completedSetCount = active.setLogs[target.id].orEmpty().count(WorkoutSetLog::completed)
+                )
+            }
+        val historySessionId = active.sourceTemplateId ?: active.id
         workoutHistory.add(
             0,
             WorkoutRecord(
                 id = id("workout"),
-                sessionId = session.id,
-                sessionName = session.name,
+                sessionId = historySessionId,
+                sessionName = active.name,
                 performedOn = LocalDate.now(),
-                startedAtMillis = activeWorkoutStartedAtMillis ?: finishedAt,
+                startedAtMillis = active.startedAtMillis,
                 finishedAtMillis = finishedAt,
-                completedTargetIds = completedExerciseIds
-                    .filterValues { it }
-                    .keys,
+                completedTargetIds = active.completedTargetIds,
                 completedLogicalTargets = completed,
                 totalLogicalTargets = total,
-                sets = activeSetLogs.values.flatten()
+                sets = active.setLogs.values.flatten(),
+                skippedExercises = skippedHistory
             )
         )
-        lastWorkoutSummary = WorkoutSummary(session.name, completed, total)
-        history.add(0, "${formatToday()} | ${session.name} | completed $completed/$total targets")
-        activeWorkoutSessionId = null
-        activeWorkoutStartedAtMillis = null
-        completedExerciseIds.clear()
-        activeSetLogs.clear()
-        restTimerEndAtMillis = null
+        val sourceTemplate = active.sourceTemplateId?.let { templateId ->
+            workoutTemplates.firstOrNull { it.id == templateId }
+        }
+        val sessionChanged = when {
+            active.sourceTemplateId == null -> false
+            sourceTemplate == null -> true
+            else -> {
+                val templateIds = sourceTemplate.exercises.map(ExerciseTarget::id)
+                val activeIds = nonSkippedExercises.map(ExerciseTarget::id)
+                templateIds != activeIds || active.skippedTargetIds.isNotEmpty()
+            }
+        }
+        lastWorkoutSummary = WorkoutSummary(
+            sessionName = active.name,
+            completedExercises = completed,
+            totalExercises = total,
+            skippedExercises = active.skippedLogicalTargetCount(),
+            sourceTemplateId = active.sourceTemplateId,
+            reusableExercises = nonSkippedExercises,
+            guidance = active.guidance,
+            sessionChanged = sessionChanged,
+            isQuickWorkout = active.sourceTemplateId == null
+        )
+        history.add(0, "${formatToday()} | ${active.name} | completed $completed/$total targets")
+        clearActiveWorkoutState()
         persistTrainingState()
     }
 
     fun cancelWorkout() {
         if (!trainingMutationsReady) return
-        activeWorkoutSessionId = null
-        activeWorkoutStartedAtMillis = null
-        completedExerciseIds.clear()
-        activeSetLogs.clear()
-        restTimerEndAtMillis = null
+        clearActiveWorkoutState()
         persistTrainingState()
     }
 
@@ -1221,7 +1468,22 @@ class TrainingViewModel private constructor(
         if (index >= 0) history.removeAt(index)
     }
 
-    fun activeSession(): TrainingSession? = activeWorkoutSessionId?.let(::compatibilitySession)
+    fun activeSession(): TrainingSession? = activeWorkout?.let { session ->
+        val weekday = session.sourceTemplateId?.let { templateId ->
+            weeklyDayPlans.firstOrNull { plan -> !plan.isRestDay && templateId in plan.templateIds }?.weekday
+        } ?: DayOfWeek.MONDAY
+        session.toTrainingSession(weekday)
+    }
+
+
+    fun dismissWorkoutSummary() {
+        if (!trainingMutationsReady) return
+        lastWorkoutSummary = null
+        persistTrainingState()
+    }
+
+    fun selectedSession(): TrainingSession? = selectedSessionId?.let(::compatibilitySession)
+
     private fun compatibilitySession(templateId: String): TrainingSession? {
         val template = workoutTemplates.firstOrNull { it.id == templateId } ?: return null
         val weekday = weeklyDayPlans.firstOrNull {
@@ -1235,15 +1497,6 @@ class TrainingViewModel private constructor(
             guidance = template.guidance
         )
     }
-
-
-    fun dismissWorkoutSummary() {
-        if (!trainingMutationsReady) return
-        lastWorkoutSummary = null
-        persistTrainingState()
-    }
-
-    fun selectedSession(): TrainingSession? = selectedSessionId?.let(::compatibilitySession)
 
     fun sessionsForDate(date: LocalDate): List<TrainingSession> =
         templatesForDate(workoutTemplates, weeklyDayPlans, scheduleOverrides, date).map { template ->
@@ -1324,11 +1577,8 @@ class TrainingViewModel private constructor(
         customExercises = customExercises.toList(),
         scheduleOverrides = scheduleOverrides.toList(),
         selectedSessionId = selectedSessionId,
-        activeWorkoutSessionId = activeWorkoutSessionId,
-        activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis,
-        completedExerciseIds = completedExerciseIds.toMap(),
-        activeSetLogs = activeSetLogs.mapValues { (_, sets) -> sets.toList() },
-        restTimerEndAtMillis = restTimerEndAtMillis
+        activeWorkout = activeWorkout,
+        lastWorkoutSummary = lastWorkoutSummary
     )
 
     private fun restoreMutationSnapshot(snapshot: TrainingMutationSnapshot) {
@@ -1341,13 +1591,8 @@ class TrainingViewModel private constructor(
         scheduleOverrides.clear()
         scheduleOverrides.addAll(snapshot.scheduleOverrides)
         selectedSessionId = snapshot.selectedSessionId
-        activeWorkoutSessionId = snapshot.activeWorkoutSessionId
-        activeWorkoutStartedAtMillis = snapshot.activeWorkoutStartedAtMillis
-        completedExerciseIds.clear()
-        completedExerciseIds.putAll(snapshot.completedExerciseIds)
-        activeSetLogs.clear()
-        activeSetLogs.putAll(snapshot.activeSetLogs)
-        restTimerEndAtMillis = snapshot.restTimerEndAtMillis
+        applyActiveWorkout(snapshot.activeWorkout)
+        lastWorkoutSummary = snapshot.lastWorkoutSummary
     }
 
     private fun persistTrainingState(
@@ -1457,19 +1702,15 @@ class TrainingViewModel private constructor(
             supplements = supplements,
             history = history,
             selectedSessionId = selectedSessionId,
-            activeWorkoutSessionId = activeWorkoutSessionId,
-            isWorkoutPaused = false,
-            completedExerciseIds = completedExerciseIds,
             suggestionDecision = suggestionDecision,
             suggestedWeightKg = suggestedWeightKg,
             workoutHistory = workoutHistory,
             scheduleOverrides = scheduleOverrides,
-            activeSetLogs = activeSetLogs,
-            activeWorkoutStartedAtMillis = activeWorkoutStartedAtMillis,
             defaultRestTimerSeconds = defaultRestTimerSeconds,
             customExercises = customExercises,
             workoutTemplates = workoutTemplates,
-            weeklyDayPlans = weeklyDayPlans
+            weeklyDayPlans = weeklyDayPlans,
+            activeWorkout = activeWorkout
         )
 
     private suspend fun rescheduleSupplementReminders(
@@ -1498,18 +1739,17 @@ class TrainingViewModel private constructor(
             history.clear()
             history.addAll(restored.history)
             selectedSessionId = restored.selectedSessionId
-            activeWorkoutSessionId = restored.activeWorkoutSessionId
-            completedExerciseIds.clear()
-            completedExerciseIds.putAll(restored.completedExerciseIds)
+            val restoredActive = restored.activeWorkout?.let(::restoreActiveTimerFromSnapshot)
+            applyActiveWorkout(restoredActive)
+            if (restoredActive?.restTimerEndAtMillis != null) {
+                scheduleRestTimerNotification(restoredActive.restTimerEndAtMillis!!)
+            }
             suggestionDecision = restored.suggestionDecision
             suggestedWeightKg = restored.suggestedWeightKg
             workoutHistory.clear()
             workoutHistory.addAll(restored.workoutHistory)
             scheduleOverrides.clear()
             scheduleOverrides.addAll(restored.scheduleOverrides)
-            activeSetLogs.clear()
-            activeSetLogs.putAll(restored.activeSetLogs)
-            activeWorkoutStartedAtMillis = restored.activeWorkoutStartedAtMillis
             defaultRestTimerSeconds = restored.defaultRestTimerSeconds
             legacyUsesMetricUnits = restored.legacyUsesMetricUnits
         }
@@ -1529,9 +1769,7 @@ class TrainingViewModel private constructor(
         scheduleOverrides.clear()
         activeSetLogs.clear()
         selectedSessionId = null
-        activeWorkoutSessionId = null
-        activeWorkoutStartedAtMillis = null
-        restTimerEndAtMillis = null
+        clearActiveWorkoutState()
         legacyUsesMetricUnits = null
         defaultRestTimerSeconds = 90
         usesMetricUnits = true

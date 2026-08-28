@@ -9,7 +9,7 @@ Exercise on at least one physical Android device after the emulator gate is gree
 | Auth / reset | Sign in, sign out, password reset email flow, invalid credential errors |
 | Onboarding / tutorial | Welcome prompt once per version, skip persistence, Profile replay, demo exclusion |
 | Profile | Edit health, notifications, dark mode, delete account (typed email), sign out |
-| Training | Weekly schedule, workout library, active workout focus mode, rest timer |
+| Training | Weekly schedule, workout library, exercise reorder in editor, Quick workout, active add/skip, sticky rest timer, process restoration, notification countdown |
 | Nutrition | Food search/log, water, favorites, supplements |
 | Walk | Start/pause/finish, route map, history detail |
 | Progress | Charts, Health Connect permission from Progress only |

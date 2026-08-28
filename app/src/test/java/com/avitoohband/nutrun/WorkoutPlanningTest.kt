@@ -178,4 +178,52 @@ class WorkoutPlanningTest {
             moveAssignedWorkout(listOf("push", "pull", "legs"), -1, 2)
         )
     }
+
+    @Test
+    fun moveExerciseGroupMovesASingleTargetWithoutChangingIdsOrValues() {
+        val exercise = Exercise("test", "Test", "Test", "Test", "Test", "Test", "Test")
+        val first = ExerciseTarget("first", exercise, sets = 3)
+        val second = ExerciseTarget("second", exercise, sets = 3)
+        val third = ExerciseTarget("third", exercise, sets = 3)
+        val result = moveExerciseGroup(listOf(first, second, third), third.id, 0)
+        assertEquals(listOf("third", "first", "second"), result.map(ExerciseTarget::id))
+    }
+
+    @Test
+    fun moveExerciseGroupMovesAlternativeTargetsAsOneLogicalSlot() {
+        val exercise = Exercise("test", "Test", "Test", "Test", "Test", "Test", "Test")
+        val strength = ExerciseTarget("strength", exercise)
+        val walkAlternative = ExerciseTarget(
+            "walk",
+            exercise,
+            alternativeGroupId = "cardio-choice"
+        )
+        val swimAlternative = ExerciseTarget(
+            "swim",
+            exercise,
+            alternativeGroupId = "cardio-choice"
+        )
+        val cooldown = ExerciseTarget("cooldown", exercise)
+        val result = moveExerciseGroup(
+            listOf(strength, walkAlternative, swimAlternative, cooldown),
+            swimAlternative.id,
+            0
+        )
+        assertEquals(
+            listOf("walk", "swim", "strength", "cooldown"),
+            result.map(ExerciseTarget::id)
+        )
+    }
+
+    @Test
+    fun moveExerciseGroupRejectsUnknownTargetAndOutOfRangeDestination() {
+        val exercise = Exercise("test", "Test", "Test", "Test", "Test", "Test", "Test")
+        val targets = listOf(
+            ExerciseTarget("first", exercise),
+            ExerciseTarget("second", exercise)
+        )
+        assertEquals(targets, moveExerciseGroup(targets, "missing", 0))
+        assertEquals(targets, moveExerciseGroup(targets, targets.first().id, -1))
+        assertEquals(targets, moveExerciseGroup(targets, targets.first().id, 99))
+    }
 }

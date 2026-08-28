@@ -73,6 +73,7 @@ internal fun TrainingPlanningContent(
     onEditTemplate: (WorkoutTemplate) -> Unit = onOpenTemplate,
     onDuplicateTemplate: (WorkoutTemplate) -> Unit = { model.duplicateWorkout(it.id) },
     onAssignDay: (DayOfWeek) -> Unit = {},
+    onQuickWorkout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -110,7 +111,8 @@ internal fun TrainingPlanningContent(
                     model = model,
                     onOpenTemplate = onOpenTemplate,
                     onEditTemplate = onEditTemplate,
-                    onDuplicateTemplate = onDuplicateTemplate
+                    onDuplicateTemplate = onDuplicateTemplate,
+                    onQuickWorkout = onQuickWorkout
                 )
             }
         }
@@ -246,7 +248,8 @@ private fun WorkoutLibraryContent(
     model: TrainingViewModel,
     onOpenTemplate: (WorkoutTemplate) -> Unit,
     onEditTemplate: (WorkoutTemplate) -> Unit,
-    onDuplicateTemplate: (WorkoutTemplate) -> Unit
+    onDuplicateTemplate: (WorkoutTemplate) -> Unit,
+    onQuickWorkout: () -> Unit
 ) {
     var createWorkout by remember { mutableStateOf(false) }
     var deleteTemplate by remember { mutableStateOf<WorkoutTemplate?>(null) }
@@ -298,6 +301,12 @@ private fun WorkoutLibraryContent(
                 modifier = Modifier.fillMaxWidth().testTag("workout-library")
             ) {
                 TrainingPlanningHeading("Workout library", Modifier.weight(1f))
+                IconButton(
+                    onClick = onQuickWorkout,
+                    modifier = Modifier.testTag("quick-workout")
+                ) {
+                    Icon(Icons.Default.PlayArrow, "Quick workout")
+                }
                 IconButton(
                     onClick = { createWorkout = true },
                     modifier = Modifier.testTag("create-workout")

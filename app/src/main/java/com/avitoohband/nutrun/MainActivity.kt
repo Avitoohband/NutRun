@@ -856,6 +856,38 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         mutableStateOf(TrainingPlanningMode.SCHEDULE)
     }
     var assignmentDay by remember { mutableStateOf<DayOfWeek?>(null) }
+    var quickWorkoutDialog by remember { mutableStateOf(false) }
+    var quickWorkoutName by remember { mutableStateOf("") }
+    if (quickWorkoutDialog) {
+        AlertDialog(
+            onDismissRequest = { quickWorkoutDialog = false },
+            title = { Text("Start Quick workout") },
+            text = {
+                OutlinedTextField(
+                    value = quickWorkoutName,
+                    onValueChange = { quickWorkoutName = it },
+                    modifier = Modifier.fillMaxWidth().testTag("quick-workout-name"),
+                    label = { Text("Workout name (optional)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        model.startQuickWorkout(quickWorkoutName)
+                        quickWorkoutDialog = false
+                        quickWorkoutName = ""
+                    },
+                    modifier = Modifier.testTag("quick-workout-start")
+                ) {
+                    Text("Start")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { quickWorkoutDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
     assignmentDay?.let { day ->
         WorkoutAssignmentContent(
             day = day,
@@ -932,12 +964,71 @@ internal fun TrainingScreen(model: TrainingViewModel) {
         }
     }
     model.lastWorkoutSummary?.let { summary ->
+        var saveName by remember(summary) { mutableStateOf(summary.sessionName) }
+        var showSaveAs by remember(summary) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = model::dismissWorkoutSummary,
             title = { Text("Workout saved") },
-            text = { Text("${summary.completedExercises} of ${summary.totalExercises} exercises completed.") },
-            confirmButton = { TextButton(onClick = model::dismissWorkoutSummary) { Text("Done") } }
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${summary.completedExercises} of ${summary.totalExercises} exercises completed.")
+                    if (summary.skippedExercises > 0) {
+                        Text("${summary.skippedExercises} skipped during this session.")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = model::dismissWorkoutSummary) { Text("Done") }
+            },
+            dismissButton = {
+                Column {
+                    if (summary.sessionChanged && summary.sourceTemplateId != null) {
+                        TextButton(
+                            onClick = { model.applyLastWorkoutToSource() },
+                            modifier = Modifier.testTag("save-changes-to-workout")
+                        ) {
+                            Text("Save changes to workout")
+                        }
+                    }
+                    if (summary.isQuickWorkout) {
+                        TextButton(
+                            onClick = { showSaveAs = true },
+                            modifier = Modifier.testTag("save-quick-workout")
+                        ) {
+                            Text("Save as workout")
+                        }
+                    }
+                }
+            }
         )
+        if (showSaveAs) {
+            AlertDialog(
+                onDismissRequest = { showSaveAs = false },
+                title = { Text("Save as workout") },
+                text = {
+                    OutlinedTextField(
+                        value = saveName,
+                        onValueChange = { saveName = it },
+                        modifier = Modifier.fillMaxWidth().testTag("save-workout-name"),
+                        label = { Text("Workout name") },
+                        singleLine = true
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            model.saveLastWorkoutAsTemplate(saveName)
+                            showSaveAs = false
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSaveAs = false }) { Text("Cancel") }
+                }
+            )
+        }
     }
     if (restTimerFinished) {
         AlertDialog(
@@ -1002,6 +1093,7 @@ internal fun TrainingScreen(model: TrainingViewModel) {
                 model.duplicateWorkout(template.id)
             },
             onAssignDay = { assignmentDay = it },
+            onQuickWorkout = { quickWorkoutDialog = true },
             modifier = Modifier.weight(1f)
         )
     }

@@ -1092,6 +1092,8 @@ class SupplementReminderSettingsCardComposeTest {
             userId: String,
             mode: ActiveWorkoutLayoutMode
         ) = Unit
+        override fun scheduleRestTimer(userId: String, activeWorkoutId: String, endAtMillis: Long) = Unit
+        override fun cancelRestTimer(userId: String) = Unit
     }
 }
 
@@ -1388,6 +1390,66 @@ class WorkoutEditorComposeTest {
         composeRule.onNodeWithTag("edit-workout-${template.id}").assertIsDisplayed()
         composeRule.onNodeWithTag("duplicate-workout-${template.id}").assertIsDisplayed()
         composeRule.onNodeWithTag("delete-workout-${template.id}").assertIsDisplayed()
+    }
+
+    @Test
+    fun moveDownAndSavePersistsExerciseOrder() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first { it.exercises.size >= 3 }
+        val first = template.exercises.first()
+        val second = template.exercises[1]
+        composeRule.setContent {
+            MaterialTheme {
+                WorkoutEditorContent(
+                    model = model,
+                    templateId = template.id,
+                    onBack = {},
+                    onSaved = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("workout-move-down-${first.id}").performClick()
+        composeRule.onNodeWithTag("workout-editor-save").performClick()
+
+        composeRule.runOnIdle {
+            val updated = model.workoutTemplates.first { it.id == template.id }
+            assertEquals(listOf(second.id, first.id), updated.exercises.take(2).map(ExerciseTarget::id))
+        }
+    }
+
+    @Test
+    fun cancelBackDiscardsReorderedDraft() {
+        val model = TrainingViewModel(null, null)
+        val template = model.workoutTemplates.first { it.exercises.size >= 3 }
+        val originalOrder = template.exercises.map(ExerciseTarget::id)
+        val first = template.exercises.first()
+        var backed = false
+        composeRule.setContent {
+            MaterialTheme {
+                WorkoutEditorContent(
+                    model = model,
+                    templateId = template.id,
+                    onBack = { backed = true },
+                    onSaved = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("workout-move-down-${first.id}").performClick()
+        composeRule.onNodeWithTag("workout-editor-back").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("Discard changes?").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Discard").performClick()
+
+        composeRule.runOnIdle {
+            assertTrue(backed)
+            assertEquals(
+                originalOrder,
+                model.workoutTemplates.first { it.id == template.id }.exercises.map(ExerciseTarget::id)
+            )
+        }
     }
 }
 

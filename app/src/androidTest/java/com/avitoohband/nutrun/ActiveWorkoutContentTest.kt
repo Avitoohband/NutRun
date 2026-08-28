@@ -257,4 +257,70 @@ class ActiveWorkoutContentTest {
         composeRule.onNodeWithTag("incomplete-workout-review").assertDoesNotExist()
         composeRule.runOnIdle { assertEquals(1, finishRequests) }
     }
+
+    @Test
+    fun quickWorkoutEmptyStateShowsAddFirstExercise() {
+        val model = TrainingViewModel(null, null)
+        model.startQuickWorkout("Evening extras")
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("quick-workout-empty").assertIsDisplayed()
+        composeRule.onNodeWithTag("quick-workout-add-first").assertIsDisplayed()
+    }
+
+    @Test
+    fun stickyRestTimerRemainsVisibleAndCanBeSkipped() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        model.startRestTimer(seconds = 90)
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("active-rest-timer-sticky").assertIsDisplayed()
+        composeRule.onNodeWithTag("active-rest-timer-add").performClick()
+        composeRule.onNodeWithTag("active-rest-timer-sticky").assertIsDisplayed()
+        composeRule.onNodeWithTag("active-rest-timer-skip").performClick()
+        composeRule.onNodeWithTag("active-rest-timer-sticky").assertDoesNotExist()
+    }
+
+    @Test
+    fun skipAndUndoActiveExerciseUpdatesCard() {
+        val model = TrainingViewModel(null, null)
+        val session = model.sessions.first { it.id == "session-monday-push-biceps" }
+        model.startWorkout(session.id)
+        val target = session.exercises.first()
+        composeRule.setContent {
+            MaterialTheme {
+                ActiveWorkoutContent(
+                    model = model,
+                    onEditRestTimer = {},
+                    onCancelRequest = {},
+                    onFinishRequest = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("active-skip-${target.id}").performClick()
+        composeRule.onNodeWithTag("skipped-exercise-${target.id}").assertIsDisplayed()
+        composeRule.onNodeWithTag("active-undo-skip-${target.id}").performClick()
+        composeRule.onNodeWithTag("active-exercise-${target.id}").assertIsDisplayed()
+    }
 }
