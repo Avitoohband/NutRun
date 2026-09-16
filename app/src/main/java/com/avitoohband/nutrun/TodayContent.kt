@@ -294,6 +294,10 @@ fun TodayScreen(
                 testTag = "today-training-card"
             )
         }
+        if (training.gtgState.plans.any { !it.archived && today.dayOfWeek in it.weekdays }) {
+            item { TodaySectionHeading("Grease the Groove") }
+            item { GtgTodaySection(training) }
+        }
         item { TodaySectionHeading("Hydration") }
         item {
             TodayActionCard(

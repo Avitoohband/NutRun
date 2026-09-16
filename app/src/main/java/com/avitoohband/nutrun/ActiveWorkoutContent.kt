@@ -113,10 +113,9 @@ internal fun ActiveWorkoutContent(
         mutableStateMapOf<String, WorkoutSetInput>()
     }
     val completedLogicalTargets = active.completedLogicalTargetCount()
-    val resolvedLogicalTargets = active.resolvedLogicalTargetCount()
     val totalLogicalTargets = active.logicalTargetCount()
     fun requestFinish() {
-        if (resolvedLogicalTargets < totalLogicalTargets) {
+        if (completedLogicalTargets < totalLogicalTargets) {
             showFinishReview = true
         } else {
             onFinishRequest()

@@ -81,7 +81,8 @@ private data class TrainingMutationSnapshot(
     val scheduleOverrides: List<TrainingScheduleOverride>,
     val selectedSessionId: String?,
     val activeWorkout: ActiveWorkoutSession?,
-    val lastWorkoutSummary: WorkoutSummary?
+    val lastWorkoutSummary: WorkoutSummary?,
+    val gtgState: GtgState
 )
 
 
@@ -292,6 +293,64 @@ class TrainingViewModel private constructor(
     val workoutHistory = mutableStateListOf<WorkoutRecord>()
     val scheduleOverrides = mutableStateListOf<TrainingScheduleOverride>()
     val activeSetLogs = mutableStateMapOf<String, List<WorkoutSetLog>>()
+    private val gtgPlans = mutableStateListOf<GtgPlan>()
+    private val gtgLogs = mutableStateListOf<GtgLog>()
+    val gtgState: GtgState
+        get() = GtgState(gtgPlans.toList(), gtgLogs.toList())
+
+    fun saveGtgPlan(plan: GtgPlan): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        if (!plan.referencesKnownExercise(exerciseLibrary.map(Exercise::id).toSet())) {
+            return TrainingMutationResult.ValidationError("Exercise is not in the current library.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        val index = gtgPlans.indexOfFirst { it.id == plan.id }
+        if (index >= 0) gtgPlans[index] = plan else gtgPlans.add(plan)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun archiveGtgPlan(planId: String, archived: Boolean = true): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val index = gtgPlans.indexOfFirst { it.id == planId }
+        if (index < 0) return TrainingMutationResult.ValidationError("GTG plan not found.")
+        val snapshot = trainingMutationSnapshot()
+        gtgPlans[index] = gtgPlans[index].copy(archived = archived)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun saveGtgLog(log: GtgLog): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val plan = gtgPlans.firstOrNull { it.id == log.planId }
+            ?: return TrainingMutationResult.ValidationError("GTG plan not found.")
+        if (plan.archived) return TrainingMutationResult.ValidationError("Archived GTG plans cannot be logged.")
+        if (
+            log.exerciseId != plan.exerciseId ||
+            log.measure != plan.measure ||
+            log.dailySetGoalSnapshot != plan.dailySetGoal
+        ) {
+            return TrainingMutationResult.ValidationError("GTG log does not match its plan.")
+        }
+        if (log.performedAtMillis > System.currentTimeMillis() + 60_000L) {
+            return TrainingMutationResult.ValidationError("GTG log time cannot be in the future.")
+        }
+        val snapshot = trainingMutationSnapshot()
+        val index = gtgLogs.indexOfFirst { it.id == log.id }
+        if (index >= 0) gtgLogs[index] = log else gtgLogs.add(log)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
+
+    fun deleteGtgLog(logId: String): TrainingMutationResult {
+        if (!trainingMutationsReady) return TrainingMutationResult.NotReady
+        val index = gtgLogs.indexOfFirst { it.id == logId }
+        if (index < 0) return TrainingMutationResult.ValidationError("GTG log not found.")
+        val snapshot = trainingMutationSnapshot()
+        gtgLogs.removeAt(index)
+        persistTrainingState(rollbackSnapshot = snapshot)
+        return TrainingMutationResult.Success
+    }
 
     private fun syncActiveCompatFromSnapshot(session: ActiveWorkoutSession?) {
         activeWorkoutSessionId = session?.sourceTemplateId ?: session?.id
@@ -1350,7 +1409,6 @@ class TrainingViewModel private constructor(
         if (!trainingMutationsReady) return
         val active = activeWorkout ?: return
         val completed = active.completedLogicalTargetCount()
-        val resolved = active.resolvedLogicalTargetCount()
         val total = active.logicalTargetCount()
         val finishedAt = System.currentTimeMillis()
         val nonSkippedExercises = active.exercises.filter { it.id !in active.skippedTargetIds }
@@ -1578,7 +1636,8 @@ class TrainingViewModel private constructor(
         scheduleOverrides = scheduleOverrides.toList(),
         selectedSessionId = selectedSessionId,
         activeWorkout = activeWorkout,
-        lastWorkoutSummary = lastWorkoutSummary
+        lastWorkoutSummary = lastWorkoutSummary,
+        gtgState = gtgState
     )
 
     private fun restoreMutationSnapshot(snapshot: TrainingMutationSnapshot) {
@@ -1593,6 +1652,10 @@ class TrainingViewModel private constructor(
         selectedSessionId = snapshot.selectedSessionId
         applyActiveWorkout(snapshot.activeWorkout)
         lastWorkoutSummary = snapshot.lastWorkoutSummary
+        gtgPlans.clear()
+        gtgPlans.addAll(snapshot.gtgState.plans)
+        gtgLogs.clear()
+        gtgLogs.addAll(snapshot.gtgState.logs)
     }
 
     private fun persistTrainingState(
@@ -1710,7 +1773,8 @@ class TrainingViewModel private constructor(
             customExercises = customExercises,
             workoutTemplates = workoutTemplates,
             weeklyDayPlans = weeklyDayPlans,
-            activeWorkout = activeWorkout
+            activeWorkout = activeWorkout,
+            gtgState = gtgState
         )
 
     private suspend fun rescheduleSupplementReminders(
@@ -1752,6 +1816,10 @@ class TrainingViewModel private constructor(
             scheduleOverrides.addAll(restored.scheduleOverrides)
             defaultRestTimerSeconds = restored.defaultRestTimerSeconds
             legacyUsesMetricUnits = restored.legacyUsesMetricUnits
+            gtgPlans.clear()
+            gtgPlans.addAll(restored.gtgState.plans)
+            gtgLogs.clear()
+            gtgLogs.addAll(restored.gtgState.logs)
         }
     }
 
@@ -1767,6 +1835,8 @@ class TrainingViewModel private constructor(
         history.addAll(defaultTrainingHistory())
         workoutHistory.clear()
         scheduleOverrides.clear()
+        gtgPlans.clear()
+        gtgLogs.clear()
         activeSetLogs.clear()
         selectedSessionId = null
         clearActiveWorkoutState()

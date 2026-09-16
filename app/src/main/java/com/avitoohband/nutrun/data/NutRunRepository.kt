@@ -9,6 +9,7 @@ import com.avitoohband.nutrun.domain.MealType
 import com.avitoohband.nutrun.domain.UnitSystem
 import com.avitoohband.nutrun.domain.UserProfile
 import com.avitoohband.nutrun.domain.WalkState
+import com.avitoohband.nutrun.requireTrainingPayloadWithinLimit
 import com.avitoohband.nutrun.sync.SyncScheduler
 import java.time.LocalDate
 import java.time.ZoneId
@@ -527,6 +528,7 @@ class NutRunRepository @Inject constructor(
 
     suspend fun saveTrainingState(userId: String, payloadJson: String) {
         require(userId == requireUserId())
+        requireTrainingPayloadWithinLimit(payloadJson)
         val entity = TrainingStateEntity(
             userId = userId,
             payloadJson = payloadJson,

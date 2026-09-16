@@ -1,6 +1,8 @@
 package com.avitoohband.nutrun
 
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.ZoneId
 import com.avitoohband.nutrun.data.SessionPreferences
 import com.avitoohband.nutrun.data.SupplementReminderSettingsEntity
 import com.avitoohband.nutrun.data.TrainingReminderSettingsEntity
@@ -71,6 +73,99 @@ class TrainingViewModelTest {
         assertTrue(model.renameWorkout(before.first().id, "\t") is TrainingMutationResult.ValidationError)
         assertEquals(before, model.workoutTemplates)
     }
+
+    @Test
+    fun gtgMutationsValidateExerciseAndAreIdempotentById() {
+        val model = localTrainingViewModel()
+        val exercise = model.exerciseLibrary.first()
+        val plan = GtgPlan(
+            id = "plan-1",
+            exerciseId = exercise.id,
+            exerciseName = exercise.name,
+            measure = GtgMeasure.REPS,
+            targetPerSet = 5,
+            dailySetGoal = 5,
+            weekdays = setOf(DayOfWeek.MONDAY)
+        )
+        val unknown = plan.copy(id = "plan-unknown", exerciseId = "missing")
+
+        assertTrue(model.saveGtgPlan(unknown) is TrainingMutationResult.ValidationError)
+        assertEquals(TrainingMutationResult.Success, model.saveGtgPlan(plan))
+        assertEquals(TrainingMutationResult.Success, model.saveGtgPlan(plan.copy(targetPerSet = 6)))
+        assertEquals(1, model.gtgState.plans.size)
+        assertEquals(6, model.gtgState.plans.single().targetPerSet)
+
+        val log = gtgLog(plan.copy(targetPerSet = 6), id = "log-1")
+        assertEquals(TrainingMutationResult.Success, model.saveGtgLog(log))
+        assertEquals(TrainingMutationResult.Success, model.saveGtgLog(log))
+        assertEquals(1, model.gtgState.logs.size)
+        assertEquals(TrainingMutationResult.Success, model.deleteGtgLog(log.id))
+        assertTrue(model.gtgState.logs.isEmpty())
+    }
+
+    @Test
+    fun gtgStateSurvivesUnrelatedSupplementSaveAndReload() = runBlocking {
+        val runtime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        runtime.trainingStates.tryEmit(
+            TrainingStateEntity(
+                "account-a",
+                encodeTrainingState(supplements = defaultSupplements()),
+                1L
+            )
+        )
+        val model = localTrainingViewModel(runtime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!model.trainingMutationsReady) yield() }
+        val exercise = model.exerciseLibrary.first()
+        val plan = GtgPlan(
+            id = "plan-1",
+            exerciseId = exercise.id,
+            exerciseName = exercise.name,
+            measure = GtgMeasure.REPS,
+            targetPerSet = 5,
+            dailySetGoal = 5,
+            weekdays = setOf(DayOfWeek.MONDAY)
+        )
+        val log = gtgLog(plan, id = "log-1")
+
+        assertEquals(TrainingMutationResult.Success, model.saveGtgPlan(plan))
+        assertEquals(TrainingMutationResult.Success, model.saveGtgLog(log))
+        model.toggleSupplement(model.supplements.first().id, true)
+        withTimeout(5_000) {
+            while (runtime.savedPayloads.isEmpty() || decodeTrainingState(
+                    runtime.savedPayloads.last(),
+                    builtInExerciseCatalog()
+                )?.gtgState?.logs?.singleOrNull()?.id != log.id
+            ) yield()
+        }
+        val savedPayload = runtime.savedPayloads.last()
+        val reloadedRuntime = FakeTrainingViewModelRuntime(
+            session = SessionPreferences(authenticatedUserId = "account-a")
+        )
+        reloadedRuntime.trainingStates.tryEmit(TrainingStateEntity("account-a", savedPayload, 2L))
+        val reloaded = localTrainingViewModel(reloadedRuntime, CoroutineScope(Dispatchers.Unconfined))
+        withTimeout(5_000) { while (!reloaded.trainingMutationsReady) yield() }
+
+        assertEquals(GtgState(listOf(plan), listOf(log)), reloaded.gtgState)
+    }
+
+    private fun gtgLog(plan: GtgPlan, id: String) = GtgLog(
+        id = id,
+        planId = plan.id,
+        exerciseId = plan.exerciseId,
+        exerciseName = plan.exerciseName,
+        measure = plan.measure,
+        reps = plan.targetPerSet,
+        durationSeconds = null,
+        weightKg = plan.weightKg,
+        rir = 3,
+        notes = "",
+        performedAtMillis = System.currentTimeMillis() - 1_000L,
+        zoneId = ZoneId.of("Asia/Jerusalem").id,
+        performedOn = LocalDate.of(2026, 9, 16),
+        dailySetGoalSnapshot = plan.dailySetGoal
+    )
 
     @Test
     fun renameWorkoutTrimsTheReplacementName() {

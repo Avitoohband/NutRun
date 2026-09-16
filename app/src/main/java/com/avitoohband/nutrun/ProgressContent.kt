@@ -170,7 +170,7 @@ fun ProgressOverviewContent(
             ProgressTrendCard(
                 series = workoutFrequency,
                 range = range,
-                valueFormatter = { it.roundToInt().toString() },
+                valueFormatter = { "${it.roundToInt()} sessions" },
                 testTag = "progress-chart-workouts",
                 emptyMessage = "Complete a workout to see your training frequency.",
                 emptyActionLabel = "Open Training",
@@ -188,6 +188,8 @@ fun ProgressOverviewContent(
                 onEmptyAction = onNavigateToTraining
             )
         }
+        item { ProgressSectionHeading("Grease the Groove") }
+        item { GtgProgressContent(training, range) }
         item { ProgressSectionHeading("Exercise progression", Modifier.testTag("exercise-progression-heading")) }
         if (exerciseIds.isEmpty()) {
             item {
@@ -540,7 +542,7 @@ fun AccessibleLineChart(
         if (showDataList) {
             series.points.forEach { point ->
                 Text(
-                    "${formatProgressDate(point.date)}: ${valueFormatter(point.value)} ${series.unit}",
+                    "${formatProgressDate(point.date)}: ${valueFormatter(point.value)}",
                     modifier = Modifier.testTag("$testTag-data-${point.date}")
                 )
             }
@@ -628,7 +630,7 @@ private fun ExerciseProgressDetailScreen(
                             ExerciseProgressMetric.ESTIMATED_ONE_REP_MAX,
                             ExerciseProgressMetric.VOLUME ->
                                 formatWeightValue(value, metric)
-                            ExerciseProgressMetric.MAX_REPS -> value.roundToInt().toString()
+                            ExerciseProgressMetric.MAX_REPS -> "${value.roundToInt()} reps"
                         }
                     },
                     testTag = "exercise-chart-${metricKind.name}",

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.avitoohband.nutrun.data.HydrationPlanEntity
 import com.avitoohband.nutrun.data.SessionPreferences
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -69,6 +70,27 @@ class ProgressContentTest {
         composeRule
             .onNode(hasContentDescription("Weight", substring = true))
             .assertExists()
+    }
+
+    @Test
+    fun imperialChartSummaryAndRowsContainExactlyOneUnit() {
+        val date = LocalDate.of(2026, 9, 16)
+        composeRule.setContent {
+            NutRunTheme {
+                AccessibleLineChart(
+                    series = ProgressSeries("Weight", "kg", listOf(DatedValue(date, 75.0))),
+                    valueFormatter = { displayWeight(it, false) },
+                    showDataList = true,
+                    onToggleData = {},
+                    testTag = "imperial-weight-chart"
+                )
+            }
+        }
+
+        composeRule.onNode(hasContentDescription("Weight: 165.3 lb on Sep 16, 1 recorded days"))
+            .assertExists()
+        composeRule.onNodeWithText("Sep 16: 165.3 lb").assertIsDisplayed()
+        composeRule.onNodeWithText("Sep 16: 165.3 lb kg").assertDoesNotExist()
     }
 
     @Test

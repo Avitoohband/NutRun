@@ -1,0 +1,242 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.avitoohband.nutrun.AccessibilityResponsiveTest" tests="135" failures="9" errors="0" skipped="0" time="263.317" timestamp="2026-09-16T06:49:07" hostname="localhost">
+  <properties>
+    <property name="device" value="Pixel_10(AVD) - 17" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="workoutLibraryStartDisabledExplainsWhy" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="2.185" />
+  <testcase name="compactTodayMetricsReadableAtLargeFontScale" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="1.6" />
+  <testcase name="configuredSupplementCompletedStateIsAnnounced" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="1.519" />
+  <testcase name="workoutCardClickableAreaHasAccessibleLabel" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="1.976" />
+  <testcase name="compactTodayMetricsStackVerticallyAt320Dp" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="1.258" />
+  <testcase name="supplementReminderSwitchExposesOnOffState" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="1.199" />
+  <testcase name="activeWorkoutSetCompletionRowHasStateSemantics" classname="com.avitoohband.nutrun.AccessibilityResponsiveTest" time="1.359">
+    <failure>java.lang.AssertionError: Assert failed: The component is not displayed!
+at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+at com.avitoohband.nutrun.AccessibilityResponsiveTest.activeWorkoutSetCompletionRowHasStateSemantics(AccessibilityResponsiveTest.kt:194)
+</failure>
+  </testcase>
+  <testcase name="profileAndFoodQueriesNeverReturnAnotherAccountsRows" classname="com.avitoohband.nutrun.AccountIsolationDatabaseTest" time="0.029" />
+  <testcase name="discardActiveWalkRemovesOnlyMatchingUnfinishedSessionAndPoints" classname="com.avitoohband.nutrun.AccountIsolationDatabaseTest" time="0.002" />
+  <testcase name="quickWorkoutEmptyStateShowsAddFirstExercise" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="2.092" />
+  <testcase name="stickyRestTimerRemainsVisibleAndCanBeSkipped" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.175" />
+  <testcase name="layoutToggleShowsListAndGridOptions" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.071" />
+  <testcase name="compactLargeTextWorkoutKeepsFocusNavigationAndActionsStable" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="2.254" />
+  <testcase name="skipAndUndoActiveExerciseUpdatesCard" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.341" />
+  <testcase name="gridModeAllowsEditingAndCompletingSets" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.77" />
+  <testcase name="completeWorkoutFinishesWithoutReview" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="2.029" />
+  <testcase name="gridModeShowsMinutesColumnForDurationTargets" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.066" />
+  <testcase name="incompleteFinishRequiresExplicitConfirmation" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.492" />
+  <testcase name="switchingToGridRetainsPartialDraftValues" classname="com.avitoohband.nutrun.ActiveWorkoutContentTest" time="1.389" />
+  <testcase name="defaultsToListMode" classname="com.avitoohband.nutrun.AppPreferencesActiveWorkoutLayoutTest" time="0.028" />
+  <testcase name="clearAccountRemovesLayoutMode" classname="com.avitoohband.nutrun.AppPreferencesActiveWorkoutLayoutTest" time="0.054" />
+  <testcase name="signOutPreservesLayoutModeForAccount" classname="com.avitoohband.nutrun.AppPreferencesActiveWorkoutLayoutTest" time="0.028" />
+  <testcase name="persistsGridModePerAccount" classname="com.avitoohband.nutrun.AppPreferencesActiveWorkoutLayoutTest" time="0.028" />
+  <testcase name="signOutPreservesTutorialStateForAccount" classname="com.avitoohband.nutrun.AppPreferencesTutorialTest" time="0.001" />
+  <testcase name="acknowledgeTutorialPersistsVersionAndCompletion" classname="com.avitoohband.nutrun.AppPreferencesTutorialTest" time="0.028" />
+  <testcase name="clearAccountRemovesTutorialState" classname="com.avitoohband.nutrun.AppPreferencesTutorialTest" time="0.004" />
+  <testcase name="skipTutorialClearsCompletionTimestamp" classname="com.avitoohband.nutrun.AppPreferencesTutorialTest" time="0.028" />
+  <testcase name="onboardingUsesThreeStepsWithProgressIndicator" classname="com.avitoohband.nutrun.AuthenticationOnboardingTest" time="2.098" />
+  <testcase name="onboardingBackPreservesEarlierStepWithoutLosingProgress" classname="com.avitoohband.nutrun.AuthenticationOnboardingTest" time="2.578" />
+  <testcase name="authenticationShowsInlineFieldErrorsAndDebugDemoButton" classname="com.avitoohband.nutrun.AuthenticationOnboardingTest" time="2.008" />
+  <testcase name="bottomNavigationMarksSelectedTab" classname="com.avitoohband.nutrun.BottomNavAccessibilityTest" time="2.671">
+    <failure>java.lang.AssertionError: Failed to assert the following: (Selected = 'true')
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'bottom-nav-today')
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:263)
+at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:255)
+at androidx.compose.ui.test.AssertionsKt.assertIsSelected(Assertions.kt:84)
+at com.avitoohband.nutrun.BottomNavAccessibilityTest.bottomNavigationMarksSelectedTab(BottomNavAccessibilityTest.kt:29)
+</failure>
+  </testcase>
+  <testcase name="migrationSixToSevenAddsNutritionTargetsWithoutChangingFoodLogs" classname="com.avitoohband.nutrun.DatabaseMigrationTest" time="0.08" />
+  <testcase name="migrationOneToTwoPreservesRowsAsUnclaimedLegacyData" classname="com.avitoohband.nutrun.DatabaseMigrationTest" time="0.053" />
+  <testcase name="migrationThreeToFourAddsFoodTemplatesWithoutChangingExistingFood" classname="com.avitoohband.nutrun.DatabaseMigrationTest" time="0.028" />
+  <testcase name="migrationFiveToSixPreservesDeliveredReminderRowsAsFinalized" classname="com.avitoohband.nutrun.DatabaseMigrationTest" time="0.053" />
+  <testcase name="migrationFourToFivePreservesTrainingStateAndAddsSupplementReminderSettings" classname="com.avitoohband.nutrun.DatabaseMigrationTest" time="0.08" />
+  <testcase name="migrationTwoToThreePreservesDataAndAddsReminderTables" classname="com.avitoohband.nutrun.DatabaseMigrationTest" time="0.029" />
+  <testcase name="trophyShowsGoalAndCanBeDismissed" classname="com.avitoohband.nutrun.HydrationGoalTrophyTest" time="0.976" />
+  <testcase name="saveRemainsVisibleWhileScrollingTwentySupplements" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="1.287" />
+  <testcase name="typedAndPickerBackedTimesReachOneSaveAndSurviveDisabledSections" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="1.789" />
+  <testcase name="dirtyBackRequiresConfirmationAndKeepEditingDoesNotNavigate" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="1.478" />
+  <testcase name="deniedPermissionKeepsConfiguredValuesAndProvidesSettingsAction" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="2.137" />
+  <testcase name="disabledSectionsCollapseToSummaryAndRestoreRetainedValues" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="2.135" />
+  <testcase name="waterAndTrainingTimesExposeClockPickersWithPlainLabels" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="1.929" />
+  <testcase name="supplementMasterAndToggleAllRemainIndependent" classname="com.avitoohband.nutrun.NotificationSettingsContentTest" time="2.163" />
+  <testcase name="nutRunScreenBackActionHasAccessibleLabel" classname="com.avitoohband.nutrun.NutRunComponentsTest" time="1.889" />
+  <testcase name="nutRunMetricMergesValueLabelAndAction" classname="com.avitoohband.nutrun.NutRunComponentsTest" time="1.857" />
+  <testcase name="nutRunInlineErrorUsesLiveRegion" classname="com.avitoohband.nutrun.NutRunComponentsTest" time="1.856" />
+  <testcase name="nutRunEmptyStateShowsTitleAndAction" classname="com.avitoohband.nutrun.NutRunComponentsTest" time="1.851" />
+  <testcase name="nutRunMetricSurvivesLargeFontAtCompactWidth" classname="com.avitoohband.nutrun.NutRunComponentsTest" time="1.855" />
+  <testcase name="nutRunLoadingStateAnnouncesMessage" classname="com.avitoohband.nutrun.NutRunComponentsTest" time="0.893" />
+  <testcase name="macroProgressAndWaterControlsAreVisible" classname="com.avitoohband.nutrun.NutritionContentTest" time="1.048" />
+  <testcase name="quickAddToggleCollapsesSection" classname="com.avitoohband.nutrun.NutritionContentTest" time="1.977" />
+  <testcase name="editHealthDetailsUsesValidatedBirthDateField" classname="com.avitoohband.nutrun.ProductionFlowTest" time="1.984">
+    <failure>java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'demo-login')
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:394)
+at androidx.compose.ui.test.Actions_androidKt.performClickImpl(Actions.android.kt:20)
+at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:54)
+at com.avitoohband.nutrun.ProductionFlowTest.enterDemo(ProductionFlowTest.kt:615)
+at com.avitoohband.nutrun.ProductionFlowTest.editHealthDetailsUsesValidatedBirthDateField(ProductionFlowTest.kt:218)
+</failure>
+  </testcase>
+  <testcase name="demoAccountDoesNotShowTutorialWelcomePrompt" classname="com.avitoohband.nutrun.ProductionFlowTest" time="0.994">
+    <failure>java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'demo-login')
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:394)
+at androidx.compose.ui.test.Actions_androidKt.performClickImpl(Actions.android.kt:20)
+at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:54)
+at com.avitoohband.nutrun.ProductionFlowTest.enterDemo(ProductionFlowTest.kt:615)
+at com.avitoohband.nutrun.ProductionFlowTest.demoAccountDoesNotShowTutorialWelcomePrompt(ProductionFlowTest.kt:113)
+</failure>
+  </testcase>
+  <testcase name="consumedNutritionRequestDoesNotReopenAfterRecreation" classname="com.avitoohband.nutrun.ProductionFlowTest" time="1.959">
+    <failure>java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'demo-login')
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:394)
+at androidx.compose.ui.test.Actions_androidKt.performClickImpl(Actions.android.kt:20)
+at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:54)
+at com.avitoohband.nutrun.ProductionFlowTest.enterDemo(ProductionFlowTest.kt:615)
+at com.avitoohband.nutrun.ProductionFlowTest.consumedNutritionRequestDoesNotReopenAfterRecreation(ProductionFlowTest.kt:335)
+</failure>
+  </testcase>
+  <testcase name="supplementNotificationFocusesTodaySupplements" classname="com.avitoohband.nutrun.ProductionFlowTest" time="0.997">
+    <failure>java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'demo-login')
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:394)
+at androidx.compose.ui.test.Actions_androidKt.performClickImpl(Actions.android.kt:20)
+at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:54)
+at com.avitoohband.nutrun.ProductionFlowTest.enterDemo(ProductionFlowTest.kt:615)
+at com.avitoohband.nutrun.ProductionFlowTest.supplementNotificationFocusesTodaySupplements(ProductionFlowTest.kt:486)
+</failure>
+  </testcase>
+  <testcase name="demoProfileCanReplayTutorialFromHelp" classname="com.avitoohband.nutrun.ProductionFlowTest" time="4.409">
+    <failure>java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (TestTag = 'demo-login')
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:394)
+at androidx.compose.ui.test.Actions_androidKt.performClickImpl(Actions.android.kt:20)
+at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:54)
+at com.avitoohband.nutrun.ProductionFlowTest.enterDemo(ProductionFlowTest.kt:615)
+at com.avitoohband.nutrun.ProductionFlowTest.demoProfileCanReplayTutorialFromHelp(ProductionFlowTest.kt:120)
+</failure>
+  </testcase>
+  <testcase name="tutorialWelcomePromptStartsTutorialForSignedInProfile" classname="com.avitoohband.nutrun.ProductionFlowTest" time="2.628" />
+  <testcase name="editHealthDetailsPromptsBeforeDiscardingChanges" classname="com.avitoohband.nutrun.ProductionFlowTest" time="3.251" />
+  <testcase name="demoAddsAndEditsSupplementReminderConfiguration" classname="com.avitoohband.nutrun.ProductionFlowTest" time="4.27" />
+  <testcase name="todayOpensAllSupplementManagement" classname="com.avitoohband.nutrun.ProductionFlowTest" time="2.473" />
+  <testcase name="unauthenticatedUserSeesAccountGate" classname="com.avitoohband.nutrun.ProductionFlowTest" time="1.533" />
+  <testcase name="savedWalkRouteAndMetricsFlowFromHistorySelectionIntoDetails" classname="com.avitoohband.nutrun.ProductionFlowTest" time="2.444">
+    <failure>java.lang.AssertionError: Failed: assertDoesNotExist.
+Reason: Did not expect any node but found '1' node that satisfies: (TestTag = 'walk-details-heading')
+Node found:
+Node #10411 at (l=168.0, t=347.0, r=529.0, b=420.0)px, Tag: 'walk-details-heading'
+Text = '[Walk details]'
+Actions = [SetTextSubstitution, ShowTextSubstitution, ClearTextSubstitution, GetTextLayoutResult]
+Has 8 siblings
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.assertDoesNotExist(SemanticsNodeInteraction.kt:100)
+at com.avitoohband.nutrun.ProductionFlowTest.savedWalkRouteAndMetricsFlowFromHistorySelectionIntoDetails(ProductionFlowTest.kt:322)
+</failure>
+  </testcase>
+  <testcase name="demoConfiguresSupplementRemindersAndOpensManagement" classname="com.avitoohband.nutrun.ProductionFlowTest" time="5.802" />
+  <testcase name="invalidCredentialsCannotBypassRequiredSetup" classname="com.avitoohband.nutrun.ProductionFlowTest" time="1.735" />
+  <testcase name="demoShowsWeeklyScheduleAndSetLogger" classname="com.avitoohband.nutrun.ProductionFlowTest" time="2.916" />
+  <testcase name="editWorkoutHistoryUsesValidatedDateField" classname="com.avitoohband.nutrun.ProductionFlowTest" time="1.922" />
+  <testcase name="profileSectionsAndDeleteConfirmationRequireTypedEmail" classname="com.avitoohband.nutrun.ProfileContentTest" time="2.076">
+    <failure>java.lang.AssertionError: Assert failed: The component is not displayed!
+at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+at com.avitoohband.nutrun.ProfileContentTest.profileSectionsAndDeleteConfirmationRequireTypedEmail(ProfileContentTest.kt:41)
+</failure>
+  </testcase>
+  <testcase name="profileHelpSectionRunsTutorialAgain" classname="com.avitoohband.nutrun.ProfileContentTest" time="2.087" />
+  <testcase name="demoProfileShowsLocalOnlyDeletionCopy" classname="com.avitoohband.nutrun.ProfileContentTest" time="1.332" />
+  <testcase name="helpAndDataSectionsExposePolicyLinks" classname="com.avitoohband.nutrun.ProfileContentTest" time="2.261" />
+  <testcase name="rangeSelectorUpdatesSelection" classname="com.avitoohband.nutrun.ProgressContentTest" time="2.103" />
+  <testcase name="weightChartShowsAccessibleSummary" classname="com.avitoohband.nutrun.ProgressContentTest" time="2.012" />
+  <testcase name="exerciseDrillDownOpensDetailCharts" classname="com.avitoohband.nutrun.ProgressContentTest" time="2.135" />
+  <testcase name="emptyTrainingStateNavigatesToTraining" classname="com.avitoohband.nutrun.ProgressContentTest" time="2.011" />
+  <testcase name="zeroEffortInputCanCompleteAWorkoutSet" classname="com.avitoohband.nutrun.ProgressionSuggestionComposeTest" time="1.361" />
+  <testcase name="progressionSuggestionAppearsBeforeStartAndDuringLogging" classname="com.avitoohband.nutrun.ProgressionSuggestionComposeTest" time="2.259" />
+  <testcase name="expiredRestTimerShowsAlertAndCreatesAlarmChannel" classname="com.avitoohband.nutrun.ProgressionSuggestionComposeTest" time="2.383" />
+  <testcase name="emptySessionRequiresExercisesBeforeItCanStart" classname="com.avitoohband.nutrun.ProgressionSuggestionComposeTest" time="2.357" />
+  <testcase name="trainingScreenDoesNotSaveIncompleteWorkoutBeforeConfirmation" classname="com.avitoohband.nutrun.ProgressionSuggestionComposeTest" time="1.495" />
+  <testcase name="defaultDispatcherSchedulesSupplementsAndOnlyTrainingRecovery" classname="com.avitoohband.nutrun.ReminderRescheduleReceiverProductionTest" time="0.06" />
+  <testcase name="frameworkDeliveredReceiverFinishesAsyncWork" classname="com.avitoohband.nutrun.ReminderRescheduleReceiverProductionTest" time="0.28" />
+  <testcase name="replacingTimerKeepsSingleOngoingNotification" classname="com.avitoohband.nutrun.RestTimerNotificationTest" time="0.001" />
+  <testcase name="scheduleCreatesLowImportanceActiveChannelAndOngoingNotification" classname="com.avitoohband.nutrun.RestTimerNotificationTest" time="0.027" />
+  <testcase name="invalidTypedTimeShowsInlineValidationAndClockPicker" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="1.648" />
+  <testcase name="reminderOnlyDialogEditReturnsTheExactIntervalSchedule" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.111" />
+  <testcase name="emptyStateKeepsManageSupplementsAction" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.143" />
+  <testcase name="trainingScreenHidesMutationControlsUntilFirstPayload" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.109" />
+  <testcase name="notificationSaveWaitsForFailureAndKeepsTheScreenOpenWithAnError" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="1.15" />
+  <testcase name="notificationSaveKeepsScreenOpenWhenAccountChangesAfterFinalStage" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="1.151" />
+  <testcase name="individualBulkAndMasterTogglesPreserveTimeDrafts" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="1.645" />
+  <testcase name="notificationSaveNavigatesOnlyAfterDurableSuccess" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.265" />
+  <testcase name="notificationSaveWaitsForAllNewAccountSnapshots" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.108" />
+  <testcase name="loadingReminderCardDisablesMutationNavigation" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.079" />
+  <testcase name="notificationSaveWaitsForTheActiveTrainingRestore" classname="com.avitoohband.nutrun.SupplementReminderSettingsCardComposeTest" time="2.05" />
+  <testcase name="proteinMetricOpensNutritionWithoutWaterFocus" classname="com.avitoohband.nutrun.TodayDashboardTest" time="1.085" />
+  <testcase name="configuredSupplementsWithNoneDueShowsEmptyState" classname="com.avitoohband.nutrun.TodayDashboardTest" time="2.172" />
+  <testcase name="walkMetricOpensWalkWithAccessibleLabelWhenNoHistory" classname="com.avitoohband.nutrun.TodayDashboardTest" time="1.147" />
+  <testcase name="quickActionsTriggerFoodAndWaterHandlers" classname="com.avitoohband.nutrun.TodayDashboardTest" time="1.304" />
+  <testcase name="waterMetricOpensNutritionWaterSection" classname="com.avitoohband.nutrun.TodayDashboardTest" time="2.05" />
+  <testcase name="assignmentCancelKeepsRestDayAndSaveReplacesIt" classname="com.avitoohband.nutrun.TrainingInformationArchitectureTest" time="2.448" />
+  <testcase name="scheduleAndWorkoutsModesComposeOnlyTheSelectedSection" classname="com.avitoohband.nutrun.TrainingInformationArchitectureTest" time="2.077" />
+  <testcase name="compactScheduleShowsEveryDayAndOffersTodayShortcut" classname="com.avitoohband.nutrun.TrainingInformationArchitectureTest" time="13.839" />
+  <testcase name="assignmentSearchScalesToTwentyWorkoutsAndReportsSelection" classname="com.avitoohband.nutrun.TrainingInformationArchitectureTest" time="1.708" />
+  <testcase name="selectedTrainingModeSurvivesStateRestoration" classname="com.avitoohband.nutrun.TrainingInformationArchitectureTest" time="1.77" />
+  <testcase name="assignmentReorderSavesTheVisibleUniqueOrder" classname="com.avitoohband.nutrun.TrainingInformationArchitectureTest" time="3.26" />
+  <testcase name="assignedWorkoutDetailsOpenEditorWithoutStartingWorkout" classname="com.avitoohband.nutrun.TrainingPlanningComposeTest" time="3.23" />
+  <testcase name="assignmentClearsRestDayAndPersistsSelectedWorkout" classname="com.avitoohband.nutrun.TrainingPlanningComposeTest" time="3.075" />
+  <testcase name="weeklyScheduleAndWorkoutLibraryUseCalendarOrder" classname="com.avitoohband.nutrun.TrainingPlanningComposeTest" time="2.76" />
+  <testcase name="deletingWorkoutThroughLibraryKeepsHistory" classname="com.avitoohband.nutrun.TrainingPlanningComposeTest" time="3.14" />
+  <testcase name="tutorialShowsFiveStepsWithNavigationControls" classname="com.avitoohband.nutrun.TutorialContentTest" time="2.085" />
+  <testcase name="welcomeDialogSkipInvokesCallback" classname="com.avitoohband.nutrun.TutorialContentTest" time="1.803" />
+  <testcase name="tutorialBackReturnsToPreviousStep" classname="com.avitoohband.nutrun.TutorialContentTest" time="2.577" />
+  <testcase name="welcomeDialogStartInvokesCallback" classname="com.avitoohband.nutrun.TutorialContentTest" time="2.952" />
+  <testcase name="integerOnlyNumberFieldRejectsDecimals" classname="com.avitoohband.nutrun.ValidatedInputsComposeTest" time="2.518" />
+  <testcase name="dateFieldOpensPickerAndConfirmsSelection" classname="com.avitoohband.nutrun.ValidatedInputsComposeTest" time="3.167" />
+  <testcase name="numberFieldShowsInlineValidationError" classname="com.avitoohband.nutrun.ValidatedInputsComposeTest" time="2.614" />
+  <testcase name="numberFieldAcceptsCommaDecimalInput" classname="com.avitoohband.nutrun.ValidatedInputsComposeTest" time="1.805" />
+  <testcase name="optionalEmptyNumberFieldShowsNoError" classname="com.avitoohband.nutrun.ValidatedInputsComposeTest" time="2.586" />
+  <testcase name="dateFieldShowsRangeErrorForInvalidSelection" classname="com.avitoohband.nutrun.ValidatedInputsComposeTest" time="2.237" />
+  <testcase name="startOpensPermissionRationaleBeforeRecording" classname="com.avitoohband.nutrun.WalkRecordingContentTest" time="1.928" />
+  <testcase name="preStartShowsGpsStatusAndStartButton" classname="com.avitoohband.nutrun.WalkRecordingContentTest" time="2.798" />
+  <testcase name="activeRecordingShowsPersistentControls" classname="com.avitoohband.nutrun.WalkRecordingContentTest" time="2.609" />
+  <testcase name="removingTargetRequiresConfirmationAndOnlyChangesThisWorkout" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="3.048" />
+  <testcase name="workoutLibraryProvidesExplicitStartEditDuplicateAndDeleteActions" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="2.859" />
+  <testcase name="moveDownAndSavePersistsExerciseOrder" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="3.385" />
+  <testcase name="searchDraftSurvivesMultipleExerciseAdditionsUntilSave" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="4.73" />
+  <testcase name="cancelBackDiscardsReorderedDraft" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="2.921" />
+  <testcase name="duplicateCustomNameShowsInlineErrorAndKeepsDialogOpen" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="2.642" />
+  <testcase name="editorIsFullScreenAndBackConfirmsBeforeDiscardingUnsavedChanges" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="3.887" />
+  <testcase name="searchMatchesMusclesCaseInsensitively" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="2.797" />
+  <testcase name="blankWorkoutNameShowsInlineError" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="2.64" />
+  <testcase name="customExerciseCanSaveWithOnlyANameAndIsAddedImmediately" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="3.481" />
+  <testcase name="setControlsChangeOnlyTheSelectedTarget" classname="com.avitoohband.nutrun.WorkoutEditorComposeTest" time="1.99" />
+</testsuite>

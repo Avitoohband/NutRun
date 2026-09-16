@@ -60,7 +60,8 @@ import kotlinx.coroutines.launch
 
 internal enum class TrainingPlanningMode {
     SCHEDULE,
-    WORKOUTS
+    WORKOUTS,
+    GTG
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +88,7 @@ internal fun TrainingPlanningContent(
                         when (option) {
                             TrainingPlanningMode.SCHEDULE -> "training-mode-schedule"
                             TrainingPlanningMode.WORKOUTS -> "training-mode-workouts"
+                            TrainingPlanningMode.GTG -> "training-mode-gtg"
                         }
                     )
                 ) {
@@ -94,6 +96,7 @@ internal fun TrainingPlanningContent(
                         when (option) {
                             TrainingPlanningMode.SCHEDULE -> "Schedule"
                             TrainingPlanningMode.WORKOUTS -> "Workouts"
+                            TrainingPlanningMode.GTG -> "GTG"
                         }
                     )
                 }
@@ -114,6 +117,7 @@ internal fun TrainingPlanningContent(
                     onDuplicateTemplate = onDuplicateTemplate,
                     onQuickWorkout = onQuickWorkout
                 )
+                TrainingPlanningMode.GTG -> GtgContent(model)
             }
         }
     }
