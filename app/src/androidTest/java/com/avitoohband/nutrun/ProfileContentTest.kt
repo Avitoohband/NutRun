@@ -33,14 +33,19 @@ class ProfileContentTest {
             }
         }
 
-        composeRule.onNodeWithTag("profile-section-account").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-section-health").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-section-notifications").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-section-appearance").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-section-subscription").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-section-data").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-sign-out").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-section-help").assertIsDisplayed()
+        listOf(
+            "profile-section-account",
+            "profile-section-health",
+            "profile-section-notifications",
+            "profile-section-appearance",
+            "profile-section-subscription",
+            "profile-section-data",
+            "profile-sign-out",
+            "profile-section-help"
+        ).forEach { tag ->
+            composeRule.onNodeWithTag("profile-list").performScrollToNode(hasTestTag(tag))
+            composeRule.onNodeWithTag(tag).assertIsDisplayed()
+        }
 
         composeRule.onNodeWithTag("profile-list")
             .performScrollToNode(hasTestTag("profile-delete-account"))

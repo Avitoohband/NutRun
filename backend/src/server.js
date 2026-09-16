@@ -19,7 +19,8 @@ import {
   requireIdempotencyKey,
   requireScope,
   validateMcpTransportHeaders,
-  shouldApplyClientWrite
+  shouldApplyClientWrite,
+  assertTrainingStateWrite
 } from "./policy.js";
 import { toolDefinitions, MCP_CONTRACT_VERSION } from "./tools.js";
 
@@ -260,6 +261,9 @@ async function syncOperation(userId, idempotencyKey, body) {
         createdAt: FieldValue.serverTimestamp()
       });
       return;
+    }
+    if (entityType === "trainingState" && operation === "UPSERT") {
+      assertTrainingStateWrite(targetData, normalizedPayload);
     }
     if (entityType === "profile") {
       if (operation === "DELETE") {

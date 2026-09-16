@@ -96,3 +96,24 @@ export function isSubscriberPurchase(subscriptionState, expiryMillis, now = Date
 export function shouldApplyClientWrite(existingTimestamp, incomingTimestamp) {
   return Number(existingTimestamp ?? 0) <= Number(incomingTimestamp);
 }
+
+export const MAX_TRAINING_PAYLOAD_BYTES = 900 * 1024;
+
+export function assertTrainingStateWrite(
+  existingPayload,
+  incomingPayload,
+  maxBytes = MAX_TRAINING_PAYLOAD_BYTES
+) {
+  const incomingBytes = Buffer.byteLength(JSON.stringify(incomingPayload ?? {}), "utf8");
+  if (incomingBytes > maxBytes) {
+    throw new HttpError(413, "training_payload_too_large");
+  }
+  const existingSchema = Number(existingPayload?.schemaVersion ?? 1);
+  const incomingSchema = Number(incomingPayload?.schemaVersion ?? 1);
+  if (!Number.isInteger(incomingSchema) || incomingSchema < 1) {
+    throw new HttpError(400, "invalid_training_schema");
+  }
+  if (Number.isInteger(existingSchema) && incomingSchema < existingSchema) {
+    throw new HttpError(409, "training_schema_downgrade");
+  }
+}

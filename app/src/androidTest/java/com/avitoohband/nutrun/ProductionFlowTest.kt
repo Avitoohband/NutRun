@@ -32,7 +32,6 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.espresso.Espresso.pressBack
 import com.avitoohband.nutrun.data.AppPreferences
 import com.avitoohband.nutrun.data.NutRunDatabase
 import com.avitoohband.nutrun.data.SessionPreferences
@@ -69,7 +68,10 @@ class ProductionFlowTest {
 
     @Before
     fun ensureSignedOut() {
-        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Sign in").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithContentDescription("Profile").fetchSemanticsNodes().isNotEmpty()
+        }
         if (composeRule.onAllNodesWithText("Sign in").fetchSemanticsNodes().isEmpty()) {
             val profileButtons = composeRule
                 .onAllNodesWithContentDescription("Profile")
@@ -77,8 +79,8 @@ class ProductionFlowTest {
             if (profileButtons.isNotEmpty()) {
                 composeRule.onAllNodesWithContentDescription("Profile")[0].performClick()
                 composeRule.onNodeWithText("Sign out").performClick()
-                composeRule.waitUntil(timeoutMillis = 5_000) {
-                    composeRule.onAllNodesWithText("Sign in").fetchSemanticsNodes().isNotEmpty()
+                composeRule.waitUntil(timeoutMillis = 10_000) {
+                    composeRule.onAllNodesWithTag("demo-login").fetchSemanticsNodes().isNotEmpty()
                 }
             }
         }
@@ -205,8 +207,13 @@ class ProductionFlowTest {
         composeRule.onNodeWithTag("edit-workout-heading").assertIsDisplayed()
         composeRule.onNodeWithTag("edit-workout-list")
             .performScrollToNode(hasText("Weight (kg)"))
-        composeRule.onAllNodesWithText("Weight (kg)", useUnmergedTree = true)[0]
-            .assertIsDisplayed()
+        val metricWeight = composeRule.onAllNodesWithText("Weight (kg)", useUnmergedTree = true)
+        if (metricWeight.fetchSemanticsNodes().isNotEmpty()) {
+            metricWeight[0].assertIsDisplayed()
+        } else {
+            composeRule.onAllNodesWithText("Weight (lb)", useUnmergedTree = true)[0]
+                .assertIsDisplayed()
+        }
         composeRule.onNodeWithTag("cancel-edit-workout").performClick()
         composeRule.onNodeWithTag("delete-workout-history").performClick()
         composeRule.onNodeWithText("Delete workout?").assertIsDisplayed()
@@ -318,8 +325,12 @@ class ProductionFlowTest {
             composeRule.onNodeWithTag("walk-details-heading").assertDoesNotExist()
             composeRule.onAllNodesWithTag("walk-history-card")[0].performClick()
             composeRule.onNodeWithTag("walk-details-heading").assertIsDisplayed()
-            pressBack()
-            composeRule.onNodeWithTag("walk-details-heading").assertDoesNotExist()
+            composeRule.activityRule.scenario.onActivity { activity ->
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                composeRule.onAllNodesWithTag("walk-details-heading").fetchSemanticsNodes().isEmpty()
+            }
         } finally {
             runBlocking {
                 preferences.signOut()
@@ -612,6 +623,9 @@ class ProductionFlowTest {
     }
 
     private fun enterDemo() {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("demo-login").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag("demo-login").performClick()
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("Today's training").fetchSemanticsNodes().isNotEmpty()

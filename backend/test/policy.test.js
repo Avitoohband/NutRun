@@ -11,7 +11,8 @@ import {
   requireIdempotencyKey,
   requireScope,
   validateMcpTransportHeaders,
-  shouldApplyClientWrite
+  shouldApplyClientWrite,
+  assertTrainingStateWrite
 } from "../src/policy.js";
 
 test("walk summaries never expose route material", () => {
@@ -120,4 +121,19 @@ test("sync conflict policy keeps the newest client timestamp", () => {
   assert.equal(shouldApplyClientWrite(100, 101), true);
   assert.equal(shouldApplyClientWrite(100, 100), true);
   assert.equal(shouldApplyClientWrite(101, 100), false);
+});
+
+test("training sync rejects older schemas and oversized payloads", () => {
+  assert.throws(
+    () => assertTrainingStateWrite({ schemaVersion: 4 }, { schemaVersion: 3 }),
+    (error) => error instanceof HttpError && error.code === "training_schema_downgrade"
+  );
+  assert.doesNotThrow(() =>
+    assertTrainingStateWrite({ schemaVersion: 3 }, { schemaVersion: 4 })
+  );
+  assert.throws(
+    () => assertTrainingStateWrite(null, { schemaVersion: 4, value: "x".repeat(1_000) }, 100),
+    (error) => error instanceof HttpError && error.status === 413 &&
+      error.code === "training_payload_too_large"
+  );
 });

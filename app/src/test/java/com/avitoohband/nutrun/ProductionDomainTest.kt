@@ -163,7 +163,8 @@ class ProductionDomainTest {
         assertEquals(model.workoutHistory.toList(), restored.workoutHistory)
         assertEquals(listOf(override), restored.scheduleOverrides)
         assertEquals(135, restored.defaultRestTimerSeconds)
-        assertEquals(3, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(4, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(GtgState(), restored.gtgState)
         assertFalse(JSONObject(payload).has("usesMetricUnits"))
         assertNull(restored.legacyUsesMetricUnits)
     }

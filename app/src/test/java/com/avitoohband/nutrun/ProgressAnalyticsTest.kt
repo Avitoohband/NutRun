@@ -194,6 +194,20 @@ class ProgressAnalyticsTest {
         )
     }
 
+    @Test
+    fun accessibilitySummaryUsesTheFormatterAsTheSingleUnitOwner() {
+        val series = ProgressSeries(
+            label = "Weight",
+            unit = "kg",
+            points = listOf(DatedValue(today, 75.0))
+        )
+
+        assertEquals(
+            "Weight: 165.3 lb on Aug 24, 1 recorded days",
+            progressSeriesAccessibilitySummary(series) { "165.3 lb" }
+        )
+    }
+
   private fun weightEntry(id: String, weightKg: Double, recordedAtMillis: Long) =
         WeightEntryEntity(
             id = id,

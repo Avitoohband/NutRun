@@ -25,7 +25,8 @@ data class PersistedTrainingState(
     val weeklyDayPlans: List<WeeklyDayPlan>,
     val legacyUsesMetricUnits: Boolean?,
     val usesMetricUnits: Boolean,
-    val activeWorkout: ActiveWorkoutSession? = null
+    val activeWorkout: ActiveWorkoutSession? = null,
+    val gtgState: GtgState = GtgState()
 )
 internal val TrainingViewModel.sessions: List<TrainingSession>
     get() = workoutTemplates.toCompatibilitySessions(weeklyDayPlans)
@@ -168,12 +169,13 @@ fun encodeTrainingState(
     customExercises: List<Exercise> = emptyList(),
     workoutTemplates: List<WorkoutTemplate> = emptyList(),
     weeklyDayPlans: List<WeeklyDayPlan> = emptyList(),
-    activeWorkout: ActiveWorkoutSession? = null
+    activeWorkout: ActiveWorkoutSession? = null,
+    gtgState: GtgState = GtgState()
 ): String {
     val templates = workoutTemplates.ifEmpty { sessions.map(TrainingSession::toTemplate) }
     val plans = weeklyDayPlans.ifEmpty { sessions.toWeeklyDayPlans() }
     val root = JSONObject()
-        .put("schemaVersion", 3)
+        .put("schemaVersion", 4)
         .put("supplements", JSONArray().apply { supplements.forEach { put(it.toJson()) } })
         .put("customExercises", JSONArray().apply { customExercises.forEach { put(it.toJson()) } })
         .put("workoutTemplates", JSONArray().apply { templates.forEach { put(it.toJson()) } })
@@ -186,6 +188,9 @@ fun encodeTrainingState(
         .put("workoutHistory", JSONArray().apply { workoutHistory.forEach { put(it.toJson()) } })
         .put("scheduleOverrides", JSONArray().apply { scheduleOverrides.forEach { put(it.toJson()) } })
         .put("defaultRestTimerSeconds", defaultRestTimerSeconds.coerceIn(15, 600))
+    val gtgJson = encodeGtgState(gtgState)
+    root.put("gtgPlans", gtgJson.getJSONArray("gtgPlans"))
+    root.put("gtgLogs", gtgJson.getJSONArray("gtgLogs"))
     activeWorkout?.let { session ->
         root.put("activeWorkout", session.toJson())
     }
@@ -198,6 +203,7 @@ fun decodeTrainingState(
 ): PersistedTrainingState? = runCatching {
     val root = JSONObject(payload)
     val schemaVersion = root.optInt("schemaVersion", 1)
+    require(schemaVersion in 1..4) { "Unsupported training schema $schemaVersion" }
     val isVersion2 = schemaVersion >= 2
     val isVersion3 = schemaVersion >= 3
     val builtInExercises = exerciseLibrary
@@ -265,7 +271,8 @@ fun decodeTrainingState(
         weeklyDayPlans = weeklyDayPlans,
         legacyUsesMetricUnits = legacyUsesMetricUnits,
         usesMetricUnits = legacyUsesMetricUnits ?: true,
-        activeWorkout = activeWorkout
+        activeWorkout = activeWorkout,
+        gtgState = if (schemaVersion >= 4) decodeGtgState(root) else GtgState()
     )
 }.getOrNull()
 

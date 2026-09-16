@@ -39,15 +39,7 @@ data class ActiveWorkoutSession(
                 .mapNotNull(ExerciseTarget::alternativeGroupId)
                 .distinct().size
 
-    fun resolvedLogicalTargetCount(): Int =
-        exercises
-            .filter { it.alternativeGroupId == null && it.id in skippedTargetIds }
-            .size +
-            exercises
-                .filter { it.alternativeGroupId != null }
-                .groupBy(ExerciseTarget::alternativeGroupId)
-                .count { (_, targets) -> targets.all { it.id in skippedTargetIds } } +
-            completedLogicalTargetCount()
+    fun resolvedLogicalTargetCount(): Int = completedLogicalTargetCount()
 
     fun completedLogicalTargetCount(): Int =
         exercises.count {

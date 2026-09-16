@@ -8,7 +8,7 @@ import org.junit.Test
 
 class TrainingStateV2MigrationTest {
     @Test
-    fun v2RoundTripPreservesTemplatesPlansAndCustomExercises() {
+    fun currentRoundTripPreservesTemplatesPlansAndCustomExercises() {
         val custom = Exercise(
             id = "exercise-00000000-0000-0000-0000-000000000001",
             name = "My carry",
@@ -31,13 +31,14 @@ class TrainingStateV2MigrationTest {
         )
         val restored = requireNotNull(decodeTrainingState(payload, builtInExerciseCatalog()))
 
-        assertEquals(3, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(4, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(GtgState(), restored.gtgState)
         assertEquals(custom, restored.customExercises.single())
         assertEquals(4, restored.workoutTemplates.single().exercises.single().sets)
     }
 
     @Test
-    fun v3RoundTripPreservesActiveWorkoutSnapshot() {
+    fun currentRoundTripPreservesActiveWorkoutSnapshot() {
         val exercise = builtInExerciseCatalog().first { it.id == "bench-press" }
         val template = WorkoutTemplate(
             "template-active",
@@ -58,7 +59,7 @@ class TrainingStateV2MigrationTest {
 
         val restored = requireNotNull(decodeTrainingState(payload, builtInExerciseCatalog()))
 
-        assertEquals(3, JSONObject(payload).getInt("schemaVersion"))
+        assertEquals(4, JSONObject(payload).getInt("schemaVersion"))
         assertEquals(template.exercises, restored.activeWorkout?.exercises)
         assertEquals(42L, restored.activeWorkout?.startedAtMillis)
         assertEquals(active.setLogs, restored.activeWorkout?.setLogs)

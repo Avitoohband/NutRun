@@ -247,7 +247,7 @@ fun progressSeriesAccessibilitySummary(
     }
     val latest = series.points.last()
     val formatted = valueFormatter(latest.value)
-    return "${series.label}: $formatted ${series.unit} on ${formatProgressDate(latest.date)}, " +
+    return "${series.label}: $formatted on ${formatProgressDate(latest.date)}, " +
         "${series.points.size} recorded days"
 }
 
